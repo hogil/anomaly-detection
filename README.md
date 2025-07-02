@@ -2,6 +2,14 @@
 
 **7가지 최신 딥러닝 모델을 활용한 시계열 이상 탐지 시스템**
 
+## 🚀 바로 시작하기
+```bash
+git clone https://github.com/hogil/anomaly-detection.git
+cd anomaly-detection
+pip install -r requirements.txt
+python main.py --eval_only
+```
+
 ##  빠른 시작
 
 ### 1. 레포지토리 클론

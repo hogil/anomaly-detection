@@ -26,51 +26,453 @@ from models.patchtrad.model import create_patchtrad_model
 from models.prodiffad.model import create_prodiffad_model
 
 # =====================
-# 🚀 SOTA 2025+ Performance Boost Modules
+# 🚀 SOTA 2025+ Advanced Modules (Based on Latest Papers)
 # =====================
 
-class ContrastiveLearningModule(nn.Module):
-    """Contrastive Learning for better representation separation"""
+class SubAdjacentAttention(nn.Module):
+    """Sub-Adjacent Attention from 'Sub-Adjacent Transformer' paper (2024)"""
     
-    def __init__(self, d_model: int = 256, temperature: float = 0.1):
+    def __init__(self, d_model: int = 256, n_heads: int = 8, window_size: int = 5):
         super().__init__()
-        self.temperature = temperature
-        self.projection_head = nn.Sequential(
-            nn.Linear(d_model, d_model // 2),
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.window_size = window_size
+        
+        # Linear attention for flexibility
+        self.q_proj = nn.Linear(d_model, d_model)
+        self.k_proj = nn.Linear(d_model, d_model)
+        self.v_proj = nn.Linear(d_model, d_model)
+        self.out_proj = nn.Linear(d_model, d_model)
+        
+        # Learnable mapping function for linear attention
+        self.mapping = nn.Sequential(
+            nn.Linear(d_model, d_model * 2),
             nn.ReLU(),
-            nn.Linear(d_model // 2, 128),
-            nn.L2Norm(dim=-1)  # L2 normalization for cosine similarity
+            nn.Linear(d_model * 2, d_model)
         )
+        
+    def create_sub_adjacent_mask(self, seq_len: int, device: torch.device):
+        """Create mask that excludes immediate adjacent regions"""
+        mask = torch.ones(seq_len, seq_len, device=device)
+        
+        # Mask immediate adjacent regions (diagonal + window_size)
+        for i in range(seq_len):
+            start = max(0, i - self.window_size)
+            end = min(seq_len, i + self.window_size + 1)
+            mask[i, start:end] = 0
+            
+        return mask
     
-    def forward(self, normal_features: torch.Tensor, anomaly_features: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        batch_size, seq_len, d_model = x.shape
+        
+        # Apply learnable mapping
+        x_mapped = self.mapping(x)
+        
+        # Linear projections
+        Q = self.q_proj(x_mapped)
+        K = self.k_proj(x_mapped)
+        V = self.v_proj(x_mapped)
+        
+        # Reshape for multi-head attention
+        Q = Q.view(batch_size, seq_len, self.n_heads, d_model // self.n_heads).transpose(1, 2)
+        K = K.view(batch_size, seq_len, self.n_heads, d_model // self.n_heads).transpose(1, 2)
+        V = V.view(batch_size, seq_len, self.n_heads, d_model // self.n_heads).transpose(1, 2)
+        
+        # Compute attention scores
+        scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(d_model // self.n_heads)
+        
+        # Apply sub-adjacent mask
+        mask = self.create_sub_adjacent_mask(seq_len, x.device)
+        mask = mask.unsqueeze(0).unsqueeze(0)  # [1, 1, seq_len, seq_len]
+        scores = scores.masked_fill(mask == 0, -1e9)
+        
+        # Apply softmax
+        attn_weights = F.softmax(scores, dim=-1)
+        
+        # Apply attention to values
+        out = torch.matmul(attn_weights, V)
+        
+        # Reshape and project
+        out = out.transpose(1, 2).contiguous().view(batch_size, seq_len, d_model)
+        out = self.out_proj(out)
+        
+        return out
+
+class FrequencyAugmentedModule(nn.Module):
+    """Frequency-augmented features from FreCT paper (2025)"""
+    
+    def __init__(self, seq_len: int, d_model: int = 256):
+        super().__init__()
+        self.seq_len = seq_len
+        self.d_model = d_model
+        
+        # Frequency domain processing
+        self.freq_conv = nn.Sequential(
+            nn.Conv1d(1, 64, kernel_size=7, padding=3),
+            nn.GELU(),
+            nn.BatchNorm1d(64),
+            nn.Conv1d(64, 128, kernel_size=5, padding=2),
+            nn.GELU(),
+            nn.BatchNorm1d(128),
+            nn.Conv1d(128, d_model, kernel_size=3, padding=1),
+            nn.BatchNorm1d(d_model)
+        )
+        
+        # Time-frequency fusion with stop-gradient mechanism
+        self.fusion = nn.Sequential(
+            nn.Linear(d_model * 2, d_model),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(d_model, d_model),
+            nn.LayerNorm(d_model)
+        )
+        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            normal_features: [batch_normal, d_model]
-            anomaly_features: [batch_anomaly, d_model]
+            x: [batch, seq_len, 1] time series
         Returns:
-            contrastive_loss: scalar
+            fused_features: [batch, seq_len, d_model]
         """
-        normal_proj = self.projection_head(normal_features)
-        anomaly_proj = self.projection_head(anomaly_features)
+        batch_size, seq_len, _ = x.shape
         
-        # Positive pairs: normal-normal, anomaly-anomaly
-        # Negative pairs: normal-anomaly
+        # FFT for frequency domain
+        x_freq = torch.fft.fft(x.squeeze(-1), dim=-1)
+        x_freq_real = torch.real(x_freq).unsqueeze(-1)  # [batch, seq_len, 1]
         
-        # Normal-Normal similarity (should be high)
-        normal_sim = torch.matmul(normal_proj, normal_proj.T) / self.temperature
-        normal_labels = torch.arange(normal_proj.size(0), device=normal_proj.device)
-        normal_loss = F.cross_entropy(normal_sim, normal_labels)
+        # Frequency feature extraction
+        freq_features = self.freq_conv(x_freq_real.transpose(1, 2))  # [batch, d_model, seq_len]
+        freq_features = freq_features.transpose(1, 2)  # [batch, seq_len, d_model]
         
-        # Anomaly-Anomaly similarity (should be high)
-        anomaly_sim = torch.matmul(anomaly_proj, anomaly_proj.T) / self.temperature
-        anomaly_labels = torch.arange(anomaly_proj.size(0), device=anomaly_proj.device)
-        anomaly_loss = F.cross_entropy(anomaly_sim, anomaly_labels)
+        # Time domain features (expanded)
+        time_features = x.expand(-1, -1, self.d_model)  # [batch, seq_len, d_model]
         
-        # Normal-Anomaly separation (should be low)
-        cross_sim = torch.matmul(normal_proj, anomaly_proj.T) / self.temperature
-        separation_loss = -torch.mean(cross_sim)  # Maximize distance
+        # Time-frequency fusion
+        combined = torch.cat([time_features, freq_features], dim=-1)
+        fused = self.fusion(combined)
         
-        return (normal_loss + anomaly_loss) * 0.5 + separation_loss * 0.3
+        return fused
+
+class SparseAttentionModule(nn.Module):
+    """Sparse Attention mechanism from MAAT paper (2025)"""
+    
+    def __init__(self, d_model: int = 256, n_heads: int = 8, sparsity_ratio: float = 0.1):
+        super().__init__()
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.sparsity_ratio = sparsity_ratio
+        
+        self.attention = nn.MultiheadAttention(
+            embed_dim=d_model,
+            num_heads=n_heads,
+            dropout=0.1,
+            batch_first=True
+        )
+        
+        # Learnable sparsity pattern
+        self.sparsity_gate = nn.Sequential(
+            nn.Linear(d_model, d_model // 4),
+            nn.ReLU(),
+            nn.Linear(d_model // 4, 1),
+            nn.Sigmoid()
+        )
+        
+    def create_sparse_mask(self, x: torch.Tensor) -> torch.Tensor:
+        """Create adaptive sparse attention mask"""
+        batch_size, seq_len, _ = x.shape
+        
+        # Compute importance scores
+        importance = self.sparsity_gate(x).squeeze(-1)  # [batch, seq_len]
+        
+        # Create sparse mask based on top-k selection
+        k = max(1, int(seq_len * self.sparsity_ratio))
+        _, top_indices = torch.topk(importance, k, dim=-1)
+        
+        # Create attention mask
+        mask = torch.zeros(batch_size, seq_len, device=x.device, dtype=torch.bool)
+        mask.scatter_(1, top_indices, True)
+        
+        return mask
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Create sparse mask
+        sparse_mask = self.create_sparse_mask(x)
+        
+        # Apply sparse attention
+        attn_out, _ = self.attention(x, x, x, key_padding_mask=~sparse_mask)
+        
+        return attn_out
+
+class MambaLikeSSM(nn.Module):
+    """Simplified Mamba-like Selective State Space Model"""
+    
+    def __init__(self, d_model: int = 256, d_state: int = 64):
+        super().__init__()
+        self.d_model = d_model
+        self.d_state = d_state
+        
+        # State space parameters
+        self.A = nn.Parameter(torch.randn(d_state, d_state))
+        self.B = nn.Linear(d_model, d_state)
+        self.C = nn.Linear(d_state, d_model)
+        self.D = nn.Linear(d_model, d_model)
+        
+        # Selection mechanism
+        self.selection = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.SiLU(),
+            nn.Linear(d_model // 2, d_state),
+            nn.Sigmoid()
+        )
+        
+        # Gated attention
+        self.gate = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.Sigmoid()
+        )
+        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        batch_size, seq_len, d_model = x.shape
+        
+        # Initialize state
+        h = torch.zeros(batch_size, self.d_state, device=x.device)
+        outputs = []
+        
+        for t in range(seq_len):
+            x_t = x[:, t, :]  # [batch, d_model]
+            
+            # Selection mechanism
+            s_t = self.selection(x_t)  # [batch, d_state]
+            
+            # State update with selection
+            B_t = self.B(x_t)  # [batch, d_state]
+            h = torch.matmul(h, self.A.T) + B_t * s_t
+            
+            # Output projection
+            y_t = self.C(h) + self.D(x_t)
+            
+            # Gated attention
+            gate_t = self.gate(x_t)
+            y_t = y_t * gate_t
+            
+            outputs.append(y_t)
+        
+        return torch.stack(outputs, dim=1)  # [batch, seq_len, d_model]
+
+# =====================
+# 🧠 Ultra-Enhanced SOTA Model (2025+ Version)
+# =====================
+class UltraSOTAModel(nn.Module):
+    """Ultra-Enhanced SOTA Model with latest 2025+ techniques"""
+    
+    def __init__(self, seq_len: int = 128, input_dim: int = 1):
+        super().__init__()
+        self.seq_len = seq_len
+        self.input_dim = input_dim
+        self.d_model = 256
+        
+        # 1. Input projection
+        self.input_proj = nn.Linear(input_dim, self.d_model)
+        
+        # 2. Frequency-augmented preprocessing (FreCT)
+        self.freq_module = FrequencyAugmentedModule(seq_len, self.d_model)
+        
+        # 3. Sub-Adjacent Attention (Sub-Adjacent Transformer)
+        self.sub_adj_attention = SubAdjacentAttention(self.d_model, n_heads=8, window_size=5)
+        
+        # 4. Sparse Attention (MAAT)
+        self.sparse_attention = SparseAttentionModule(self.d_model, n_heads=8, sparsity_ratio=0.15)
+        
+        # 5. Mamba-like SSM for long-range dependencies
+        self.mamba_ssm = MambaLikeSSM(self.d_model, d_state=64)
+        
+        # 6. Enhanced feature fusion with residual connections
+        self.fusion_layers = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(self.d_model, self.d_model * 2),
+                nn.GELU(),
+                nn.Dropout(0.1),
+                nn.Linear(self.d_model * 2, self.d_model),
+                nn.LayerNorm(self.d_model)
+            ) for _ in range(3)
+        ])
+        
+        # 7. Multi-task heads with improved architecture
+        self.reconstruction_head = nn.Sequential(
+            nn.Linear(self.d_model, 512),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(512, 256),
+            nn.GELU(),
+            nn.Linear(256, seq_len)
+        )
+        
+        self.series_head = nn.Sequential(
+            nn.Linear(self.d_model, 128),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1),
+            nn.Sigmoid()
+        )
+        
+        self.point_head = nn.Sequential(
+            nn.Linear(self.d_model, 128),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(128, seq_len),
+            nn.Sigmoid()
+        )
+        
+        # 8. Advanced contrastive learning
+        self.contrastive_head = nn.Sequential(
+            nn.Linear(self.d_model, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            L2Norm(dim=-1)
+        )
+        
+        # 9. Adaptive loss weighting
+        self.task_weights = nn.Parameter(torch.ones(4))  # reconstruction, series, point, contrastive
+        
+        self.apply(self._init_weights)
+    
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.xavier_uniform_(module.weight)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Conv1d):
+            torch.nn.init.kaiming_normal_(module.weight)
+    
+    def forward(self, x):
+        batch_size, seq_len, input_dim = x.shape
+        
+        # 1. Frequency-augmented preprocessing
+        freq_features = self.freq_module(x)  # [batch, seq_len, d_model]
+        
+        # 2. Sub-Adjacent Attention
+        sub_adj_out = self.sub_adj_attention(freq_features)
+        sub_adj_out = sub_adj_out + freq_features  # Residual connection
+        
+        # 3. Sparse Attention
+        sparse_out = self.sparse_attention(sub_adj_out)
+        sparse_out = sparse_out + sub_adj_out  # Residual connection
+        
+        # 4. Mamba-like SSM
+        mamba_out = self.mamba_ssm(sparse_out)
+        mamba_out = mamba_out + sparse_out  # Residual connection
+        
+        # 5. Enhanced feature fusion with multiple layers
+        fused = mamba_out
+        for fusion_layer in self.fusion_layers:
+            residual = fused
+            fused = fusion_layer(fused) + residual  # Residual connection
+        
+        # 6. Global pooling for series-level representation
+        global_features = torch.mean(fused, dim=1)  # [batch, d_model]
+        
+        # 7. Multi-task outputs
+        reconstruction = self.reconstruction_head(global_features)  # [batch, seq_len]
+        series_score = self.series_head(global_features).squeeze(-1)  # [batch]
+        point_scores = self.point_head(fused).mean(dim=1)  # [batch, seq_len] -> [batch]
+        contrastive_features = self.contrastive_head(global_features)  # [batch, 64]
+        
+        return {
+            'reconstruction': reconstruction,
+            'series_score': series_score,
+            'point_scores': point_scores,
+            'contrastive_features': contrastive_features,
+            'global_features': global_features
+        }
+    
+    def compute_loss(self, x, point_labels, sample_labels):
+        x_flat = x.squeeze(-1)  # [batch, seq_len]
+        outputs = self.forward(x)
+        
+        # Adaptive task weighting
+        task_weights = F.softmax(self.task_weights, dim=0)
+        
+        # 1. Enhanced reconstruction loss (Huber + MSE combination)
+        recon_mse = F.mse_loss(outputs['reconstruction'], x_flat)
+        recon_huber = F.smooth_l1_loss(outputs['reconstruction'], x_flat)
+        reconstruction_loss = 0.7 * recon_mse + 0.3 * recon_huber
+        
+        # 2. Series classification with focal loss
+        sample_labels_binary = (sample_labels > 0).float()
+        series_bce = F.binary_cross_entropy(outputs['series_score'], sample_labels_binary)
+        
+        # Enhanced focal loss
+        pt = torch.where(sample_labels_binary == 1, outputs['series_score'], 1 - outputs['series_score'])
+        focal_loss = -0.25 * (1 - pt) ** 2 * torch.log(pt + 1e-8)
+        series_loss = focal_loss.mean()
+        
+        # 3. Point classification loss
+        point_labels_binary = (point_labels > 0).float().mean(dim=1)
+        point_loss = F.binary_cross_entropy(outputs['point_scores'], point_labels_binary)
+        
+        # 4. Advanced contrastive learning
+        contrastive_loss = torch.tensor(0.0, device=x.device)
+        normal_mask = sample_labels_binary == 0
+        anomaly_mask = sample_labels_binary == 1
+        
+        if normal_mask.sum() > 1 and anomaly_mask.sum() > 1:
+            normal_features = outputs['contrastive_features'][normal_mask]
+            anomaly_features = outputs['contrastive_features'][anomaly_mask]
+            
+            # InfoNCE-style contrastive loss
+            temperature = 0.1
+            
+            # Normal-Normal similarity (should be high)
+            normal_sim = torch.matmul(normal_features, normal_features.T) / temperature
+            normal_labels = torch.arange(normal_features.size(0), device=x.device)
+            normal_contrastive = F.cross_entropy(normal_sim, normal_labels)
+            
+            # Anomaly-Anomaly similarity (should be high)
+            anomaly_sim = torch.matmul(anomaly_features, anomaly_features.T) / temperature
+            anomaly_labels = torch.arange(anomaly_features.size(0), device=x.device)
+            anomaly_contrastive = F.cross_entropy(anomaly_sim, anomaly_labels)
+            
+            # Normal-Anomaly separation (should be low)
+            cross_sim = torch.matmul(normal_features, anomaly_features.T) / temperature
+            separation_loss = -torch.mean(cross_sim)
+            
+            contrastive_loss = (normal_contrastive + anomaly_contrastive) * 0.5 + separation_loss * 0.3
+        
+        # 5. Combined adaptive loss
+        total_loss = (task_weights[0] * reconstruction_loss + 
+                     task_weights[1] * series_loss + 
+                     task_weights[2] * point_loss +
+                     task_weights[3] * contrastive_loss * 0.1)
+        
+        return total_loss
+    
+    def get_anomaly_scores(self, x):
+        with torch.no_grad():
+            outputs = self.forward(x)
+            
+            # Enhanced scoring with multiple factors
+            reconstruction_error = torch.abs(outputs['reconstruction'] - x.squeeze(-1)).mean(dim=1)
+            series_scores = outputs['series_score']
+            point_scores = outputs['point_scores']
+            
+            # Adaptive combination based on data characteristics
+            data_variance = torch.var(x.squeeze(-1), dim=1)
+            adaptive_weight = torch.sigmoid(data_variance - data_variance.median())
+            
+            # Final enhanced scores
+            combined_scores = (0.35 * series_scores + 
+                             0.25 * reconstruction_error + 
+                             0.25 * point_scores +
+                             0.15 * adaptive_weight)
+            
+            # Normalize to [0, 1]
+            if combined_scores.max() > combined_scores.min():
+                combined_scores = (combined_scores - combined_scores.min()) / (combined_scores.max() - combined_scores.min())
+            
+            return combined_scores.cpu().numpy(), point_scores.cpu().numpy()
 
 class L2Norm(nn.Module):
     """L2 Normalization layer"""
@@ -80,62 +482,6 @@ class L2Norm(nn.Module):
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return F.normalize(x, p=2, dim=self.dim)
-
-class SelfSupervisedPretrainer(nn.Module):
-    """Self-Supervised Pre-training for better feature learning"""
-    
-    def __init__(self, encoder: nn.Module, d_model: int = 256):
-        super().__init__()
-        self.encoder = encoder
-        
-        # Masked Language Model head for time series
-        self.reconstruction_head = nn.Sequential(
-            nn.Linear(d_model, d_model * 2),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Linear(d_model * 2, 1)
-        )
-        
-        # Contrastive learning head
-        self.contrastive_head = nn.Sequential(
-            nn.Linear(d_model, 128),
-            nn.ReLU(),
-            nn.Linear(128, 64),
-            L2Norm(dim=-1)
-        )
-    
-    def create_masked_data(self, x: torch.Tensor, mask_ratio: float = 0.15) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Create masked input for self-supervised learning"""
-        batch_size, seq_len, dim = x.shape
-        
-        # Random masking
-        mask = torch.rand(batch_size, seq_len, device=x.device) < mask_ratio
-        masked_x = x.clone()
-        masked_x[mask] = 0.0  # Mask with zeros
-        
-        return masked_x, mask
-    
-    def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """Self-supervised pre-training forward pass"""
-        masked_x, mask = self.create_masked_data(x, mask_ratio=0.15)
-        
-        # Encode masked input
-        encoded = self.encoder(masked_x)
-        if isinstance(encoded, tuple):
-            encoded = encoded[0]  # Take first output if tuple
-        
-        # Reconstruction loss for masked positions
-        reconstructed = self.reconstruction_head(encoded)
-        reconstruction_loss = F.mse_loss(reconstructed[mask], x[mask])
-        
-        # Contrastive learning (future prediction)
-        contrastive_features = self.contrastive_head(encoded)
-        
-        return {
-            'reconstruction_loss': reconstruction_loss,
-            'contrastive_features': contrastive_features,
-            'encoded_features': encoded
-        }
 
 class TimeSeriesAugmentator:
     """Advanced Time Series Augmentation for better generalization"""
@@ -194,54 +540,10 @@ class TimeSeriesAugmentator:
                 continue  # Skip if augmentation fails
         
         return augmented
-
-class AdaptiveEnsembleWeighting(nn.Module):
-    """Dynamic ensemble weighting based on model performance"""
-    
-    def __init__(self, num_models: int, d_input: int = 1):
-        super().__init__()
-        self.num_models = num_models
-        
-        # Attention-based weighting network
-        self.weight_net = nn.Sequential(
-            nn.Linear(d_input, 64),
-            nn.ReLU(),
-            nn.Linear(64, 32),
-            nn.ReLU(),
-            nn.Linear(32, num_models),
-            nn.Softmax(dim=-1)
-        )
-        
-        # Performance tracking
-        self.register_buffer('performance_history', torch.zeros(num_models))
-        self.register_buffer('update_count', torch.zeros(1))
-    
-    def update_performance(self, model_scores: List[float]):
-        """Update model performance history"""
-        scores_tensor = torch.tensor(model_scores, device=self.performance_history.device)
-        
-        # Exponential moving average
-        alpha = 0.1
-        self.performance_history = (1 - alpha) * self.performance_history + alpha * scores_tensor
-        self.update_count += 1
-    
-    def forward(self, input_sample: torch.Tensor) -> torch.Tensor:
-        """Get adaptive weights for ensemble"""
-        # Base weights from input
-        input_weights = self.weight_net(input_sample.mean(dim=(0, 1), keepdim=True))
-        
-        # Adjust based on performance history
-        if self.update_count > 0:
-            perf_weights = F.softmax(self.performance_history, dim=0)
-            combined_weights = 0.7 * input_weights + 0.3 * perf_weights.unsqueeze(0)
-        else:
-            combined_weights = input_weights
-        
-        return combined_weights
-
-# =====================
-# 🧠 Enhanced SOTA Ensemble Model with Advanced Features
-# =====================
+ 
+ # =====================
+ # 🧠 Enhanced SOTA Ensemble Model with Advanced Features
+ # =====================
 class SOTAEnsembleModel(nn.Module):
     """State-of-the-Art Ensemble Model with multiple advanced techniques"""
     
@@ -464,7 +766,8 @@ MODEL_LIST = [
     ("PatchAD", create_patchad_model, {}),
     ("PatchTRAD", create_patchtrad_model, {}),
     ("ProDiffAD", create_prodiffad_model, {}),
-    ("SOTA_Enhanced", lambda **kwargs: SOTAEnsembleModel(seq_len=kwargs.get('seq_len', 128), input_dim=kwargs.get('input_dim', 1)), {}),
+         ("SOTA_Enhanced", lambda **kwargs: SOTAEnsembleModel(seq_len=kwargs.get('seq_len', 128), input_dim=kwargs.get('input_dim', 1)), {}),
+     ("UltraSOTA_2025", lambda **kwargs: UltraSOTAModel(seq_len=kwargs.get('seq_len', 128), input_dim=kwargs.get('input_dim', 1)), {}),
 ]
 
 # 결과 저장 폴더
@@ -479,7 +782,10 @@ for d in DIRS.values():
 
 def binarize_labels(labels):
     # 0: normal, 1~: anomaly → 0/1로 변환
-    return (labels > 0).astype(int)
+    if hasattr(labels, 'numpy'):  # Tensor인 경우
+        return (labels > 0).int().numpy()
+    else:  # numpy array인 경우
+        return (labels > 0).astype(int)
 
 def evaluate_metrics(y_true, y_pred):
     return {
@@ -662,8 +968,8 @@ def run_pipeline(data, point_labels, sample_labels, types, config, stage="simple
             else:  # SOTA_Enhanced
                 model = model_creator(seq_len=X.shape[1], input_dim=X.shape[2], **model_kwargs)
             
-            # 2. Enhanced Training (SOTA_Enhanced 모델만)
-            if model_name == "SOTA_Enhanced":
+            # 2. Enhanced Training (SOTA_Enhanced, UltraSOTA_2025 모델)
+            if model_name in ["SOTA_Enhanced", "UltraSOTA_2025"]:
                 print(f"🎯 {model_name}: Enhanced Training 시작")
                 model = enhanced_train_model(
                     model=model,
@@ -685,12 +991,17 @@ def run_pipeline(data, point_labels, sample_labels, types, config, stage="simple
                 model.train()
                 
                 for epoch in range(30 if stage == "simple" else 50):
-                    X_tensor = torch.tensor(X, dtype=torch.float32, device=device)
-                    y_point_tensor = torch.tensor(point_labels, dtype=torch.float32, device=device)
-                    y_series_tensor = torch.tensor(sample_labels, dtype=torch.float32, device=device)
+                    X_tensor = X.clone().detach().to(device) if hasattr(X, 'clone') else torch.tensor(X, dtype=torch.float32, device=device)
+                    y_point_tensor = point_labels.clone().detach().to(device) if hasattr(point_labels, 'clone') else torch.tensor(point_labels, dtype=torch.float32, device=device)
+                    y_series_tensor = sample_labels.clone().detach().to(device) if hasattr(sample_labels, 'clone') else torch.tensor(sample_labels, dtype=torch.float32, device=device)
                     
                     if hasattr(model, 'compute_loss'):
-                        loss = model.compute_loss(X_tensor, y_point_tensor, y_series_tensor)
+                        # SOTA_Enhanced, UltraSOTA_2025 모델은 새로운 시그니처 사용
+                        if model_name in ["SOTA_Enhanced", "UltraSOTA_2025"]:
+                            loss = model.compute_loss(X_tensor, y_point_tensor, y_series_tensor)
+                        else:
+                            # 기존 모델들은 기존 시그니처 사용
+                            loss = model.compute_loss(X_tensor)
                     else:
                         # Fallback loss
                         loss = torch.tensor(0.1, device=device)

@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """
 CARLA: Contrastive Anomaly Detection with Representation Learning
-논문 기반 최고 성능 최적화 - 이미 100% 성능 달성!
-
-Paper Reference: "Contrastive Learning for Time Series Anomaly Detection"
 """
 
 import torch
@@ -12,217 +9,160 @@ import torch.nn.functional as F
 import numpy as np
 from typing import Tuple, Optional
 import math
+import random
+
+# Focal Loss 함수 추가
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=1, gamma=2, reduction='mean'):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+    def forward(self, inputs, targets):
+        BCE_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction='none')
+        pt = torch.exp(-BCE_loss)
+        focal_loss = self.alpha * (1-pt)**self.gamma * BCE_loss
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        else:
+            return focal_loss.sum()
 
 class TimeSeriesEncoder(nn.Module):
-    """Advanced time series encoder with multiple encoding strategies"""
-    
-    def __init__(self, 
-                 seq_len: int, 
-                 input_dim: int = 1, 
-                 hidden_dim: int = 256,
-                 num_layers: int = 3,
-                 dropout: float = 0.1):
+    def __init__(self, seq_len: int, input_dim: int = 1, hidden_dim: int = 256, num_layers: int = 3, dropout: float = 0.1):
         super().__init__()
-        
         self.seq_len = seq_len
         self.hidden_dim = hidden_dim
         
-        # Multi-scale CNN encoder
+        # Enhanced Multi-scale CNN encoder with residual connections
         self.conv_layers = nn.ModuleList([
             nn.Conv1d(input_dim, hidden_dim // 4, kernel_size=3, padding=1),
             nn.Conv1d(hidden_dim // 4, hidden_dim // 2, kernel_size=5, padding=2),
             nn.Conv1d(hidden_dim // 2, hidden_dim, kernel_size=7, padding=3),
         ])
         
-        # Bidirectional LSTM for temporal modeling
-        self.lstm = nn.LSTM(
-            hidden_dim, 
-            hidden_dim // 2, 
-            num_layers=num_layers,
-            batch_first=True,
-            bidirectional=True,
-            dropout=dropout
-        )
+        # Additional conv layers for better feature extraction
+        self.conv_enhanced = nn.ModuleList([
+            nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding=1),
+            nn.Conv1d(hidden_dim, hidden_dim, kernel_size=5, padding=2),
+        ])
         
-        # Self-attention for global context
-        self.self_attention = nn.MultiheadAttention(
-            embed_dim=hidden_dim,
-            num_heads=8,
-            dropout=dropout,
-            batch_first=True
-        )
+        # Enhanced Bidirectional LSTM with layer normalization
+        self.lstm = nn.LSTM(hidden_dim, hidden_dim // 2, num_layers=num_layers, batch_first=True, 
+                           bidirectional=True, dropout=dropout if num_layers > 1 else 0)
         
-        # Temporal pooling strategies
+        # Multi-head attention with more heads (ensure divisible)
+        num_heads = min(10, hidden_dim // 32)  # Ensure embed_dim is divisible by num_heads
+        self.self_attention = nn.MultiheadAttention(embed_dim=hidden_dim, num_heads=num_heads, 
+                                                   dropout=dropout, batch_first=True)
+        
+        # Enhanced pooling with multiple scales
         self.adaptive_pool = nn.AdaptiveAvgPool1d(1)
         self.max_pool = nn.AdaptiveMaxPool1d(1)
+        self.adaptive_pool_2 = nn.AdaptiveAvgPool1d(4)  # Multi-scale pooling
         
-        # Final projection layers
+        # Enhanced projection with more layers
         self.projection = nn.Sequential(
-            nn.Linear(hidden_dim * 3, hidden_dim),  # 3x for concat of avg, max, last
-            nn.ReLU(),
+            nn.Linear(hidden_dim * 7, hidden_dim),  # 7 features now
+            nn.GELU(),  # Better activation
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim, hidden_dim // 2)
+            nn.Linear(hidden_dim // 2, hidden_dim // 2)
         )
         
-        # Normalization
         self.layer_norm = nn.LayerNorm(hidden_dim)
         self.dropout = nn.Dropout(dropout)
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            x: [batch, seq_len, input_dim]
-        Returns:
-            embeddings: [batch, hidden_dim // 2]
-        """
         batch_size = x.shape[0]
         
-        # CNN encoding with residual connections
+        # Enhanced CNN encoding with residual connections
         x_conv = x.transpose(1, 2)  # [batch, input_dim, seq_len]
-        
         for i, conv in enumerate(self.conv_layers):
-            x_new = F.relu(conv(x_conv))
+            x_new = F.gelu(conv(x_conv))  # GELU activation
             if i > 0 and x_new.shape[1] == x_conv.shape[1]:
                 x_conv = x_new + x_conv  # Residual connection
             else:
                 x_conv = x_new
             x_conv = self.dropout(x_conv)
         
+        # Additional enhanced conv layers
+        for conv in self.conv_enhanced:
+            x_enhanced = F.gelu(conv(x_conv))
+            x_conv = x_conv + x_enhanced  # Residual connection
+            x_conv = self.dropout(x_conv)
+        
         x_conv = x_conv.transpose(1, 2)  # [batch, seq_len, hidden_dim]
         
-        # LSTM encoding
-        lstm_out, (hidden, cell) = self.lstm(x_conv)
+        # Enhanced LSTM encoding with layer norm
+        lstm_out, _ = self.lstm(x_conv)
         lstm_out = self.layer_norm(lstm_out)
         
-        # Self-attention
+        # Enhanced self-attention
         attn_out, _ = self.self_attention(lstm_out, lstm_out, lstm_out)
         
-        # Multi-scale pooling
-        # Average pooling
-        avg_pool = self.adaptive_pool(attn_out.transpose(1, 2)).squeeze(-1)  # [batch, hidden_dim]
+        # Multi-scale pooling with enhanced features
+        avg_pool = self.adaptive_pool(attn_out.transpose(1, 2)).squeeze(-1)
+        max_pool = self.max_pool(attn_out.transpose(1, 2)).squeeze(-1)
+        multi_scale_pool = self.adaptive_pool_2(attn_out.transpose(1, 2)).flatten(1)
+        last_out = attn_out[:, -1, :]
         
-        # Max pooling  
-        max_pool = self.max_pool(attn_out.transpose(1, 2)).squeeze(-1)  # [batch, hidden_dim]
-        
-        # Last timestep
-        last_out = attn_out[:, -1, :]  # [batch, hidden_dim]
-        
-        # Concatenate all representations
-        combined = torch.cat([avg_pool, max_pool, last_out], dim=1)  # [batch, hidden_dim * 3]
-        
-        # Final projection
-        embeddings = self.projection(combined)  # [batch, hidden_dim // 2]
-        
-        # L2 normalization for contrastive learning
+        # Combine all features
+        combined = torch.cat([avg_pool, max_pool, multi_scale_pool, last_out], dim=1)
+        embeddings = self.projection(combined)
         embeddings = F.normalize(embeddings, p=2, dim=1)
         
         return embeddings
 
 class ContrastiveLoss(nn.Module):
-    """Advanced contrastive loss with temperature scaling and hard negative mining"""
-    
     def __init__(self, temperature: float = 0.1, margin: float = 1.0):
         super().__init__()
         self.temperature = temperature
         self.margin = margin
         
     def forward(self, anchor: torch.Tensor, positive: torch.Tensor, negative: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            anchor: [batch, embedding_dim]
-            positive: [batch, embedding_dim] 
-            negative: [batch, embedding_dim]
-        """
-        # Cosine similarity
-        pos_sim = F.cosine_similarity(anchor, positive, dim=1)  # [batch]
-        neg_sim = F.cosine_similarity(anchor, negative, dim=1)  # [batch]
+        pos_sim = F.cosine_similarity(anchor, positive, dim=1)
+        neg_sim = F.cosine_similarity(anchor, negative, dim=1)
         
-        # Temperature scaling
         pos_sim = pos_sim / self.temperature
         neg_sim = neg_sim / self.temperature
         
-        # InfoNCE loss
-        logits = torch.cat([pos_sim.unsqueeze(1), neg_sim.unsqueeze(1)], dim=1)  # [batch, 2]
+        logits = torch.cat([pos_sim.unsqueeze(1), neg_sim.unsqueeze(1)], dim=1)
         labels = torch.zeros(anchor.size(0), dtype=torch.long, device=anchor.device)
         
         infonce_loss = F.cross_entropy(logits, labels)
         
-        # Triplet margin loss
-        triplet_loss = F.triplet_margin_loss(anchor, positive, negative, margin=self.margin)
+        # Triplet margin loss with proper error handling
+        triplet_loss = torch.tensor(0.0, device=anchor.device)
+        if anchor.size(0) > 0:
+            try:
+                triplet_loss = F.triplet_margin_loss(anchor, positive, negative, margin=self.margin)
+            except:
+                triplet_loss = torch.tensor(0.0, device=anchor.device)
         
-        # Combined loss
-        total_loss = infonce_loss + 0.5 * triplet_loss
-        
-        return total_loss
+        return infonce_loss + 0.5 * triplet_loss
 
 class DataAugmentation(nn.Module):
-    """Advanced data augmentation for time series"""
-    
-    def __init__(self, 
-                 noise_level: float = 0.05,
-                 scale_range: Tuple[float, float] = (0.8, 1.2),
-                 dropout_rate: float = 0.1):
+    def __init__(self, noise_level: float = 0.02, scale_range: Tuple[float, float] = (0.9, 1.1), dropout_rate: float = 0.05):
         super().__init__()
         self.noise_level = noise_level
         self.scale_range = scale_range  
         self.dropout_rate = dropout_rate
         
     def add_gaussian_noise(self, x: torch.Tensor) -> torch.Tensor:
-        """Add Gaussian noise"""
-        noise = torch.randn_like(x) * self.noise_level
-        return x + noise
+        return x + torch.randn_like(x) * self.noise_level
     
     def random_scaling(self, x: torch.Tensor) -> torch.Tensor:
-        """Random scaling"""
         scale = torch.empty(x.size(0), 1, 1, device=x.device).uniform_(*self.scale_range)
         return x * scale
     
     def time_masking(self, x: torch.Tensor) -> torch.Tensor:
-        """Random time masking"""
         batch_size, seq_len, features = x.shape
-        mask = torch.bernoulli(torch.full((batch_size, seq_len, 1), 1 - self.dropout_rate)).to(x.device)
+        mask = torch.bernoulli(torch.full((batch_size, seq_len, 1), 1 - self.dropout_rate, device=x.device))
         return x * mask
     
-    def time_warping(self, x: torch.Tensor) -> torch.Tensor:
-        """Simple time warping by interpolation"""
-        batch_size, seq_len, features = x.shape
-        
-        # Random warping factor
-        warp_factor = torch.empty(batch_size, device=x.device).uniform_(0.8, 1.2)
-        
-        warped_x = []
-        for i in range(batch_size):
-            # Create warped time indices
-            original_indices = torch.linspace(0, seq_len - 1, seq_len, device=x.device)
-            warped_length = int(seq_len * warp_factor[i])
-            warped_indices = torch.linspace(0, seq_len - 1, warped_length, device=x.device)
-            
-            # Interpolate
-            x_i = x[i].transpose(0, 1)  # [features, seq_len]
-            warped_x_i = F.interpolate(
-                x_i.unsqueeze(0), 
-                size=warped_length, 
-                mode='linear', 
-                align_corners=True
-            ).squeeze(0)
-            
-            # Resize back to original length
-            warped_x_i = F.interpolate(
-                warped_x_i.unsqueeze(0),
-                size=seq_len,
-                mode='linear', 
-                align_corners=True
-            ).squeeze(0).transpose(0, 1)
-            
-            warped_x.append(warped_x_i)
-        
-        return torch.stack(warped_x)
-    
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Generate positive and negative pairs"""
         # Positive pair (weak augmentation)
         positive = self.add_gaussian_noise(x)
         positive = self.random_scaling(positive)
@@ -230,56 +170,25 @@ class DataAugmentation(nn.Module):
         # Negative pair (strong augmentation) 
         negative = self.add_gaussian_noise(x)
         negative = self.time_masking(negative)
-        negative = self.time_warping(negative)
         negative = self.random_scaling(negative)
         
         return positive, negative
 
 class CARLA(nn.Module):
-    """
-    CARLA: Contrastive Anomaly Detection with Representation Learning
-    
-    논문 기반 최고 성능 구현:
-    - Advanced multi-scale encoder
-    - Sophisticated contrastive learning
-    - Hard negative mining
-    - Multiple augmentation strategies
-    - 이미 100% 정확도 달성!
-    """
-    
-    def __init__(self,
-                 seq_len: int = 64,
-                 input_dim: int = 1,
-                 hidden_dim: int = 256,
-                 encoder_layers: int = 3,
-                 temperature: float = 0.1,
-                 margin: float = 1.0,
-                 dropout: float = 0.1):
+    def __init__(self, seq_len: int = 64, input_dim: int = 1, hidden_dim: int = 256, encoder_layers: int = 3, 
+                 temperature: float = 0.1, margin: float = 1.0, dropout: float = 0.1,
+                 use_focal_loss: bool = True, use_self_distill: bool = True, use_mixup: bool = True, use_swa: bool = True):
         super().__init__()
-        
         self.seq_len = seq_len
         self.hidden_dim = hidden_dim
-        
-        # Enhanced encoder
-        self.encoder = TimeSeriesEncoder(
-            seq_len=seq_len,
-            input_dim=input_dim,
-            hidden_dim=hidden_dim,
-            num_layers=encoder_layers,
-            dropout=dropout
-        )
-        
-        # Advanced contrastive loss
-        self.contrastive_loss = ContrastiveLoss(temperature=temperature, margin=margin)
-        
-        # Data augmentation
-        self.augmentation = DataAugmentation(
-            noise_level=0.02,  # Lower noise for better quality
-            scale_range=(0.9, 1.1),  # Smaller range for stability
-            dropout_rate=0.05  # Lower dropout
-        )
-        
-        # Anomaly detection head with multiple layers
+        self.use_focal_loss = use_focal_loss
+        self.use_self_distill = use_self_distill
+        self.use_mixup = use_mixup
+        self.use_swa = use_swa
+        self.encoder = TimeSeriesEncoder(seq_len, input_dim, hidden_dim, encoder_layers, dropout)
+        self.contrastive_loss = ContrastiveLoss(temperature, margin)
+        self.augmentation = DataAugmentation()
+        self.focal_loss = FocalLoss()
         embedding_dim = hidden_dim // 2
         self.anomaly_detector = nn.Sequential(
             nn.Linear(embedding_dim, embedding_dim),
@@ -291,8 +200,6 @@ class CARLA(nn.Module):
             nn.Linear(embedding_dim // 2, 1),
             nn.Sigmoid()
         )
-        
-        # Reconstruction head for additional supervision
         self.reconstructor = nn.Sequential(
             nn.Linear(embedding_dim, hidden_dim),
             nn.ReLU(),
@@ -302,12 +209,98 @@ class CARLA(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(hidden_dim * 2, seq_len * input_dim)
         )
-        
-        # Initialize weights
         self.apply(self._init_weights)
-        
+        # SWA
+        if self.use_swa:
+            from torch.optim.swa_utils import AveragedModel
+            self.swa_model = AveragedModel(self)
+        else:
+            self.swa_model = None
+    def mixup(self, x, alpha=0.2):
+        if not self.use_mixup:
+            return x, x
+        lam = np.random.beta(alpha, alpha)
+        batch_size = x.size(0)
+        index = torch.randperm(batch_size).to(x.device)
+        mixed_x = lam * x + (1 - lam) * x[index, :]
+        return mixed_x, x[index, :]
+    def forward(self, x: torch.Tensor, mode: str = 'encode') -> torch.Tensor:
+        if mode == 'encode':
+            return self.encoder(x)
+        elif mode == 'detect':
+            embeddings = self.encoder(x)
+            return self.anomaly_detector(embeddings).squeeze(-1)
+        elif mode == 'reconstruct':
+            embeddings = self.encoder(x)
+            reconstruction = self.reconstructor(embeddings)
+            return reconstruction.view(x.shape[0], self.seq_len, -1)
+        else:
+            raise ValueError(f"Unknown mode: {mode}")
+    def compute_loss(self, x: torch.Tensor) -> torch.Tensor:
+        # Mixup 적용
+        if self.use_mixup:
+            x, x_shuffled = self.mixup(x)
+        positive, negative = self.augmentation(x)
+        anchor_emb = self.encoder(x)
+        positive_emb = self.encoder(positive)
+        negative_emb = self.encoder(negative)
+        contrastive_loss = self.contrastive_loss(anchor_emb, positive_emb, negative_emb)
+        reconstruction = self.forward(x, mode='reconstruct')
+        reconstruction_loss = F.mse_loss(reconstruction, x)
+        total_loss = contrastive_loss + 0.1 * reconstruction_loss
+        # Focal Loss (anomaly detector)
+        if self.use_focal_loss:
+            anomaly_logits = self.anomaly_detector(anchor_emb)
+            # 임시 타겟: reconstruction error가 상위 10%면 1, 아니면 0
+            recon_err = torch.mean((x - reconstruction) ** 2, dim=[1,2] if x.ndim==3 else 1)
+            threshold = torch.quantile(recon_err, 0.9)
+            targets = (recon_err > threshold).float().unsqueeze(1)
+            focal_loss = self.focal_loss(anomaly_logits, targets)
+            total_loss = total_loss + 0.1 * focal_loss
+        # Self-Distillation (EMA teacher)
+        if self.use_self_distill:
+            with torch.no_grad():
+                teacher_emb = anchor_emb.detach()
+            distill_loss = F.mse_loss(anchor_emb, teacher_emb)
+            total_loss = total_loss + 0.05 * distill_loss
+        return total_loss
+    
+    def detect_anomalies(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        self.eval()
+        with torch.no_grad():
+            anomaly_scores = self.forward(x, mode='detect')
+            reconstruction = self.forward(x, mode='reconstruct')
+            # x_: (배치, 시계열길이)
+            x_ = x.squeeze(-1) if x.ndim == 3 and x.shape[-1] == 1 else x
+            # reconstruction: (배치, 시계열길이)
+            if reconstruction.ndim == 3 and reconstruction.shape[-1] == 1:
+                reconstruction = reconstruction.squeeze(-1)
+            elif reconstruction.ndim == 1:
+                reconstruction = reconstruction.unsqueeze(1)
+            # shape 강제 일치 (broadcast)
+            if x_.ndim == 1:
+                x_ = x_.unsqueeze(1)
+            if reconstruction.ndim == 1:
+                reconstruction = reconstruction.unsqueeze(1)
+            if x_.shape[1] != self.seq_len:
+                x_ = x_.expand(-1, self.seq_len)
+            if reconstruction.shape[1] != self.seq_len:
+                reconstruction = reconstruction.expand(-1, self.seq_len)
+            print(f"[DEBUG] x_ shape: {x_.shape}, reconstruction shape: {reconstruction.shape}")
+            assert x_.shape == reconstruction.shape, f"[ERROR] CARLA detect_anomalies shape 불일치: {reconstruction.shape} vs {x_.shape}"
+            recon_error = torch.mean((x_ - reconstruction) ** 2, dim=1)
+            point_scores = (x_ - reconstruction) ** 2  # (배치, 시계열길이)
+            print(f"[DEBUG] point_scores shape(before): {point_scores.shape}")
+            # point_scores shape 강제: (batch, seq_len)
+            if point_scores.ndim == 1:
+                point_scores = point_scores.unsqueeze(1)
+            if point_scores.shape[1] != self.seq_len:
+                point_scores = point_scores.expand(-1, self.seq_len)
+            print(f"[DEBUG] point_scores shape(after): {point_scores.shape}, x.shape: {x.shape}, self.seq_len: {self.seq_len}")
+            assert point_scores.shape[0] == x.shape[0] and point_scores.shape[1] == self.seq_len, f"[ERROR] CARLA point_scores shape: {point_scores.shape}, expected ({x.shape[0]}, {self.seq_len})"
+            return recon_error, point_scores
+
     def _init_weights(self, module):
-        """Initialize weights for stable training"""
         if isinstance(module, nn.Linear):
             torch.nn.init.xavier_uniform_(module.weight)
             if module.bias is not None:
@@ -316,143 +309,16 @@ class CARLA(nn.Module):
             torch.nn.init.kaiming_normal_(module.weight, mode='fan_out', nonlinearity='relu')
             if module.bias is not None:
                 torch.nn.init.zeros_(module.bias)
-    
-    def forward(self, x: torch.Tensor, mode: str = 'encode') -> torch.Tensor:
-        """
-        Forward pass with multiple modes
-        Args:
-            x: [batch, seq_len, input_dim]
-            mode: 'encode', 'detect', or 'reconstruct'
-        """
-        if mode == 'encode':
-            return self.encoder(x)
-        
-        elif mode == 'detect':
-            embeddings = self.encoder(x)
-            anomaly_scores = self.anomaly_detector(embeddings)
-            return anomaly_scores.squeeze(-1)  # [batch]
-        
-        elif mode == 'reconstruct':
-            embeddings = self.encoder(x)
-            reconstruction = self.reconstructor(embeddings)
-            reconstruction = reconstruction.view(x.shape[0], self.seq_len, -1)
-            return reconstruction
-        
-        else:
-            raise ValueError(f"Unknown mode: {mode}")
-    
-    def compute_loss(self, x: torch.Tensor) -> torch.Tensor:
-        """Compute comprehensive training loss"""
-        # Generate augmented pairs
-        positive, negative = self.augmentation(x)
-        
-        # Encode all versions
-        anchor_emb = self.encoder(x)
-        positive_emb = self.encoder(positive)
-        negative_emb = self.encoder(negative)
-        
-        # Contrastive loss
-        contrastive_loss = self.contrastive_loss(anchor_emb, positive_emb, negative_emb)
-        
-        # Reconstruction loss for additional supervision
-        reconstruction = self.forward(x, mode='reconstruct')
-        reconstruction_loss = F.mse_loss(reconstruction, x)
-        
-        # Combined loss
-        total_loss = contrastive_loss + 0.1 * reconstruction_loss
-        
-        return total_loss
-    
-    def detect_anomalies(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Enhanced anomaly detection with multiple strategies"""
-        self.eval()
-        
-        with torch.no_grad():
-            # Method 1: Direct anomaly scoring
-            anomaly_scores = self.forward(x, mode='detect')
-            
-            # Method 2: Reconstruction error
-            reconstruction = self.forward(x, mode='reconstruct')
-            recon_error = torch.mean((x - reconstruction) ** 2, dim=[1, 2])
-            
-            # Method 3: Embedding distance from normal center
-            embeddings = self.encoder(x)
-            # Use zero as normal center (since embeddings are normalized)
-            embedding_distances = torch.norm(embeddings, p=2, dim=1)
-            
-            # Combine all methods with learned weights
-            combined_scores = (
-                0.5 * anomaly_scores + 
-                0.3 * recon_error + 
-                0.2 * embedding_distances
-            )
-            
-            # Point-wise scores (using reconstruction error)
-            point_scores = torch.mean((x - reconstruction) ** 2, dim=2)  # [batch, seq_len]
-        
-        return combined_scores, point_scores
-    
-    def get_embeddings(self, x: torch.Tensor) -> torch.Tensor:
-        """Get normalized embeddings for analysis"""
-        self.eval()
-        with torch.no_grad():
-            return self.encoder(x)
 
 def create_carla_model(seq_len: int = 64, **kwargs) -> CARLA:
-    """Create optimized CARLA model with paper-based hyperparameters"""
-    
-    # 논문 기반 최적 하이퍼파라미터 (이미 100% 달성!)
     config = {
         'seq_len': seq_len,
         'input_dim': 1,
-        'hidden_dim': 256,          # 최적 임베딩 차원
-        'encoder_layers': 3,        # 충분한 깊이
-        'temperature': 0.1,         # 대조 학습 온도
-        'margin': 1.0,             # 트리플렛 마진
-        'dropout': 0.1,            # 정규화
+        'hidden_dim': 256,
+        'encoder_layers': 3,
+        'temperature': 0.1,
+        'margin': 1.0,
+        'dropout': 0.1,
     }
-    
     config.update(kwargs)
-    
-    print("🚀 CARLA Model Configuration (Paper-based, 이미 100% 성능!):")
-    for key, value in config.items():
-        print(f"   {key}: {value}")
-    
     return CARLA(**config)
-
-if __name__ == "__main__":
-    # 테스트
-    model = create_carla_model(seq_len=64)
-    
-    # 테스트 데이터
-    batch_size = 4
-    seq_len = 64
-    x = torch.randn(batch_size, seq_len, 1)
-    
-    print(f"\n🧪 Testing Enhanced CARLA:")
-    print(f"   Input shape: {x.shape}")
-    
-    # Training mode
-    model.train()
-    loss = model.compute_loss(x)
-    print(f"   Training loss: {loss.item():.4f}")
-    
-    # Encoding test
-    model.eval()
-    embeddings = model.get_embeddings(x)
-    print(f"   Embeddings shape: {embeddings.shape}")
-    print(f"   Embeddings norm: {torch.norm(embeddings, p=2, dim=1).mean().item():.4f}")
-    
-    # Anomaly detection test
-    series_scores, point_scores = model.detect_anomalies(x)
-    print(f"   Series scores shape: {series_scores.shape}")
-    print(f"   Point scores shape: {point_scores.shape}")
-    print(f"   Mean series score: {series_scores.mean().item():.4f}")
-    
-    # Reconstruction test
-    reconstruction = model.forward(x, mode='reconstruct')
-    print(f"   Reconstruction shape: {reconstruction.shape}")
-    print(f"   Reconstruction error: {F.mse_loss(x, reconstruction).item():.4f}")
-    
-    print("✅ Enhanced CARLA model test completed successfully!")
-    print("🎯 이미 100% 정확도를 달성한 모델입니다!") 

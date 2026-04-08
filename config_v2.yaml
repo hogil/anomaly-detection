@@ -1,0 +1,212 @@
+baseline:
+  random_walk_step:
+  - 0.003
+  - 0.01
+  value_range:
+  - -0.3
+  - 0.3
+chart:
+  device:
+    ids:
+    - DEV_A
+    - DEV_B
+    - DEV_C
+    - DEV_D
+    - DEV_E
+  item:
+    ids:
+    - CD1
+    - CD2
+    - CD3
+    - THK1
+    - THK2
+    - OVL1
+    - OVL2
+    - DEF1
+  step:
+    ids:
+    - S01
+    - S02
+    - S03
+    - S04
+    - S05
+context:
+  chamber:
+    count_range:
+    - 4
+    - 5
+    ids:
+    - CH_A
+    - CH_B
+    - CH_C
+    - CH_D
+    - CH_E
+  columns:
+  - eqp_id
+  - chamber
+  - recipe
+  eqp_id:
+    count_range:
+    - 4
+    - 7
+    ids:
+    - EQP_01
+    - EQP_02
+    - EQP_03
+    - EQP_04
+    - EQP_05
+    - EQP_06
+    - EQP_07
+    - EQP_08
+  fleet_variation:
+    mean_range:
+    - 0.01
+    - 0.05
+    std_range:
+    - 0.01
+    - 0.04
+  recipe:
+    count_range:
+    - 4
+    - 6
+    ids:
+    - RCP_X1
+    - RCP_X2
+    - RCP_X3
+    - RCP_X4
+    - RCP_X5
+    - RCP_X6
+  target_deviation:
+    mean_sigma_range:
+    - 4.0
+    - 5.5
+    std_range:
+    - 3.0
+    - 4.0
+dataset:
+  classes:
+  - normal
+  - mean_shift
+  - standard_deviation
+  - spike
+  - drift
+  - context
+  samples_per_class: 1000
+  split:
+    test: 0.15
+    train: 0.7
+    val: 0.15
+  test_difficulty_scale: 0.7
+defect:
+  drift:
+    min_max_drift_sigma: 6.0
+    region_ratio_range:
+    - 0.25
+    - 0.35
+    slope_sigma_range:
+    - 0.07
+    - 0.1
+  mean_shift:
+    shift_sigma_range:
+    - 3.5
+    - 4.5
+  region_ratio_range:
+  - 0.15
+  - 0.35
+  spike:
+    magnitude_sigma_range:
+    - 6.0
+    - 10.0
+    min_magnitude_sigma: 5.0
+    min_spikes: 5
+    spike_ratio_range:
+    - 0.04
+    - 0.12
+  standard_deviation:
+    scale_range:
+    - 2.5
+    - 3.2
+episode:
+  count_range:
+  - 12
+  - 25
+  length_range:
+  - 20
+  - 45
+  member_variation:
+    event_count_range:
+    - 0
+    - 3
+    event_length_range:
+    - 5
+    - 25
+    event_weights:
+      densify: 0.3
+      dropout: 0.3
+      thin: 0.4
+  missing:
+    length_range:
+    - 8
+    - 100
+    max_count: 3
+  noise:
+    correlated:
+      rho_range:
+      - 0.6
+      - 0.8
+      sigma_range:
+      - 0.02
+      - 0.05
+    gaussian:
+      sigma_range:
+      - 0.02
+      - 0.06
+    laplacian:
+      b_range:
+      - 0.01
+      - 0.04
+  region:
+    dense:
+      density_range:
+      - 0.8
+      - 1.0
+    missing:
+      density: 0.0
+    sparse:
+      density_range:
+      - 0.25
+      - 0.5
+    thin:
+      density_range:
+      - 0.04
+      - 0.1
+    very_sparse:
+      density_range:
+      - 0.08
+      - 0.2
+  region_weights:
+    dense: 0.25
+    missing: 0.15
+    sparse: 0.25
+    thin: 0.15
+    very_sparse: 0.2
+  time_offset_range:
+  - 0
+  - 300
+image:
+  background: white
+  dpi: 100
+  height: 224
+  overlay:
+    fleet_alpha: 0.4
+    fleet_color: '#B0B0B0'
+    fleet_marker_size: 14
+    target_alpha: 0.75
+    target_color: '#4878CF'
+    target_marker_size: 16
+  width: 224
+output:
+  data_dir: data_v2
+  display_dir: display_v2
+  image_dir: images_v2
+seed: 42

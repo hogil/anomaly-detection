@@ -25,15 +25,20 @@ print(f'  cuda:     {torch.cuda.is_available()}'); \
 print(f'  n_gpus:   {torch.cuda.device_count()}'); \
 [print(f'  GPU {i}:    {torch.cuda.get_device_name(i)} ({torch.cuda.get_device_properties(i).total_memory/1024**3:.0f}GB)') for i in range(torch.cuda.device_count())]"
 
-if [ ! -f "weights/convnextv2_tiny_pretrained.pth" ]; then
+# Pretrained weights — 둘 중 하나 있으면 OK (train.py가 자동 fallback)
+#   1. weights/convnextv2_tiny_pretrained.pth   (로컬 fp32, 110MB, gitignored)
+#   2. weights/convnextv2_tiny.fp16.pth         (커밋된 fp16, 55MB, repo에 포함)
+if [ -f "weights/convnextv2_tiny_pretrained.pth" ]; then
+    echo "  weights:  weights/convnextv2_tiny_pretrained.pth (fp32, 로컬)"
+elif [ -f "weights/convnextv2_tiny.fp16.pth" ]; then
+    echo "  weights:  weights/convnextv2_tiny.fp16.pth (fp16, 커밋됨)"
+else
     echo ""
-    echo "[ERROR] weights/convnextv2_tiny_pretrained.pth 없음."
-    echo "        폐쇄망에서는 timm/HuggingFace 다운 불가."
-    echo "        인터넷 머신에서 'python scripts/download_pretrained.py' 실행 후"
-    echo "        파일을 weights/ 폴더로 복사하세요."
+    echo "[ERROR] pretrained weights 없음."
+    echo "        repo에 weights/convnextv2_tiny.fp16.pth가 포함돼야 함 (git pull 확인)"
+    echo "        또는 'python scripts/download_pretrained.py' 로 fp32 다운 (인터넷 필요)"
     exit 1
 fi
-echo "  weights:  weights/convnextv2_tiny_pretrained.pth ✓"
 
 # ----------------------------------------------------------------------------
 # CLI 파싱
@@ -62,9 +67,9 @@ elif [ -f "data/scenarios.csv" ] && [ -f "data/timeseries.csv" ]; then
 else
     echo ""
     echo "============================================================"
-    echo " Step 1/4 — 데이터 생성 (config.yaml)"
+    echo " Step 1/4 — 데이터 생성 (32 코어 중 24개 병렬)"
     echo "============================================================"
-    python generate_data.py
+    python generate_data.py --workers 24
 fi
 
 # ----------------------------------------------------------------------------

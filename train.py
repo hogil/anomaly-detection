@@ -122,12 +122,39 @@ class ChartImageDataset(Dataset):
 
 def create_model(num_classes: int, model_name: str, device: torch.device,
                   weights_path: str = None, dropout: float = 0.5):
-    """timm 모델 생성. 파일 가중치 있으면 로드, 없으면 HuggingFace에서 다운."""
-    if weights_path and Path(weights_path).exists():
+    """timm 모델 생성.
+
+    가중치 검색 순서 (convnextv2_tiny):
+        1. weights/convnextv2_tiny_pretrained.pth   (로컬 fp32, 110MB, gitignored)
+        2. weights/convnextv2_tiny.fp16.pth         (커밋된 fp16, 55MB, 폐쇄망 서버용)
+        3. HuggingFace pretrained 다운로드           (인터넷 필요)
+    """
+    # fp16 fallback 후보 자동 추가 (convnextv2_tiny)
+    candidates = []
+    if weights_path:
+        candidates.append(weights_path)
+    if "convnextv2_tiny" in model_name:
+        candidates.append("weights/convnextv2_tiny.fp16.pth")
+
+    found_path = None
+    for c in candidates:
+        if c and Path(c).exists():
+            found_path = c
+            break
+
+    if found_path:
         model = timm.create_model(model_name, pretrained=False)
-        state_dict = torch.load(weights_path, map_location="cpu", weights_only=True)
+        state_dict = torch.load(found_path, map_location="cpu", weights_only=True)
+        # fp16 → fp32 자동 캐스팅 (init 정밀도 손실 무시 가능, 학습 시 다시 update됨)
+        is_fp16 = any(v.dtype == torch.float16 for v in state_dict.values()
+                      if hasattr(v, 'dtype'))
+        if is_fp16:
+            state_dict = {k: (v.float() if hasattr(v, 'dtype') and v.dtype == torch.float16 else v)
+                          for k, v in state_dict.items()}
+            print(f"  가중치 로드: {found_path} (fp16 → fp32 cast)")
+        else:
+            print(f"  가중치 로드: {found_path}")
         model.load_state_dict(state_dict)
-        print(f"  가중치 로드: {weights_path}")
     else:
         model = timm.create_model(model_name, pretrained=True)
         print(f"  HuggingFace pretrained: {model_name}")

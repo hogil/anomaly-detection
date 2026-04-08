@@ -13,19 +13,21 @@ display/
 
 # Training artifacts
 logs/
-weights/
+weights/*
+# 화이트리스트: 폐쇄망 서버용 fp16 pretrained weights (55MB, GitHub 100MB 한도 안)
+!weights/convnextv2_tiny.fp16.pth
 
 # Inference outputs
 inference_output/
 inference_demo/
 test_render/
 
-# Model checkpoints (anywhere)
-*.pth
+# Model checkpoints (anywhere) — 위 화이트리스트보다 약하게
 *.pt
 *.onnx
 *.safetensors
 *.bin
+# *.pth는 weights/ 화이트리스트와 충돌하므로 weights/ 패턴으로 처리
 
 # ============================================================================
 # Python

@@ -7,6 +7,14 @@ Context = eqp_id, chamber, recipe (fleet 비교)
 출력:
     data/timeseries.csv   (chart_id, time_index, device, step, item, eqp_id, chamber, recipe, value)
     data/scenarios.csv    (chart_id, class, device, step, item, context_column, target, contexts, ...)
+
+병렬 처리:
+    --workers 1   : 순차 (default, 노트북 기본)
+    --workers 0   : auto (cpu_count - 1, H200 서버 권장)
+    --workers N>1 : N개 process 병렬
+
+병렬 모드에서는 (seed, scenario_id) 로부터 SeedSequence로 per-task RNG 유도.
+순차 모드 결과와는 달라지지만, 같은 (config, seed, workers) 조합은 100% 재현.
 """
 
 import argparse
@@ -18,6 +26,7 @@ import pandas as pd
 from pathlib import Path
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
+from multiprocessing import Pool, cpu_count
 
 from src.data.scenario_generator import ScenarioGenerator
 
@@ -59,7 +68,7 @@ def scale_config(config: dict, scale: float) -> dict:
 
 
 def generate_batch(config, classes, count_per_class, rng, start_id, label):
-    """count_per_class: int (모든 클래스 동일) 또는 dict {class: count}"""
+    """순차 생성 (기본). count_per_class: int 또는 dict {class: count}."""
     gen = ScenarioGenerator(config, rng=rng)
 
     all_ts_rows = []
@@ -90,7 +99,107 @@ def generate_batch(config, classes, count_per_class, rng, start_id, label):
     return all_ts_rows, all_sc_rows, sc_id
 
 
-def generate(config: dict):
+# ============================================================================
+# 병렬 생성 (multiprocessing) — H200 서버 32 코어 활용
+# ============================================================================
+
+# Worker process별 캐시 (config는 init 1회만 pickle)
+_w_cache = {}
+
+
+def _init_worker(config_dict: dict, base_seed: int):
+    """worker process 초기화 — config 캐시"""
+    _w_cache["cfg"] = config_dict
+    _w_cache["base_seed"] = base_seed
+
+
+def _gen_one(task: tuple):
+    """단일 시나리오 생성 (worker 내부 호출).
+
+    task = (sid_int, cls, batch_idx)
+      - sid_int:   chart_id 정수 (e.g. 5 → "ch_00005")
+      - cls:       class name
+      - batch_idx: 0=trainval, 1=test (RNG 격리용)
+
+    재현성: SeedSequence([base_seed, sid_int, batch_idx]) → 같은 입력은 항상 같은 결과.
+    sequential generate_batch와는 RNG 순서가 달라 결과 다름.
+    """
+    sid_int, cls, batch_idx = task
+    cfg = _w_cache["cfg"]
+    base = _w_cache["base_seed"]
+
+    # Per-task deterministic RNG (worker order에 무관)
+    ss = np.random.SeedSequence([int(base), int(sid_int), int(batch_idx)])
+    rng = np.random.default_rng(ss)
+
+    # Fresh ScenarioGenerator per task — child generators(BaselineGen/DefectSynth)도
+    # 같은 rng 받음. ScenarioGenerator __init__는 가벼움 (config ref + child 2개).
+    gen = ScenarioGenerator(cfg, rng=rng)
+
+    sid = f"ch_{sid_int:05d}"
+    result = gen.generate(sid, cls)
+
+    sc_row = {
+        "chart_id": sid,
+        "class": cls,
+        "device": result.device,
+        "step": result.step,
+        "item": result.item,
+        "context_column": result.context_column,
+        "target": result.target,
+        "contexts": ",".join(result.contexts),
+        "defect_start_idx": result.defect_start_idx,
+        "defect_params": json.dumps(result.defect_params),
+    }
+    return sid_int, sc_row, result.timeseries_rows
+
+
+def generate_batch_parallel(config, classes, count_per_class, base_seed,
+                             start_id, label, num_workers, batch_idx):
+    """병렬 생성. num_workers process pool 사용.
+
+    재현성: (base_seed, sid_int, batch_idx) → SeedSequence → per-task RNG.
+    같은 인자는 worker 수와 무관하게 항상 같은 결과.
+    """
+    # Build task list
+    tasks = []
+    sc_id = start_id
+    for cls in classes:
+        n = count_per_class[cls] if isinstance(count_per_class, dict) else count_per_class
+        for _ in range(n):
+            tasks.append((sc_id, cls, batch_idx))
+            sc_id += 1
+
+    print(f"  [parallel] {len(tasks)} 시나리오, {num_workers} workers, batch_idx={batch_idx}")
+
+    with Pool(processes=num_workers, initializer=_init_worker,
+              initargs=(config, base_seed)) as pool:
+        # imap_unordered로 worker 부하 자동 분산
+        results = list(tqdm(
+            pool.imap_unordered(_gen_one, tasks, chunksize=8),
+            total=len(tasks), desc=f"{label}({num_workers}w)"
+        ))
+
+    # sid_int 순으로 정렬하여 deterministic 순서 복원
+    results.sort(key=lambda r: r[0])
+
+    all_ts_rows = []
+    all_sc_rows = []
+    for _, sc_row, ts_rows in results:
+        all_sc_rows.append(sc_row)
+        all_ts_rows.extend(ts_rows)
+
+    return all_ts_rows, all_sc_rows, sc_id
+
+
+def generate(config: dict, num_workers: int = 1):
+    """전체 데이터 생성.
+
+    num_workers:
+      1   : 순차 (default, 노트북 호환)
+      0   : auto (cpu_count - 1)
+      N>1 : N process 병렬
+    """
     seed = config.get("seed", 42)
     rng = np.random.default_rng(seed)
 
@@ -113,16 +222,37 @@ def generate(config: dict):
     n_test_dict = {cls: max(1, round(spc_dict[cls] * test_ratio)) for cls in classes}
     n_trainval_dict = {cls: spc_dict[cls] - n_test_dict[cls] for cls in classes}
 
+    # 병렬 worker 수 결정
+    if num_workers == 0:
+        nw = max(1, cpu_count() - 1)
+    else:
+        nw = max(1, num_workers)
+    use_parallel = nw > 1
+
+    print(f"\n  Workers: {nw} ({'parallel' if use_parallel else 'sequential'})")
+
     print(f"\n=== Train+Val ===")
     for cls in classes:
         print(f"  {cls}: {n_trainval_dict[cls]}")
-    tv_ts, tv_sc, next_id = generate_batch(config, classes, n_trainval_dict, rng, 0, "train+val")
+    if use_parallel:
+        tv_ts, tv_sc, next_id = generate_batch_parallel(
+            config, classes, n_trainval_dict, seed, 0, "train+val",
+            num_workers=nw, batch_idx=0,
+        )
+    else:
+        tv_ts, tv_sc, next_id = generate_batch(config, classes, n_trainval_dict, rng, 0, "train+val")
 
     test_config = scale_config(config, test_scale)
     print(f"\n=== Test (scale={test_scale}) ===")
     for cls in classes:
         print(f"  {cls}: {n_test_dict[cls]}")
-    te_ts, te_sc, _ = generate_batch(test_config, classes, n_test_dict, rng, next_id, "test")
+    if use_parallel:
+        te_ts, te_sc, _ = generate_batch_parallel(
+            test_config, classes, n_test_dict, seed, next_id, "test",
+            num_workers=nw, batch_idx=1,
+        )
+    else:
+        te_ts, te_sc, _ = generate_batch(test_config, classes, n_test_dict, rng, next_id, "test")
 
     tv_df = pd.DataFrame(tv_sc)
     te_df = pd.DataFrame(te_sc)
@@ -157,12 +287,15 @@ def generate(config: dict):
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", default="config.yaml")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="병렬 worker 수 (1=순차 default, 0=auto cpu_count-1, N>1=N process)")
     args = parser.parse_args()
     with open(args.config, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
-    generate(config)
+    generate(config, num_workers=args.workers)
 
 
 if __name__ == "__main__":

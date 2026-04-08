@@ -13,7 +13,7 @@
 
 ## 1. 사전 준비 — 인터넷 가능한 머신에서
 
-폐쇄망 안에서는 `pip install`, `timm.create_model(pretrained=True)` 등 모든 외부 다운로드가 막혀 있다. 다음 두 가지를 미리 빌드한다.
+폐쇄망 안에서는 `pip install`, `timm.create_model(pretrained=True)` 등 모든 외부 다운로드가 막혀 있다. 다음을 미리 빌드한다.
 
 ### 1-1. Python 패키지 wheel 모음
 
@@ -31,16 +31,15 @@ pip download -d offline_wheels \
 
 > **권장**: 인터넷 머신도 Ubuntu 24 + Python 3.12 (서버와 동일). 다른 OS면 wheel 호환성 깨질 수 있음.
 
-### 1-2. ConvNeXtV2-Tiny pretrained weights
+### 1-2. Repo clone (pretrained weights 포함)
 
 ```bash
-# 인터넷 머신
 git clone https://github.com/hogil/anomaly-detection.git
-cd anomaly-detection
-pip install timm torch  # 임시
-python scripts/download_pretrained.py
-# → weights/convnextv2_tiny_pretrained.pth (약 110 MB)
 ```
+
+repo에는 **`weights/convnextv2_tiny.fp16.pth`** (55 MB, fp16) 가 이미 포함돼 있다. `train.py` 가 자동으로 fp32로 캐스팅해서 사용. 별도 다운로드 불필요.
+
+> **선택** (fp32 원본을 쓰고 싶을 때만): `python scripts/download_pretrained.py` 로 110 MB fp32 버전을 받을 수 있음. train.py 는 둘 다 인식하며 fp32가 우선.
 
 ### 1-3. Repo 압축
 
@@ -81,8 +80,8 @@ python -c "import torch; [print(torch.cuda.get_device_name(i),
     for i in range(torch.cuda.device_count())]"
 # 기대: NVIDIA H200 ~141 GB × 2
 
-ls weights/convnextv2_tiny_pretrained.pth
-# 기대: 파일 존재 (없으면 다시 복사)
+ls weights/convnextv2_tiny.fp16.pth
+# 기대: 파일 존재 (~55MB, repo에 포함됨)
 ```
 
 ---

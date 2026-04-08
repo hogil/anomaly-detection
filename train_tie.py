@@ -1080,19 +1080,22 @@ def main():
         else:
             val_target_recall = val_f1
 
-        # Best 선택 로직 (tie-fix ABSOLUTE):
+        # Best 선택 로직 (TIE-UPDATE, train_tie.py 2026-04-09):
         #   - strict improvement (>): 모델 저장 + test 평가 + patience reset
-        #   - tie (==):               patience 증가만, 모델/test 건드리지 않음
+        #   - tie (==):               모델 저장 + test 평가 + patience 증가 (last-tie wins)
         #   - decrease (<):           patience 증가만
         # min_epochs 이전에는 best 갱신 안 함
-        # Why tie-fix: 작은 val set + smooth_window 로 tie 가 빈발 → tie 에 저장하면
-        # window 안 오래된 값이 최근 degradation 을 가려서 나쁜 weights 저장됨.
-        # v9_ls05_n700_s4 사례: ep 7 (3 errors) 이 best, 하지만 tie 저장으로 ep 14 (27 errors) saved.
+        # Rationale: val_f1 포화 plateau 에서 strict > 만 쓰면 첫 도달 epoch 에 freeze.
+        # Tie 에서도 업데이트하여 더 수렴한 weights 선택하되, patience counter 는 누적되어
+        # 5 연속 non-strict (tie or decrease) 발생 시 early stop.
         is_candidate = epoch >= args.min_epochs and val_target_recall >= best_val_recall
         is_strict_improvement = is_candidate and val_target_recall > best_val_recall
 
-        if is_strict_improvement:
-            patience_counter = 0
+        if is_candidate:
+            if is_strict_improvement:
+                patience_counter = 0
+            else:
+                patience_counter += 1  # tie: 업데이트하되 counter 누적
             best_val_recall = val_target_recall
             best_epoch = epoch
             # best_model.pth 저장: EMA 있으면 EMA weights, 없으면 raw
@@ -1178,12 +1181,8 @@ def main():
             # test_history 별도 파일로도 저장 (가독성)
             with open(log_dir / "test_history.json", "w", encoding="utf-8") as f:
                 json.dump(test_history, f, indent=2, ensure_ascii=False)
-        elif is_candidate:
-            # Tie: smoothed == best. patience counter 만 증가, model 건드리지 않음.
-            patience_counter += 1
-            print(f"\n  TIE (stag {patience_counter}/{args.patience}, best kept at ep {best_epoch})")
         else:
-            # Decrease or pre-min_epochs
+            # Decrease (smoothed < best) or pre-min_epochs: patience 증가
             patience_counter += 1
             print(f"\n  No improvement ({patience_counter}/{args.patience})")
 

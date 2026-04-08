@@ -179,7 +179,7 @@ def mixup_data(x, y, alpha=0.2):
 
 
 def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_epochs,
-                    scaler=None, use_mixup=False, ohem_ratio=0.0):
+                    scaler=None, use_mixup=False, ohem_ratio=0.0, amp_dtype=None):
     model.train()
     total_loss = 0
     correct = 0
@@ -217,7 +217,8 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
                 return lam * criterion(outputs, labels_a) + (1 - lam) * criterion(outputs, labels_b)
 
         if scaler is not None:
-            with torch.amp.autocast("cuda"):
+            # fp16 path with GradScaler
+            with torch.amp.autocast("cuda", dtype=torch.float16):
                 outputs = model(images)
                 loss = compute_loss(outputs)
                 if weights is not None and ohem_ratio == 0:
@@ -228,7 +229,18 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             scaler.step(optimizer)
             scaler.update()
+        elif amp_dtype is not None and device.type == "cuda":
+            # bf16 path — scaler 불필요 (range가 fp32와 동일)
+            with torch.amp.autocast("cuda", dtype=amp_dtype):
+                outputs = model(images)
+                loss = compute_loss(outputs)
+                if weights is not None and ohem_ratio == 0:
+                    loss = (loss * weights).mean() if loss.dim() > 0 else loss
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
         else:
+            # fp32 path
             outputs = model(images)
             loss = compute_loss(outputs)
             if weights is not None and ohem_ratio == 0:
@@ -249,18 +261,22 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
 
 @torch.no_grad()
 def evaluate(model, loader, criterion, device, classes, desc="Eval",
-             normal_threshold=None, tta=False):
+             normal_threshold=None, tta=False, amp_dtype=None):
     model.eval()
     total_loss = 0
     all_preds = []
     all_labels = []
     total = 0
 
+    # eval은 default fp16 (속도). bf16 학습이면 bf16 eval.
+    eval_dtype = amp_dtype if amp_dtype is not None else torch.float16
+    use_amp_eval = device.type == "cuda"
+
     pbar = tqdm(loader, desc=desc, leave=False, ncols=100)
     for batch in pbar:
         images, labels = batch[0], batch[1]
         images, labels = images.to(device), labels.to(device)
-        with torch.amp.autocast("cuda", enabled=device.type=="cuda"):
+        with torch.amp.autocast("cuda", enabled=use_amp_eval, dtype=eval_dtype):
             if tta:
                 # TTA: 5가지 변형 평균
                 # 1. 원본
@@ -508,7 +524,14 @@ def main():
     parser.add_argument("--seed", type=int, default=42,
                         help="학습 random seed (재현성)")
     parser.add_argument("--num_workers", type=int, default=4,
-                        help="DataLoader worker 수 (Windows: 0~4 권장)")
+                        help="DataLoader worker 수 (Windows: 0~4, Linux 서버: 8~16 권장)")
+    parser.add_argument("--precision", type=str, default="fp16",
+                        choices=["fp16", "bf16", "fp32"],
+                        help="학습 정밀도 (H100/H200: bf16 권장 — overflow 없음, GradScaler 불필요)")
+    parser.add_argument("--compile", action="store_true",
+                        help="torch.compile 활성화 (H100/H200에서 20~50%% 가속)")
+    parser.add_argument("--prefetch_factor", type=int, default=4,
+                        help="DataLoader prefetch_factor (서버: 8~16)")
     args = parser.parse_args()
 
     with open(args.config, "r", encoding="utf-8") as f:
@@ -529,12 +552,29 @@ def main():
     print(f"  Random seed: {args.seed} (cudnn.benchmark=True, non-deterministic)")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    scaler = torch.amp.GradScaler("cuda") if (args.use_amp and device.type == "cuda") else None
+
+    # Precision 결정 — bf16은 GradScaler 불필요 (H100/H200 권장)
+    # use_amp 호환: fp16이 default. --precision bf16/fp32로 override.
+    if args.precision == "bf16" and device.type == "cuda":
+        amp_dtype = torch.bfloat16
+        scaler = None  # bf16은 scaler 불필요
+    elif args.precision == "fp16" and args.use_amp and device.type == "cuda":
+        amp_dtype = torch.float16
+        scaler = torch.amp.GradScaler("cuda")
+    else:
+        amp_dtype = None  # fp32
+        scaler = None
+
     print(f"\n{'='*60}")
     print(f"  Device: {device}")
     if torch.cuda.is_available():
         print(f"  GPU: {torch.cuda.get_device_name(0)}")
         print(f"  VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f}GB")
+        # H100/H200 같은 SM 9.0은 TF32 + bf16이 가장 빠름
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+    print(f"  Precision: {args.precision} (amp_dtype={amp_dtype}, scaler={'on' if scaler else 'off'})")
+    print(f"  Compile: {args.compile}")
     print(f"{'='*60}")
 
     all_classes = config["dataset"]["classes"]
@@ -577,6 +617,10 @@ def main():
         "smooth_window": args.smooth_window,
         "smooth_method": args.smooth_method,
         "min_epochs": args.min_epochs,
+        "precision": args.precision,
+        "compile": args.compile,
+        "num_workers": args.num_workers,
+        "prefetch_factor": args.prefetch_factor,
     }
     print("\n  Hyperparameters:")
     for k, v in hparams.items():
@@ -649,7 +693,7 @@ def main():
         num_workers=num_workers,
         pin_memory=True,
         persistent_workers=num_workers > 0,
-        prefetch_factor=4 if num_workers > 0 else None,
+        prefetch_factor=args.prefetch_factor if num_workers > 0 else None,
         worker_init_fn=_worker_init_fn if num_workers > 0 else None,
     )
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, **common)
@@ -665,6 +709,17 @@ def main():
         weights_path = None
     model = create_model(num_classes, args.model_name, device, weights_path, dropout=args.dropout)
     params_M = sum(p.numel() for p in model.parameters()) / 1e6
+
+    # torch.compile (H100/H200 권장: 20~50% 가속)
+    if args.compile:
+        if hasattr(torch, "compile") and device.type == "cuda":
+            print(f"  torch.compile: enabled (mode=max-autotune)")
+            try:
+                model = torch.compile(model, mode="max-autotune")
+            except Exception as e:
+                print(f"  torch.compile failed, falling back: {e}")
+        else:
+            print(f"  torch.compile requested but unsupported (cpu or old torch)")
 
     # Freeze backbone (선택)
     if args.freeze_backbone_epochs > 0:
@@ -803,13 +858,15 @@ def main():
         # Train
         train_loss, train_acc = train_one_epoch(
             model, train_loader, criterion, optimizer, device, epoch, args.epochs,
-            scaler=scaler, use_mixup=args.use_mixup, ohem_ratio=args.ohem_ratio
+            scaler=scaler, use_mixup=args.use_mixup, ohem_ratio=args.ohem_ratio,
+            amp_dtype=amp_dtype,
         )
 
         # Val
         val_loss, val_acc, val_recall, val_f1, val_metrics, val_preds, val_labels = evaluate(
             model, val_loader, criterion, device, classes,
-            desc=f"Epoch {epoch}/{args.epochs} [Val]"
+            desc=f"Epoch {epoch}/{args.epochs} [Val]",
+            amp_dtype=amp_dtype,
         )
 
         # Test (옵션: 매 epoch 평가)
@@ -817,7 +874,8 @@ def main():
         if args.eval_test_every_epoch:
             _, _, ep_test_recall, ep_test_f1, ep_test_metrics, _, _ = evaluate(
                 model, test_loader, criterion, device, classes,
-                desc=f"Epoch {epoch}/{args.epochs} [TestEpoch]"
+                desc=f"Epoch {epoch}/{args.epochs} [TestEpoch]",
+                amp_dtype=amp_dtype,
             )
 
         if args.scheduler == "plateau" and epoch > args.warmup_epochs:
@@ -898,7 +956,8 @@ def main():
             # Best 시 test 평가
             test_loss, test_acc, test_recall, test_f1, test_metrics, test_preds, test_labels = evaluate(
                 model, test_loader, criterion, device, classes,
-                desc=f"Epoch {epoch}/{args.epochs} [Test]"
+                desc=f"Epoch {epoch}/{args.epochs} [Test]",
+                amp_dtype=amp_dtype,
             )
             best_test_metrics = test_metrics
             best_test_recall = test_recall
@@ -920,7 +979,7 @@ def main():
             for nt in nt_thresholds:
                 _, nt_acc, nt_recall, nt_f1, nt_metrics_t, nt_preds_t, nt_labels_t = evaluate(
                     model, test_loader, criterion, device, classes,
-                    desc=f"NT={nt}", normal_threshold=nt
+                    desc=f"NT={nt}", normal_threshold=nt, amp_dtype=amp_dtype,
                 )
                 nt_results[str(nt)] = {
                     "acc": round(nt_acc, 4), "recall": round(nt_recall, 4),
@@ -991,11 +1050,13 @@ def main():
 
         # val
         val_loss_a, val_acc_a, val_recall_a, val_f1_a, val_metrics_a, _, _ = evaluate(
-            model, val_loader, criterion, device, classes, desc="Avg [Val]"
+            model, val_loader, criterion, device, classes, desc="Avg [Val]",
+            amp_dtype=amp_dtype,
         )
         # test
         test_loss_a, test_acc_a, test_recall_a, test_f1_a, test_metrics_a, test_preds_a, test_labels_a = evaluate(
-            model, test_loader, criterion, device, classes, desc="Avg [Test]"
+            model, test_loader, criterion, device, classes, desc="Avg [Test]",
+            amp_dtype=amp_dtype,
         )
 
         print(f"\n  Averaged val:  f1={val_f1_a:.4f}  recall={val_recall_a:.4f}")
@@ -1017,7 +1078,7 @@ def main():
         for nt in [0.5, 0.6, 0.7, 0.8, 0.9]:
             _, nt_acc, nt_recall, nt_f1, nt_metrics_t, nt_preds_t, nt_labels_t = evaluate(
                 model, test_loader, criterion, device, classes,
-                desc=f"AvgNT={nt}", normal_threshold=nt
+                desc=f"AvgNT={nt}", normal_threshold=nt, amp_dtype=amp_dtype,
             )
             nt_results_a[str(nt)] = {
                 "acc": round(nt_acc, 4), "recall": round(nt_recall, 4),

@@ -5,8 +5,11 @@
     조합들을 한 스크립트로 순차 실행. 기존 결과는 건드리지 않고 skip-if-exists.
 
 사용법:
-    # 전부 실행
+    # 노트북 (4060 Ti, fp16, sequential)
     python run_experiments.py
+
+    # H200 서버 (bf16 + compile + bs256 + num_workers 16, 2 GPU 병렬)
+    python run_experiments.py --server h200 --gpus 2
 
     # 특정 그룹만
     python run_experiments.py --groups sweep reg
@@ -19,9 +22,14 @@
 
 그룹:
     sweep : n=normal_ratio sweep × 3 seeds (v9 sweet spot 재검증, 15 runs)
-    reg   : 정규화 ablation at n=2800 s42 (label_smooth / mixup / dropout / focal, 4 runs)
+    reg   : 정규화 ablation at n=2800 s42 (label_smooth / mixup / dropout / focal, 5 runs)
     lr    : LR 민감도 ablation at n=2800 s42 (3 runs)
     mc    : multiclass 보조 모델 (1 run) — 6-class 개별 recall 확인
+
+서버 모드:
+    laptop : 노트북 default — fp16 AMP, bs 32, num_workers 4 (4060 Ti 16GB)
+    h200   : H200 서버 — bf16 + torch.compile, bs 256, num_workers 16, prefetch 8
+             (141GB VRAM, 32 CPU 코어 기준 — 메모리 여유 충분, 속도 최대화)
 
 절대 규칙:
     * 기존 logs/<run_dir>/ 절대 삭제 금지 — 이미 존재하면 skip
@@ -48,12 +56,46 @@ if sys.platform == "win32":
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+import queue
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 ROOT = Path(__file__).resolve().parent
 LOGS = ROOT / "logs"
+
+
+# ============================================================================
+# Server profiles — 서버 환경별 학습 args 자동 주입
+# ============================================================================
+
+SERVER_PROFILES = {
+    "laptop": {
+        # 노트북 default — train.py default와 동일 (변경 없음)
+        # bs 32, fp16 AMP, num_workers 4, 4060 Ti 16GB 기준
+        "extra_args": [],
+        "default_gpus": 1,
+        "description": "노트북 (4060 Ti 16GB, fp16, bs 32)",
+    },
+    "h200": {
+        # H200 141GB × 2장, 32 CPU, 384GB RAM 폐쇄망 서버
+        # bf16 (overflow 없음, scaler 불필요) + torch.compile (20~50% 가속)
+        # bs 256 (28M params 모델 / 141GB VRAM 여유 충분)
+        # num_workers 16 (32 코어의 절반, 2 process 동시 실행 고려)
+        # prefetch_factor 8 (큰 batch + 빠른 GPU)
+        "extra_args": [
+            "--precision", "bf16",
+            "--compile",
+            "--batch_size", "256",
+            "--num_workers", "16",
+            "--prefetch_factor", "8",
+        ],
+        "default_gpus": 2,
+        "description": "H200 141GB × 2 (bf16 + compile + bs 256, 32 코어)",
+    },
+}
 
 
 # ============================================================================
@@ -67,11 +109,14 @@ class Exp:
     args: List[str] = field(default_factory=list)  # extra train.py args
     note: str = ""
 
-    def cmd(self) -> List[str]:
+    def cmd(self, server_extra: Optional[List[str]] = None) -> List[str]:
         base = [
-            sys.executable, "train.py",
+            sys.executable, "-u", "train.py",  # -u: unbuffered (real-time tqdm in subprocess)
             "--log_dir", f"logs/{self.name}",
         ]
+        # 순서: server profile 먼저 → exp args 마지막 (exp가 server를 override 가능)
+        if server_extra:
+            base = base + list(server_extra)
         return base + self.args
 
     def log_dir(self) -> Path:
@@ -186,8 +231,21 @@ def build_experiments() -> List[Exp]:
 # Runner
 # ============================================================================
 
-def run_one(exp: Exp, force: bool, dry_run: bool) -> dict:
-    """단일 실험 실행. done이면 skip. 반환: status dict."""
+_print_lock = threading.Lock()
+
+
+def _safe_print(*a, **kw):
+    with _print_lock:
+        print(*a, **kw, flush=True)
+
+
+def run_one(exp: Exp, force: bool, dry_run: bool,
+            server_extra: Optional[List[str]] = None,
+            gpu_id: Optional[int] = None) -> dict:
+    """단일 실험 실행. done이면 skip. 반환: status dict.
+
+    gpu_id가 주어지면 CUDA_VISIBLE_DEVICES 환경변수로 격리.
+    """
     status = {
         "name": exp.name,
         "group": exp.group,
@@ -195,6 +253,7 @@ def run_one(exp: Exp, force: bool, dry_run: bool) -> dict:
         "failed": False,
         "elapsed_sec": 0.0,
         "rc": None,
+        "gpu_id": gpu_id,
     }
 
     if exp.is_done() and not force:
@@ -204,23 +263,97 @@ def run_one(exp: Exp, force: bool, dry_run: bool) -> dict:
     # 절대 규칙: 기존 폴더 삭제 금지. force여도 train.py가 이어쓰기.
     exp.log_dir().mkdir(parents=True, exist_ok=True)
 
-    print()
-    print("=" * 78)
-    print(f"[RUN] {exp.name}  ({exp.group})")
-    print(f"      {exp.note}")
-    print("      " + " ".join(exp.cmd()))
-    print("=" * 78, flush=True)
+    cmd = exp.cmd(server_extra=server_extra)
+    gpu_tag = f"[GPU {gpu_id}] " if gpu_id is not None else ""
+
+    _safe_print()
+    _safe_print("=" * 78)
+    _safe_print(f"{gpu_tag}[RUN] {exp.name}  ({exp.group})")
+    _safe_print(f"      {exp.note}")
+    _safe_print("      " + " ".join(cmd))
+    _safe_print("=" * 78)
 
     if dry_run:
         status["skipped"] = True
         return status
 
+    env = os.environ.copy()
+    if gpu_id is not None:
+        env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+
+    # 병렬 실행 시 process별 로그를 파일로도 저장 (출력 섞임 방지)
+    log_file = exp.log_dir() / "run.log"
     t0 = time.time()
-    rc = subprocess.call(exp.cmd(), cwd=str(ROOT))
+    with open(log_file, "ab") as lf:
+        proc = subprocess.Popen(
+            cmd, cwd=str(ROOT), env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            bufsize=1,
+        )
+        for line in proc.stdout:
+            lf.write(line)
+            lf.flush()
+            try:
+                _safe_print(f"{gpu_tag}{exp.name}: " + line.decode("utf-8", errors="replace").rstrip())
+            except Exception:
+                pass
+        rc = proc.wait()
     status["elapsed_sec"] = round(time.time() - t0, 1)
     status["rc"] = rc
     status["failed"] = (rc != 0)
     return status
+
+
+def run_parallel(exps: List[Exp], num_gpus: int, force: bool, dry_run: bool,
+                 server_extra: Optional[List[str]] = None) -> List[dict]:
+    """num_gpus개 GPU에 분산 실행. GPU queue 사용 — 자유로운 GPU에 다음 작업 즉시 할당."""
+    if num_gpus <= 1:
+        # 순차 실행 — GPU 0 fix
+        statuses = []
+        for i, exp in enumerate(exps, 1):
+            _safe_print(f"[{i}/{len(exps)}]")
+            s = run_one(exp, force=force, dry_run=dry_run,
+                        server_extra=server_extra, gpu_id=0 if num_gpus == 1 else None)
+            statuses.append(s)
+            if s["skipped"] and exp.is_done():
+                _safe_print(f"[SKIP] {exp.name}")
+            elif s["failed"]:
+                _safe_print(f"[FAIL rc={s['rc']}] {exp.name}")
+        return statuses
+
+    # 병렬 실행 — GPU queue
+    gpu_q: queue.Queue[int] = queue.Queue()
+    for g in range(num_gpus):
+        gpu_q.put(g)
+
+    statuses: List[dict] = []
+
+    def _task(idx: int, exp: Exp) -> dict:
+        gpu_id = gpu_q.get()
+        try:
+            _safe_print(f"[{idx}/{len(exps)}] start on GPU {gpu_id}: {exp.name}")
+            return run_one(exp, force=force, dry_run=dry_run,
+                           server_extra=server_extra, gpu_id=gpu_id)
+        finally:
+            gpu_q.put(gpu_id)
+
+    with ThreadPoolExecutor(max_workers=num_gpus) as ex:
+        futures = {ex.submit(_task, i + 1, e): e for i, e in enumerate(exps)}
+        for fut in as_completed(futures):
+            try:
+                s = fut.result()
+            except Exception as e:
+                exp = futures[fut]
+                s = {"name": exp.name, "group": exp.group, "skipped": False,
+                     "failed": True, "elapsed_sec": 0.0, "rc": None, "error": str(e)}
+            statuses.append(s)
+            if s.get("skipped") and futures[fut].is_done():
+                _safe_print(f"[SKIP] {futures[fut].name}")
+            elif s.get("failed"):
+                _safe_print(f"[FAIL rc={s.get('rc')}] {futures[fut].name}")
+            else:
+                _safe_print(f"[DONE {s['elapsed_sec']}s] {futures[fut].name}")
+    return statuses
 
 
 # ============================================================================
@@ -350,13 +483,26 @@ def main():
                         default=["sweep", "reg", "lr", "mc"],
                         choices=["sweep", "reg", "lr", "mc"],
                         help="실행할 그룹 (default: all)")
+    parser.add_argument("--server", type=str, default="laptop",
+                        choices=list(SERVER_PROFILES.keys()),
+                        help="서버 환경 (default: laptop)")
+    parser.add_argument("--gpus", type=int, default=0,
+                        help="병렬 GPU 수 (0=server profile default, 1=순차)")
     parser.add_argument("--dry-run", action="store_true", help="명령만 출력, 학습 안 함")
     parser.add_argument("--force", action="store_true", help="done 폴더도 재실행")
     parser.add_argument("--only-summary", action="store_true", help="기존 결과만 요약")
     args = parser.parse_args()
 
+    profile = SERVER_PROFILES[args.server]
+    server_extra = profile["extra_args"]
+    num_gpus = args.gpus if args.gpus > 0 else profile["default_gpus"]
+
     exps = [e for e in build_experiments() if e.group in args.groups]
-    print(f"[INFO] selected groups: {args.groups}")
+
+    print(f"[INFO] server profile:   {args.server} — {profile['description']}")
+    print(f"[INFO] num_gpus:         {num_gpus}")
+    print(f"[INFO] server args:      {' '.join(server_extra) if server_extra else '(none)'}")
+    print(f"[INFO] selected groups:  {args.groups}")
     print(f"[INFO] total experiments: {len(exps)}")
 
     done = sum(1 for e in exps if e.is_done())
@@ -368,23 +514,17 @@ def main():
         print_summary(exps)
         return
 
-    # Run
-    statuses: List[dict] = []
+    # Run (parallel or sequential per num_gpus)
     t_total = time.time()
-    for i, exp in enumerate(exps, 1):
-        print(f"[{i}/{len(exps)}] ", end="")
-        s = run_one(exp, force=args.force, dry_run=args.dry_run)
-        statuses.append(s)
-        if s["skipped"] and exp.is_done():
-            print(f"[SKIP] {exp.name}")
-        elif s["failed"]:
-            print(f"[FAIL rc={s['rc']}] {exp.name}")
+    statuses = run_parallel(exps, num_gpus=num_gpus,
+                            force=args.force, dry_run=args.dry_run,
+                            server_extra=server_extra)
 
     total_sec = round(time.time() - t_total, 1)
     print()
     print(f"[DONE] all runs finished in {total_sec/60:.1f} min")
-    print(f"[DONE] skipped: {sum(1 for s in statuses if s['skipped'])} / "
-          f"failed: {sum(1 for s in statuses if s['failed'])}")
+    print(f"[DONE] skipped: {sum(1 for s in statuses if s.get('skipped'))} / "
+          f"failed: {sum(1 for s in statuses if s.get('failed'))}")
 
     # Summary
     print_summary(exps)

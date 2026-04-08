@@ -133,7 +133,7 @@ Input Image (224x224)
                 Dropout(0.5) → Linear(768→512) → ReLU → Linear(512→6)
 ```
 
-- 가중치: `weights/convnextv2_tiny_pretrained.pth` (파일 기반)
+- 가중치: `weights/convnextv2_tiny.pth` (파일 기반, `python download.py` 로 받음)
 - GPU: RTX 4060 Ti (16GB VRAM)
 
 ### 4.2 학습 설정

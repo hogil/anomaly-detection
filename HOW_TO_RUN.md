@@ -18,8 +18,7 @@
 
 | 파일 | 역할 |
 |---|---|
-| `scripts/download_weights.py` | timm에서 backbone weights 다운 (인터넷 머신용, 1회 실행) |
-| `scripts/convert_weights_fp16.py` | fp32 → fp16 변환 (선택, 사이즈 절반) |
+| `download.py` | timm/HF 에서 backbone weights 다운 → `weights/<short>.pth` (인터넷 머신용, 1회 실행) |
 
 **설정 파일**:
 
@@ -27,17 +26,16 @@
 |---|---|
 | `config.yaml` | 데이터 생성 + 학습 설정 (현재 v9: noise +25%, sparse 62%) |
 
-**weights/** (gitignored — 직접 다운):
+**weights/** (gitignored — `python download.py` 로 받기, git에 절대 커밋 X):
 
-| 파일 | 사이즈 | 출처 |
+| 파일 | 사이즈 | 받는 법 |
 |---|---:|---|
-| `weights/convnextv2_tiny.pth` | ~110 MB | `download_weights.py` |
-| `weights/convnextv2_tiny.fp16.pth` | ~55 MB | `--fp16` |
-| `weights/convnextv2_base.pth` | ~340 MB | `--preset all` |
-| `weights/efficientnetv2_s.pth` | ~85 MB | `--preset all` |
-| `weights/swin_tiny.pth` | ~110 MB | `--preset all` |
-| `weights/maxvit_tiny.pth` | ~120 MB | `--preset all` |
-| `weights/clip_vit_b16.pth` | ~340 MB | `--preset all` |
+| `weights/convnextv2_tiny.pth` | ~110 MB | `python download.py` (default) |
+| `weights/convnextv2_base.pth` | ~340 MB | `python download.py --all` |
+| `weights/efficientnetv2_s.pth` | ~85 MB | `python download.py --all` |
+| `weights/swin_tiny.pth` | ~110 MB | `python download.py --all` |
+| `weights/maxvit_tiny.pth` | ~120 MB | `python download.py --all` |
+| `weights/clip_vit_b16.pth` | ~340 MB | `python download.py --all` |
 
 ---
 
@@ -45,9 +43,9 @@
 
 **Step 0**: pretrained weights 다운 (1회만, 인터넷 필요)
 ```bash
-python scripts/download_weights.py            # convnextv2_tiny만 (~110MB)
+python download.py            # convnextv2_tiny만 (~110MB)
 # 또는 backbone 비교까지 할 거면
-python scripts/download_weights.py --preset all   # 6 backbone (~1.2GB)
+python download.py --all       # 6 backbone (~1.2GB)
 ```
 
 **Step 1~4**: 데이터 → 이미지 → 24 실험 → 요약 (한 방에)
@@ -251,9 +249,9 @@ pip download -d ../offline_wheels \
 
 # 3) Pretrained backbone 다운 (필요한 만큼)
 pip install timm torch                         # 임시 설치 (다운용)
-python scripts/download_weights.py             # default: convnextv2_tiny (~110MB)
+python download.py                              # default: convnextv2_tiny (~110MB)
 # 또는 backbone 비교 실험까지 할 거면
-python scripts/download_weights.py --preset all  # 6 backbone (~1.2GB)
+python download.py --all                        # 6 backbone (~1.2GB)
 
 # 4) 전체 bundle (repo + offline_wheels)
 cd ..
@@ -277,8 +275,8 @@ pip install --no-index --find-links=../offline_wheels \
 python -c "import torch; print(torch.cuda.is_available(), torch.cuda.device_count())"
 # → True 2
 
-ls weights/convnextv2_tiny.fp16.pth
-# → 파일 존재 (~55MB)
+ls weights/convnextv2_tiny.pth
+# → 파일 존재 (~110MB)
 ```
 
 ### 4-3. 한 방 실행
@@ -323,7 +321,7 @@ tar czf results.tar.gz logs/v9*/best_info.json logs/experiments_summary.json
 ## 6. 절대 규칙 (이 저장소)
 
 1. **`logs/<run_dir>/` 절대 삭제 금지** — 새 실험은 무조건 새 폴더명
-2. **`weights/convnextv2_tiny.fp16.pth` 삭제 금지** — 폐쇄망에서는 재다운 불가
+2. **`weights/` 는 git 에 절대 커밋 금지** (`.gitignore` 처리됨). 폐쇄망 서버는 인터넷 머신에서 `python download.py` 후 USB 로 옮길 것
 3. **추론 입력은 tabular만** — images는 파이프라인 내부에서 생성
 4. **Binary 학습 우선** — abn_R 최우선 지표
 5. **성능 항상 2개 보고** — Binary(abn_R/nor_R/F1) + (mc 때만) 6-class 개별

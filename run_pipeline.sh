@@ -25,26 +25,19 @@ print(f'  cuda:     {torch.cuda.is_available()}'); \
 print(f'  n_gpus:   {torch.cuda.device_count()}'); \
 [print(f'  GPU {i}:    {torch.cuda.get_device_name(i)} ({torch.cuda.get_device_properties(i).total_memory/1024**3:.0f}GB)') for i in range(torch.cuda.device_count())]"
 
-# Pretrained weights — 셋 중 하나 있으면 OK (train.py가 자동 fallback)
-#   1. weights/convnextv2_tiny_pretrained.pth   (fp32, 110MB)
-#   2. weights/convnextv2_tiny.pth              (fp32, download_weights.py 결과물)
-#   3. weights/convnextv2_tiny.fp16.pth         (fp16, 55MB)
-if [ -f "weights/convnextv2_tiny_pretrained.pth" ]; then
-    echo "  weights:  weights/convnextv2_tiny_pretrained.pth (fp32)"
-elif [ -f "weights/convnextv2_tiny.pth" ]; then
-    echo "  weights:  weights/convnextv2_tiny.pth (fp32)"
-elif [ -f "weights/convnextv2_tiny.fp16.pth" ]; then
-    echo "  weights:  weights/convnextv2_tiny.fp16.pth (fp16, 자동 fp32 캐스팅)"
+# Pretrained weights — train.py 가 weights/convnextv2_tiny.pth 만 로드한다.
+if [ -f "weights/convnextv2_tiny.pth" ]; then
+    echo "  weights:  weights/convnextv2_tiny.pth"
 else
     echo ""
-    echo "[ERROR] pretrained weights 없음."
+    echo "[ERROR] weights/convnextv2_tiny.pth 없음."
     echo ""
     echo "  해결법 (인터넷 머신에서):"
     echo "    pip install timm torch"
-    echo "    python scripts/download_weights.py            # convnextv2_tiny만 (~110MB)"
-    echo "    python scripts/download_weights.py --preset all  # 6 backbone 전부 (~1.2GB)"
+    echo "    python download.py            # convnextv2_tiny 만 (~110MB)"
+    echo "    python download.py --all       # 6 backbone 전부 (~1.2GB)"
     echo ""
-    echo "  그 후 weights/ 폴더 전체를 폐쇄망 서버로 복사:"
+    echo "  그 후 weights/ 폴더 통째로 폐쇄망 서버로 복사:"
     echo "    scp -r weights/ user@server:/path/to/anomaly-detection/"
     exit 1
 fi

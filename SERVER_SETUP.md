@@ -41,19 +41,15 @@ cd anomaly-detection
 pip install timm torch  # 임시 (다운용)
 
 # 옵션 A: convnextv2_tiny 만 (현재 winning config 모델, ~110MB)
-python scripts/download_weights.py
+python download.py
 
 # 옵션 B: 6 backbone 비교 실험까지 (~1.2GB)
-python scripts/download_weights.py --preset all
-
-# 옵션 C: fp16 (절반 사이즈)
-python scripts/download_weights.py --preset all --fp16
-
-# 사용 가능한 backbone 목록 보기
-python scripts/download_weights.py --list
+python download.py --all
 ```
 
-다운된 파일은 `anomaly-detection/weights/` 폴더에 저장되며, repo 전체를 tar로 묶을 때 자동으로 포함된다. `train.py` 가 자동 인식.
+다운된 파일은 `anomaly-detection/weights/convnextv2_tiny.pth` 등으로 저장된다.
+**중요**: `weights/` 는 git 에 절대 커밋하지 않는다 (`.gitignore` 처리됨).
+폐쇄망 서버로는 인터넷 머신에서 받은 `weights/` 폴더를 USB/scp 로 통째로 옮긴다.
 
 ### 1-3. Repo 압축
 
@@ -97,7 +93,7 @@ python -c "import torch; [print(torch.cuda.get_device_name(i),
 # 기대: NVIDIA H200 ~141 GB × 2
 
 ls weights/
-# 기대: convnextv2_tiny.pth (또는 .fp16.pth, _pretrained.pth) 중 하나 이상 존재
+# 기대: convnextv2_tiny.pth 존재 (~110MB)
 ```
 
 ---
@@ -211,8 +207,8 @@ H200 141GB로 bs 256은 안전하지만, 만약 OOM 발생 시:
 "--batch_size", "128",  # 256 → 128
 ```
 
-### `weights/convnextv2_tiny_pretrained.pth not found`
-→ 인터넷 머신에서 `python scripts/download_pretrained.py` 실행 후 파일 복사 안 됨. 1-2 절 참조.
+### `weights/convnextv2_tiny.pth not found`
+→ 인터넷 머신에서 `python download.py` 실행 후 `weights/` 폴더 복사 안 됨. 1-2 절 참조.
 
 ### `nvidia-smi`에 GPU 1장만 보임
 → `CUDA_VISIBLE_DEVICES` 환경변수가 외부에서 제한되어 있을 수 있음. 확인:

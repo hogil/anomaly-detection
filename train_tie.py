@@ -178,63 +178,45 @@ class ChartImageDataset(Dataset):
 # Model
 # =============================================================================
 
+_BACKBONE_WEIGHTS = {
+    "convnextv2_tiny": "weights/convnextv2_tiny.pth",
+    "convnextv2_base": "weights/convnextv2_base.pth",
+    "tf_efficientnetv2_s": "weights/efficientnetv2_s.pth",
+    "swin_tiny_patch4": "weights/swin_tiny.pth",
+    "maxvit_tiny": "weights/maxvit_tiny.pth",
+    "vit_base_patch16_clip": "weights/clip_vit_b16.pth",
+}
+
+
+def _resolve_weights_path(model_name: str) -> str:
+    """model_name (HF 풀네임) → weights/<short>.pth 매핑."""
+    for prefix, path in _BACKBONE_WEIGHTS.items():
+        if prefix in model_name:
+            return path
+    raise ValueError(f"등록되지 않은 backbone: {model_name}. download.py에 추가 필요.")
+
+
 def create_model(num_classes: int, model_name: str, device: torch.device,
                   weights_path: str = None, dropout: float = 0.5):
-    """timm 모델 생성.
+    """timm 모델 생성. 항상 pretrained=False, weights/ 폴더에서 로드.
 
-    가중치 검색 순서 (convnextv2_tiny):
-        1. weights/convnextv2_tiny_pretrained.pth   (로컬 fp32, 110MB, gitignored)
-        2. weights/convnextv2_tiny.fp16.pth         (커밋된 fp16, 55MB, 폐쇄망 서버용)
-        3. HuggingFace pretrained 다운로드           (인터넷 필요)
+    weights_path 미지정 시 model_name (HF 풀네임 e.g. convnextv2_tiny.fcmae_ft_in22k_in1k)
+    으로부터 weights/convnextv2_tiny.pth 를 자동 매핑한다.
+    파일이 없으면 FileNotFoundError — 먼저 `python download.py` 로 받아둘 것.
     """
-    # 가중치 후보 검색 (우선순위 순)
-    candidates = []
-    if weights_path:
-        candidates.append(weights_path)
-    # convnextv2_tiny: download_weights.py 결과물도 자동 검색
-    if "convnextv2_tiny" in model_name:
-        candidates.extend([
-            "weights/convnextv2_tiny.pth",       # download_weights.py default
-            "weights/convnextv2_tiny.fp16.pth",  # download_weights.py --fp16
-        ])
-    # 다른 backbone (experiments_backbone.py 호환)
-    backbone_keys = {
-        "convnextv2_base": "convnextv2_base",
-        "tf_efficientnetv2_s": "efficientnetv2_s",
-        "swin_tiny_patch4": "swin_tiny",
-        "maxvit_tiny": "maxvit_tiny",
-        "vit_base_patch16_clip": "clip_vit_b16",
-    }
-    for prefix, short in backbone_keys.items():
-        if prefix in model_name:
-            candidates.extend([
-                f"weights/{short}.pth",
-                f"weights/{short}.fp16.pth",
-            ])
-            break
+    if weights_path is None:
+        weights_path = _resolve_weights_path(model_name)
 
-    found_path = None
-    for c in candidates:
-        if c and Path(c).exists():
-            found_path = c
-            break
+    if not Path(weights_path).exists():
+        raise FileNotFoundError(
+            f"가중치 파일 없음: {weights_path}\n"
+            f"먼저 'python download.py' 실행하여 weights/ 폴더에 다운로드"
+        )
 
-    if found_path:
-        model = timm.create_model(model_name, pretrained=False)
-        state_dict = torch.load(found_path, map_location="cpu", weights_only=True)
-        # fp16 → fp32 자동 캐스팅 (init 정밀도 손실 무시 가능, 학습 시 다시 update됨)
-        is_fp16 = any(v.dtype == torch.float16 for v in state_dict.values()
-                      if hasattr(v, 'dtype'))
-        if is_fp16:
-            state_dict = {k: (v.float() if hasattr(v, 'dtype') and v.dtype == torch.float16 else v)
-                          for k, v in state_dict.items()}
-            print(f"  가중치 로드: {found_path} (fp16 → fp32 cast)")
-        else:
-            print(f"  가중치 로드: {found_path}")
-        model.load_state_dict(state_dict)
-    else:
-        model = timm.create_model(model_name, pretrained=True)
-        print(f"  HuggingFace pretrained: {model_name}")
+    model = timm.create_model(model_name, pretrained=False)
+    state_dict = torch.load(weights_path, map_location="cpu", weights_only=True)
+    model.load_state_dict(state_dict)
+    print(f"  가중치 로드: {weights_path}")
 
     # Classification head 교체 (timm 모델마다 head 구조 다름)
     if hasattr(model, 'head') and hasattr(model.head, 'fc'):
@@ -827,13 +809,8 @@ def main():
     test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, **common)
     print(f"  DataLoader: num_workers={num_workers}, pin_memory=True, prefetch_factor=4, persistent_workers={num_workers > 0}")
 
-    # 모델
-    # 파일 기반 가중치는 convnextv2_tiny.fcmae_ft_in22k_in1k 만 있음, 다른 모델은 timm pretrained 다운
-    if args.model_name == "convnextv2_tiny.fcmae_ft_in22k_in1k":
-        weights_path = "weights/convnextv2_tiny_pretrained.pth"
-    else:
-        weights_path = None
-    model = create_model(num_classes, args.model_name, device, weights_path, dropout=args.dropout)
+    # 모델 — weights/<short>.pth 자동 매핑 (없으면 FileNotFoundError)
+    model = create_model(num_classes, args.model_name, device, dropout=args.dropout)
     params_M = sum(p.numel() for p in model.parameters()) / 1e6
 
     # torch.compile (H100/H200 권장: 20~50% 가속)

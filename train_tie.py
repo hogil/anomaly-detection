@@ -178,35 +178,15 @@ class ChartImageDataset(Dataset):
 # Model
 # =============================================================================
 
-_BACKBONE_WEIGHTS = {
-    "convnextv2_tiny": "weights/convnextv2_tiny.pth",
-    "convnextv2_base": "weights/convnextv2_base.pth",
-    "tf_efficientnetv2_s": "weights/efficientnetv2_s.pth",
-    "swin_tiny_patch4": "weights/swin_tiny.pth",
-    "maxvit_tiny": "weights/maxvit_tiny.pth",
-    "vit_base_patch16_clip": "weights/clip_vit_b16.pth",
-}
-
-
-def _resolve_weights_path(model_name: str) -> str:
-    """model_name (HF 풀네임) → weights/<short>.pth 매핑."""
-    for prefix, path in _BACKBONE_WEIGHTS.items():
-        if prefix in model_name:
-            return path
-    raise ValueError(f"등록되지 않은 backbone: {model_name}. download.py에 추가 필요.")
-
-
 def create_model(num_classes: int, model_name: str, device: torch.device,
-                  weights_path: str = None, dropout: float = 0.5):
-    """timm 모델 생성. 항상 pretrained=False, weights/ 폴더에서 로드.
+                  dropout: float = 0.5):
+    """timm 모델 생성. pretrained=False + weights/{model_name}.pth 로드.
 
-    weights_path 미지정 시 model_name (HF 풀네임 e.g. convnextv2_tiny.fcmae_ft_in22k_in1k)
-    으로부터 weights/convnextv2_tiny.pth 를 자동 매핑한다.
-    파일이 없으면 FileNotFoundError — 먼저 `python download.py` 로 받아둘 것.
+    파일명은 HF model id 그대로:
+        convnextv2_tiny.fcmae_ft_in22k_in1k → weights/convnextv2_tiny.fcmae_ft_in22k_in1k.pth
+    파일 없으면 FileNotFoundError — 먼저 `python download.py` 실행할 것.
     """
-    if weights_path is None:
-        weights_path = _resolve_weights_path(model_name)
-
+    weights_path = f"weights/{model_name}.pth"
     if not Path(weights_path).exists():
         raise FileNotFoundError(
             f"가중치 파일 없음: {weights_path}\n"

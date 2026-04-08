@@ -26,16 +26,16 @@
 |---|---|
 | `config.yaml` | 데이터 생성 + 학습 설정 (현재 v9: noise +25%, sparse 62%) |
 
-**weights/** (gitignored — `python download.py` 로 받기, git에 절대 커밋 X):
+**weights/** (gitignored — `python download.py` 로 받기, git에 절대 커밋 X). 파일명은 HF model id 그대로:
 
 | 파일 | 사이즈 | 받는 법 |
 |---|---:|---|
-| `weights/convnextv2_tiny.pth` | ~110 MB | `python download.py` (default) |
-| `weights/convnextv2_base.pth` | ~340 MB | `python download.py --all` |
-| `weights/efficientnetv2_s.pth` | ~85 MB | `python download.py --all` |
-| `weights/swin_tiny.pth` | ~110 MB | `python download.py --all` |
-| `weights/maxvit_tiny.pth` | ~120 MB | `python download.py --all` |
-| `weights/clip_vit_b16.pth` | ~340 MB | `python download.py --all` |
+| `weights/convnextv2_tiny.fcmae_ft_in22k_in1k.pth` | ~110 MB | `python download.py` (default) |
+| `weights/convnextv2_base.fcmae_ft_in22k_in1k.pth` | ~340 MB | `python download.py --all` |
+| `weights/tf_efficientnetv2_s.in21k_ft_in1k.pth` | ~85 MB | `python download.py --all` |
+| `weights/swin_tiny_patch4_window7_224.ms_in22k_ft_in1k.pth` | ~110 MB | `python download.py --all` |
+| `weights/maxvit_tiny_tf_224.in1k.pth` | ~120 MB | `python download.py --all` |
+| `weights/vit_base_patch16_clip_224.laion2b_ft_in12k_in1k.pth` | ~340 MB | `python download.py --all` |
 
 ---
 
@@ -275,7 +275,7 @@ pip install --no-index --find-links=../offline_wheels \
 python -c "import torch; print(torch.cuda.is_available(), torch.cuda.device_count())"
 # → True 2
 
-ls weights/convnextv2_tiny.pth
+ls weights/convnextv2_tiny.fcmae_ft_in22k_in1k.pth
 # → 파일 존재 (~110MB)
 ```
 

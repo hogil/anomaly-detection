@@ -25,16 +25,17 @@ print(f'  cuda:     {torch.cuda.is_available()}'); \
 print(f'  n_gpus:   {torch.cuda.device_count()}'); \
 [print(f'  GPU {i}:    {torch.cuda.get_device_name(i)} ({torch.cuda.get_device_properties(i).total_memory/1024**3:.0f}GB)') for i in range(torch.cuda.device_count())]"
 
-# Pretrained weights — train.py 가 weights/convnextv2_tiny.pth 만 로드한다.
-if [ -f "weights/convnextv2_tiny.pth" ]; then
-    echo "  weights:  weights/convnextv2_tiny.pth"
+# Pretrained weights — train.py 가 weights/{HF model id}.pth 를 로드한다.
+WEIGHT_FILE="weights/convnextv2_tiny.fcmae_ft_in22k_in1k.pth"
+if [ -f "$WEIGHT_FILE" ]; then
+    echo "  weights:  $WEIGHT_FILE"
 else
     echo ""
-    echo "[ERROR] weights/convnextv2_tiny.pth 없음."
+    echo "[ERROR] $WEIGHT_FILE 없음."
     echo ""
     echo "  해결법 (인터넷 머신에서):"
     echo "    pip install timm torch"
-    echo "    python download.py            # convnextv2_tiny 만 (~110MB)"
+    echo "    python download.py            # convnextv2_tiny.fcmae_ft_in22k_in1k 만 (~110MB)"
     echo "    python download.py --all       # 6 backbone 전부 (~1.2GB)"
     echo ""
     echo "  그 후 weights/ 폴더 통째로 폐쇄망 서버로 복사:"

@@ -47,7 +47,7 @@ python download.py
 python download.py --all
 ```
 
-다운된 파일은 `anomaly-detection/weights/convnextv2_tiny.pth` 등으로 저장된다.
+다운된 파일은 `anomaly-detection/weights/convnextv2_tiny.fcmae_ft_in22k_in1k.pth` 등 HF model id 그대로 저장된다.
 **중요**: `weights/` 는 git 에 절대 커밋하지 않는다 (`.gitignore` 처리됨).
 폐쇄망 서버로는 인터넷 머신에서 받은 `weights/` 폴더를 USB/scp 로 통째로 옮긴다.
 
@@ -93,7 +93,7 @@ python -c "import torch; [print(torch.cuda.get_device_name(i),
 # 기대: NVIDIA H200 ~141 GB × 2
 
 ls weights/
-# 기대: convnextv2_tiny.pth 존재 (~110MB)
+# 기대: convnextv2_tiny.fcmae_ft_in22k_in1k.pth 존재 (~110MB)
 ```
 
 ---
@@ -207,7 +207,7 @@ H200 141GB로 bs 256은 안전하지만, 만약 OOM 발생 시:
 "--batch_size", "128",  # 256 → 128
 ```
 
-### `weights/convnextv2_tiny.pth not found`
+### `weights/convnextv2_tiny.fcmae_ft_in22k_in1k.pth not found`
 → 인터넷 머신에서 `python download.py` 실행 후 `weights/` 폴더 복사 안 됨. 1-2 절 참조.
 
 ### `nvidia-smi`에 GPU 1장만 보임

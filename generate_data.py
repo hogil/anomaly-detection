@@ -25,10 +25,30 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from tqdm import tqdm
-from sklearn.model_selection import train_test_split
 from multiprocessing import Pool, cpu_count
 
 from src.data.scenario_generator import ScenarioGenerator
+
+
+def stratified_train_val_split(df: pd.DataFrame, val_ratio: float,
+                                stratify_col: str, random_state: int):
+    """sklearn.model_selection.train_test_split(stratify=...) 대체.
+
+    폐쇄망 Ubuntu 24 + numpy 2.x + 구버전 scipy/sklearn ABI 충돌을 피하기 위해
+    numpy만 사용. sklearn과 동일하게 class별 indices를 shuffle 후 val_ratio 만큼 분리.
+    random_state 고정 시 deterministic.
+    """
+    rng = np.random.default_rng(random_state)
+    train_idx = []
+    val_idx = []
+    for cls in sorted(df[stratify_col].unique()):
+        cls_idx = df.index[df[stratify_col] == cls].to_numpy()
+        perm = rng.permutation(len(cls_idx))
+        cls_idx = cls_idx[perm]
+        n_val = max(1, int(round(len(cls_idx) * val_ratio)))
+        val_idx.extend(cls_idx[:n_val].tolist())
+        train_idx.extend(cls_idx[n_val:].tolist())
+    return df.loc[train_idx].copy(), df.loc[val_idx].copy()
 
 
 def scale_config(config: dict, scale: float) -> dict:
@@ -258,8 +278,8 @@ def generate(config: dict, num_workers: int = 1):
     te_df = pd.DataFrame(te_sc)
 
     val_ratio = split_cfg["val"] / (split_cfg["train"] + split_cfg["val"])
-    train_df, val_df = train_test_split(
-        tv_df, test_size=val_ratio, stratify=tv_df["class"], random_state=seed
+    train_df, val_df = stratified_train_val_split(
+        tv_df, val_ratio=val_ratio, stratify_col="class", random_state=seed,
     )
     train_df["split"] = "train"
     val_df["split"] = "val"

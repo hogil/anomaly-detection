@@ -21,15 +21,17 @@
 # 인터넷 머신 (서버와 동일 OS/Python 버전)
 mkdir -p offline_wheels
 pip download -d offline_wheels \
-    "torch>=2.4" "torchvision" "timm" \
-    "numpy>=1.24" "pandas>=2.0" "matplotlib>=3.7" \
-    "scipy>=1.10" "scikit-learn>=1.3" "Pillow>=10.0" \
-    "tqdm>=4.65" "pyyaml>=6.0" "seaborn"
+    "torch>=2.4" "torchvision>=0.19" "timm>=1.0.9" \
+    "numpy>=1.24,<2.2" "pandas>=2.0" "matplotlib>=3.7" \
+    "Pillow>=10.0" "tqdm>=4.65" "pyyaml>=6.0" "seaborn>=0.13"
 
 # offline_wheels/ 폴더 전체를 USB로 옮김
 ```
 
 > **권장**: 인터넷 머신도 Ubuntu 24 + Python 3.12 (서버와 동일). 다른 OS면 wheel 호환성 깨질 수 있음.
+>
+> **중요**: `scipy` / `scikit-learn` 는 **더 이상 필요 없음** (코드에서 제거됨).
+> Ubuntu 24 + Python 3.12 + numpy 2.x 조합에서 구버전 scipy의 `_spropack`/`_propack` ABI 충돌이 있어, `train_test_split` 과 `confusion_matrix` 를 numpy-only 구현으로 대체했다.
 
 ### 1-2. Repo clone + pretrained weights 다운
 
@@ -78,8 +80,10 @@ source .venv/bin/activate
 # offline wheel 설치 (인터넷 사용 안 함)
 pip install --no-index --find-links=../offline_wheels \
     torch torchvision timm \
-    numpy pandas matplotlib scipy scikit-learn pillow tqdm pyyaml seaborn
+    numpy pandas matplotlib pillow tqdm pyyaml seaborn
 ```
+
+> scipy/sklearn 제외. 코드에서 사용 안 하며, 설치 시 numpy 2.x ABI 충돌(`_spropack`) 위험.
 
 ### 환경 검증
 
@@ -174,6 +178,25 @@ ls logs/*/best_info.json
 ---
 
 ## 6. 트러블슈팅
+
+### `cannot import name '_spropack' from 'scipy.sparse.linalg'`
+```
+ImportError: cannot import name '_spropack' from 'scipy.sparse.linalg'
+  (.../scipy/sparse/linalg/_propack.cpython-312-x86_64-linux-gnu.so)
+```
+→ **Python 3.12 + numpy 2.x + 구버전 scipy/sklearn ABI 충돌.**
+이 repo는 `scipy`/`sklearn` 을 runtime dep에서 제거했으므로, 해당 패키지 **미설치 상태로도 모든 기능 동작**. 이미 설치돼 있다면:
+
+```bash
+# 옵션 1: scipy/sklearn 제거 (가장 깔끔)
+pip uninstall -y scipy scikit-learn
+
+# 옵션 2: 호환 버전으로 재설치 (sklearn 다른 용도로 필요한 경우)
+pip install --no-index --find-links=../offline_wheels \
+    "scipy>=1.13" "scikit-learn>=1.5"
+```
+
+그 후 `bash run_pipeline.sh` 재실행.
 
 ### `torch.compile failed` 메시지
 ```

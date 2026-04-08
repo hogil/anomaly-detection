@@ -242,12 +242,12 @@ CLI 옵션:
 git clone https://github.com/hogil/anomaly-detection.git
 cd anomaly-detection
 
-# 2) Python 패키지 wheel 모음
+# 2) Python 패키지 wheel 모음 (scipy/sklearn 제외 — Ubuntu 24 ABI 충돌 회피)
 mkdir -p ../offline_wheels
 pip download -d ../offline_wheels \
-    "torch>=2.4" torchvision timm \
-    "numpy>=1.24" "pandas>=2.0" "matplotlib>=3.7" \
-    scipy scikit-learn pillow tqdm pyyaml seaborn
+    "torch>=2.4" "torchvision>=0.19" "timm>=1.0.9" \
+    "numpy>=1.24,<2.2" "pandas>=2.0" "matplotlib>=3.7" \
+    "Pillow>=10.0" "tqdm>=4.65" "pyyaml>=6.0" "seaborn>=0.13"
 
 # 3) Pretrained backbone 다운 (필요한 만큼)
 pip install timm torch                         # 임시 설치 (다운용)

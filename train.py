@@ -397,10 +397,23 @@ def print_class_table(metrics, title=""):
     print(f"  {'AVERAGE':>20s} | {avg_r:7.3f} |         | {avg_f:7.3f} |")
 
 
+def _confusion_matrix_np(y_true, y_pred, n_classes):
+    """sklearn.metrics.confusion_matrix 대체 (numpy only).
+
+    폐쇄망 Ubuntu 24 + numpy 2.x + 구버전 scipy/sklearn ABI 충돌 회피용.
+    """
+    y_true = np.asarray(y_true, dtype=np.int64)
+    y_pred = np.asarray(y_pred, dtype=np.int64)
+    mat = np.zeros((n_classes, n_classes), dtype=np.int64)
+    # bincount trick — O(N), no python loop
+    idx = y_true * n_classes + y_pred
+    counts = np.bincount(idx, minlength=n_classes * n_classes)
+    return counts.reshape(n_classes, n_classes)
+
+
 def save_confusion_matrix(labels, preds, classes, save_path):
     """Confusion matrix 저장"""
-    from sklearn.metrics import confusion_matrix as cm_func
-    mat = cm_func(labels, preds, labels=list(range(len(classes))))
+    mat = _confusion_matrix_np(labels, preds, len(classes))
     fig, ax = plt.subplots(1, 1, figsize=(8, 6))
     short = [c[:8] for c in classes]
     sns.heatmap(mat, annot=True, fmt="d", cmap="Blues",

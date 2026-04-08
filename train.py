@@ -129,12 +129,31 @@ def create_model(num_classes: int, model_name: str, device: torch.device,
         2. weights/convnextv2_tiny.fp16.pth         (커밋된 fp16, 55MB, 폐쇄망 서버용)
         3. HuggingFace pretrained 다운로드           (인터넷 필요)
     """
-    # fp16 fallback 후보 자동 추가 (convnextv2_tiny)
+    # 가중치 후보 검색 (우선순위 순)
     candidates = []
     if weights_path:
         candidates.append(weights_path)
+    # convnextv2_tiny: download_weights.py 결과물도 자동 검색
     if "convnextv2_tiny" in model_name:
-        candidates.append("weights/convnextv2_tiny.fp16.pth")
+        candidates.extend([
+            "weights/convnextv2_tiny.pth",       # download_weights.py default
+            "weights/convnextv2_tiny.fp16.pth",  # download_weights.py --fp16
+        ])
+    # 다른 backbone (experiments_backbone.py 호환)
+    backbone_keys = {
+        "convnextv2_base": "convnextv2_base",
+        "tf_efficientnetv2_s": "efficientnetv2_s",
+        "swin_tiny_patch4": "swin_tiny",
+        "maxvit_tiny": "maxvit_tiny",
+        "vit_base_patch16_clip": "clip_vit_b16",
+    }
+    for prefix, short in backbone_keys.items():
+        if prefix in model_name:
+            candidates.extend([
+                f"weights/{short}.pth",
+                f"weights/{short}.fp16.pth",
+            ])
+            break
 
     found_path = None
     for c in candidates:

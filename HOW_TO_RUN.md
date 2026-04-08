@@ -18,19 +18,48 @@
 
 | 파일 | 역할 |
 |---|---|
-| `scripts/convert_weights_fp16.py` | fp32 weights → fp16 (GitHub 100MB 제한 우회용, 1회 실행) |
-| `scripts/download_pretrained.py` | timm에서 ConvNeXtV2-Tiny pretrained 다운 (인터넷 머신용) |
+| `scripts/download_weights.py` | timm에서 backbone weights 다운 (인터넷 머신용, 1회 실행) |
+| `scripts/convert_weights_fp16.py` | fp32 → fp16 변환 (선택, 사이즈 절반) |
 
 **설정 파일**:
 
 | 파일 | 역할 |
 |---|---|
 | `config.yaml` | 데이터 생성 + 학습 설정 (현재 v9: noise +25%, sparse 62%) |
-| `weights/convnextv2_tiny.fp16.pth` | pretrained backbone (55MB, 커밋됨) — 폐쇄망에서도 사용 가능 |
+
+**weights/** (gitignored — 직접 다운):
+
+| 파일 | 사이즈 | 출처 |
+|---|---:|---|
+| `weights/convnextv2_tiny.pth` | ~110 MB | `download_weights.py` |
+| `weights/convnextv2_tiny.fp16.pth` | ~55 MB | `--fp16` |
+| `weights/convnextv2_base.pth` | ~340 MB | `--preset all` |
+| `weights/efficientnetv2_s.pth` | ~85 MB | `--preset all` |
+| `weights/swin_tiny.pth` | ~110 MB | `--preset all` |
+| `weights/maxvit_tiny.pth` | ~120 MB | `--preset all` |
+| `weights/clip_vit_b16.pth` | ~340 MB | `--preset all` |
 
 ---
 
-## 2. 한 방 실행 (가장 많이 쓸 명령)
+## 2. 실행 순서 (TL;DR)
+
+**Step 0**: pretrained weights 다운 (1회만, 인터넷 필요)
+```bash
+python scripts/download_weights.py            # convnextv2_tiny만 (~110MB)
+# 또는 backbone 비교까지 할 거면
+python scripts/download_weights.py --preset all   # 6 backbone (~1.2GB)
+```
+
+**Step 1~4**: 데이터 → 이미지 → 24 실험 → 요약 (한 방에)
+```bash
+bash run_pipeline.sh
+```
+
+폐쇄망 H200 서버라면 weights를 인터넷 머신에서 받아 USB로 옮긴 뒤 위 명령 실행.
+
+---
+
+## 3. 한 방 실행 상세
 
 ### Ubuntu 24 H200 서버 (24 실험 전부)
 
@@ -204,23 +233,32 @@ CLI 옵션:
 
 ---
 
-## 4. 폐쇄망 H200 서버 셋업 (1회)
+## 5. 폐쇄망 H200 서버 셋업 (1회)
 
-### 4-1. 인터넷 머신에서
+### 5-1. 인터넷 머신에서
 
 ```bash
-# offline wheel 모음
-mkdir -p offline_wheels
-pip download -d offline_wheels \
+# 1) repo clone
+git clone https://github.com/hogil/anomaly-detection.git
+cd anomaly-detection
+
+# 2) Python 패키지 wheel 모음
+mkdir -p ../offline_wheels
+pip download -d ../offline_wheels \
     "torch>=2.4" torchvision timm \
     "numpy>=1.24" "pandas>=2.0" "matplotlib>=3.7" \
     scipy scikit-learn pillow tqdm pyyaml seaborn
 
-# repo clone (weights/convnextv2_tiny.fp16.pth 포함됨, 55MB)
-git clone https://github.com/hogil/anomaly-detection.git
+# 3) Pretrained backbone 다운 (필요한 만큼)
+pip install timm torch                         # 임시 설치 (다운용)
+python scripts/download_weights.py             # default: convnextv2_tiny (~110MB)
+# 또는 backbone 비교 실험까지 할 거면
+python scripts/download_weights.py --preset all  # 6 backbone (~1.2GB)
 
-# tar (offline_wheels + repo 한 번에)
+# 4) 전체 bundle (repo + offline_wheels)
+cd ..
 tar czf bundle.tar.gz anomaly-detection offline_wheels
+# anomaly-detection/weights/ 에 다운받은 .pth 들 포함됨
 ```
 
 ### 4-2. USB / jump host로 폐쇄망 서버에 옮긴 뒤

@@ -31,15 +31,27 @@ pip download -d offline_wheels \
 
 > **권장**: 인터넷 머신도 Ubuntu 24 + Python 3.12 (서버와 동일). 다른 OS면 wheel 호환성 깨질 수 있음.
 
-### 1-2. Repo clone (pretrained weights 포함)
+### 1-2. Repo clone + pretrained weights 다운
 
 ```bash
 git clone https://github.com/hogil/anomaly-detection.git
+cd anomaly-detection
+pip install timm torch  # 임시 (다운용)
+
+# 옵션 A: convnextv2_tiny 만 (현재 winning config 모델, ~110MB)
+python scripts/download_weights.py
+
+# 옵션 B: 6 backbone 비교 실험까지 (~1.2GB)
+python scripts/download_weights.py --preset all
+
+# 옵션 C: fp16 (절반 사이즈)
+python scripts/download_weights.py --preset all --fp16
+
+# 사용 가능한 backbone 목록 보기
+python scripts/download_weights.py --list
 ```
 
-repo에는 **`weights/convnextv2_tiny.fp16.pth`** (55 MB, fp16) 가 이미 포함돼 있다. `train.py` 가 자동으로 fp32로 캐스팅해서 사용. 별도 다운로드 불필요.
-
-> **선택** (fp32 원본을 쓰고 싶을 때만): `python scripts/download_pretrained.py` 로 110 MB fp32 버전을 받을 수 있음. train.py 는 둘 다 인식하며 fp32가 우선.
+다운된 파일은 `anomaly-detection/weights/` 폴더에 저장되며, repo 전체를 tar로 묶을 때 자동으로 포함된다. `train.py` 가 자동 인식.
 
 ### 1-3. Repo 압축
 
@@ -80,8 +92,8 @@ python -c "import torch; [print(torch.cuda.get_device_name(i),
     for i in range(torch.cuda.device_count())]"
 # 기대: NVIDIA H200 ~141 GB × 2
 
-ls weights/convnextv2_tiny.fp16.pth
-# 기대: 파일 존재 (~55MB, repo에 포함됨)
+ls weights/
+# 기대: convnextv2_tiny.pth (또는 .fp16.pth, _pretrained.pth) 중 하나 이상 존재
 ```
 
 ---

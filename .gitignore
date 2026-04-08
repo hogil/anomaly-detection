@@ -76,3 +76,37 @@ desktop.ini
 *.tmp
 tmp/
 temp/
+
+# ============================================================================
+# 이전 실험 스크립트 (historical) — 모두 run_experiments.py 에 통합됨
+# 로컬엔 보존하고 git에만 안 올림
+# ============================================================================
+
+# 21개 experiment runner (round2~6, improved, binary, gamma, backbone, ...)
+experiments_*.py
+experiments.py
+
+# 1회성 분석 스크립트
+analyze_*.py
+
+# 구 orchestrator (run_pipeline.sh 로 대체)
+run_chain.py
+run_full_chain.py
+run_v2_chain.py
+
+# 1회성 테스트
+test_tta.py
+
+# 구 config (config.yaml 만 사용)
+config_2k.yaml
+config_v2.yaml
+
+# 구 planning doc
+docs/superpowers/
+
+# 스모크 테스트 임시 폴더
+data_smoke*/
+images_smoke*/
+display_smoke*/
+config_smoke*.yaml
+.torch_compile_cache/

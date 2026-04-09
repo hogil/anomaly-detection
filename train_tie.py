@@ -628,7 +628,9 @@ def main():
     parser.add_argument("--early_stop_start", type=int, default=10,
                         help="patience counter 시작 epoch (smoothing 무관 고정)")
     parser.add_argument("--val_loss_max_ratio", type=float, default=2.0,
-                        help="save guard: val_loss > best_val_loss * 이 비율이면 save 거부 (spike 차단)")
+                        help="save guard: val_loss > max(best * ratio, guard_min_abs) 이면 save 거부")
+    parser.add_argument("--val_loss_guard_min_abs", type=float, default=0.02,
+                        help="save guard 절대 floor: val_loss 가 이 값 미만이면 guard 발동 안 함 (tiny val_loss fluctuation 무시)")
     parser.add_argument("--save_strict_only", action="store_true", default=True,
                         help="best 저장은 strict > 만 허용 (TIE-update 금지, 2026-04-09 기본값 True)")
     parser.add_argument("--avg_last_n", type=int, default=0,
@@ -1128,11 +1130,15 @@ def main():
         is_candidate = epoch >= best_update_start and val_target_recall >= best_val_recall
         is_strict_improvement = is_candidate and val_target_recall > best_val_recall
 
-        # val_loss spike guard
+        # val_loss spike guard — 절대 floor (guard_min_abs) 아래에서는 발동 안 함
+        #   → best_val_loss=0 인 과수렴 상태에서 tiny fluctuation 을 spike 로 오인 방지
         save_rejected = False
-        if is_candidate and best_val_loss_seen is not None and val_loss > best_val_loss_seen * args.val_loss_max_ratio:
-            save_rejected = True
-            print(f"\n  ! SAVE REJECT (val_loss guard): val_loss={val_loss:.4f} > best_val_loss {best_val_loss_seen:.4f} × {args.val_loss_max_ratio}")
+        if is_candidate and best_val_loss_seen is not None:
+            guard_threshold = max(best_val_loss_seen * args.val_loss_max_ratio, args.val_loss_guard_min_abs)
+            if val_loss > guard_threshold:
+                save_rejected = True
+                print(f"\n  ! SAVE REJECT (val_loss guard): val_loss={val_loss:.4f} > threshold {guard_threshold:.4f} "
+                      f"(best={best_val_loss_seen:.4f} × {args.val_loss_max_ratio}, min_abs={args.val_loss_guard_min_abs})")
 
         # strict-only 모드: tie 는 저장 안 함
         should_save = is_strict_improvement and not save_rejected

@@ -11,7 +11,7 @@
 set -e
 cd "$(dirname "$0")/.."
 
-PHASE=phase1_n700
+PHASE=phase1b     # v9_phase1b — val_loss guard 버그 수정 후 재실행
 LR_BB=3e-5
 LR_HEAD=3e-4
 N=700

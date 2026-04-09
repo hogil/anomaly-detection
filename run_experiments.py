@@ -229,15 +229,17 @@ def build_experiments() -> List[Exp]:
     # 모두 train_tie.py + EMA 0.999 + strict save + val_loss guard + ep 10 매 test
     # ========================================================================
 
-    # ------- Phase 1: Spike-proof baseline (5 seeds, 기본 config) -------
-    # lr 3e-5, warmup 5, ep 20, patience 5 (min stop ep 15), n=2800
+    # ------- Phase 1: Spike-proof 검증 (n=700, spike-prone regime) -------
+    # n=700 이 n=2800 대비 4.6x 더 spike 많음 (0.55 vs 0.12 big/run, 100+ run 통계)
+    # spike-proof 로직은 spike 가 실제로 발생하는 n=700 에서 검증해야 함
+    # lr 3e-5, warmup 5, ep 20, patience 5 (min stop ep 15)
     for seed in (1, 2, 3, 4, 42):
         exps.append(Exp(
-            name=f"v9_phase1_baseline_n2800_s{seed}",
+            name=f"v9_phase1_n700_s{seed}",
             group="phase1",
             args=[
                 "--mode", "binary",
-                "--normal_ratio", "2800",
+                "--normal_ratio", "700",
                 "--seed", str(seed),
                 "--lr_backbone", "3e-5",
                 "--lr_head", "3e-4",
@@ -248,7 +250,7 @@ def build_experiments() -> List[Exp]:
                 "--smooth_method", "median",
                 "--ema_decay", "0.999",
             ],
-            note="Phase1 — EMA + strict + val_loss guard baseline",
+            note="Phase1 n=700 — EMA + strict + val_loss guard (spike regime)",
         ))
 
     # ------- Phase 2: LR/warmup variations (3 config × 3 seeds) -------

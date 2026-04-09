@@ -605,8 +605,8 @@ def main():
                         choices=["multiclass", "binary", "anomaly_type"])
     parser.add_argument("--dropout", type=float, default=0.0)
     parser.add_argument("--mixup_alpha", type=float, default=0.2)
-    parser.add_argument("--ema_decay", type=float, default=0.999,
-                        help="EMA of weights decay. 0=disabled. ConvNeXt-V2 official: 0.9999. 추천: 0.999~0.9999")
+    parser.add_argument("--ema_decay", type=float, default=0.0,
+                        help="EMA of weights decay. 0=disabled (default). 짧은 학습 (<5000 step) 에선 EMA 가 수렴 못해서 raw 보다 나쁨. 긴 학습에서만 0.999 권장.")
     parser.add_argument("--max_per_class", type=int, default=0,
                         help="학습 데이터 클래스당 최대 수 (0=전체)")
     parser.add_argument("--normal_ratio", type=int, default=0,

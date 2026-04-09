@@ -224,6 +224,108 @@ def build_experiments() -> List[Exp]:
         note="6-class 학습 — abnormal 개별 recall 확인 (binary 주, mc 보조)",
     ))
 
+    # ========================================================================
+    # experiment_plan_fpfn — test FP/FN ≤ 2 목표 (2026-04-09)
+    # 모두 train_tie.py + EMA 0.999 + strict save + val_loss guard + ep 10 매 test
+    # ========================================================================
+
+    # ------- Phase 1: Spike-proof baseline (5 seeds, 기본 config) -------
+    # lr 3e-5, warmup 5, ep 20, patience 5 (min stop ep 15), n=2800
+    for seed in (1, 2, 3, 4, 42):
+        exps.append(Exp(
+            name=f"v9_phase1_baseline_n2800_s{seed}",
+            group="phase1",
+            args=[
+                "--mode", "binary",
+                "--normal_ratio", "2800",
+                "--seed", str(seed),
+                "--lr_backbone", "3e-5",
+                "--lr_head", "3e-4",
+                "--warmup_epochs", "5",
+                "--epochs", "20",
+                "--patience", "5",
+                "--smooth_window", "3",
+                "--smooth_method", "median",
+                "--ema_decay", "0.999",
+            ],
+            note="Phase1 — EMA + strict + val_loss guard baseline",
+        ))
+
+    # ------- Phase 2: LR/warmup variations (3 config × 3 seeds) -------
+    phase2_configs = [
+        ("lr2e5_wu5",  ["--lr_backbone","2e-5","--lr_head","2e-4","--warmup_epochs","5"]),
+        ("lr3e5_wu10", ["--lr_backbone","3e-5","--lr_head","3e-4","--warmup_epochs","10"]),
+        ("lr2e5_wu10", ["--lr_backbone","2e-5","--lr_head","2e-4","--warmup_epochs","10"]),
+    ]
+    for tag, cfg_args in phase2_configs:
+        for seed in (1, 2, 42):
+            exps.append(Exp(
+                name=f"v9_phase2_lrwarmup_{tag}_n2800_s{seed}",
+                group="phase2",
+                args=[
+                    "--mode", "binary",
+                    "--normal_ratio", "2800",
+                    "--seed", str(seed),
+                    "--epochs", "20",
+                    "--patience", "5",
+                    "--smooth_window", "3",
+                    "--smooth_method", "median",
+                    "--ema_decay", "0.999",
+                ] + cfg_args,
+                note=f"Phase2 — {tag}",
+            ))
+
+    # ------- Phase 3: Longer training (2 config × 3 seeds) -------
+    phase3_configs = [
+        ("ep30_p10", ["--epochs","30","--patience","10"]),   # min stop ep 20
+        ("ep40_p15", ["--epochs","40","--patience","15"]),   # min stop ep 25
+    ]
+    for tag, cfg_args in phase3_configs:
+        for seed in (1, 2, 42):
+            exps.append(Exp(
+                name=f"v9_phase3_long_{tag}_n2800_s{seed}",
+                group="phase3",
+                args=[
+                    "--mode", "binary",
+                    "--normal_ratio", "2800",
+                    "--seed", str(seed),
+                    "--lr_backbone", "3e-5",
+                    "--lr_head", "3e-4",
+                    "--warmup_epochs", "5",
+                    "--smooth_window", "3",
+                    "--smooth_method", "median",
+                    "--ema_decay", "0.999",
+                ] + cfg_args,
+                note=f"Phase3 — {tag}",
+            ))
+
+    # ------- Phase 4: Regularization (3 config × 2 seeds) -------
+    phase4_configs = [
+        ("ls005",      ["--label_smoothing","0.05"]),
+        ("mix01",      ["--use_mixup","--mixup_alpha","0.1"]),
+        ("ls005_mix01", ["--label_smoothing","0.05","--use_mixup","--mixup_alpha","0.1"]),
+    ]
+    for tag, cfg_args in phase4_configs:
+        for seed in (1, 42):
+            exps.append(Exp(
+                name=f"v9_phase4_reg_{tag}_n2800_s{seed}",
+                group="phase4",
+                args=[
+                    "--mode", "binary",
+                    "--normal_ratio", "2800",
+                    "--seed", str(seed),
+                    "--lr_backbone", "3e-5",
+                    "--lr_head", "3e-4",
+                    "--warmup_epochs", "5",
+                    "--epochs", "20",
+                    "--patience", "5",
+                    "--smooth_window", "3",
+                    "--smooth_method", "median",
+                    "--ema_decay", "0.999",
+                ] + cfg_args,
+                note=f"Phase4 — {tag}",
+            ))
+
     return exps
 
 

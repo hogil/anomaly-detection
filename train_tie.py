@@ -633,6 +633,10 @@ def main():
                         help="save guard 절대 floor: val_loss 가 이 값 미만이면 guard 발동 안 함 (tiny val_loss fluctuation 무시)")
     parser.add_argument("--save_strict_only", action="store_true", default=True,
                         help="best 저장은 strict > 만 허용 (TIE-update 금지, 2026-04-09 기본값 True)")
+    parser.add_argument("--save_every_epoch", action="store_true",
+                        help="매 epoch 마다 checkpoint 저장 (logs/<run>/checkpoints/ep_XXX.pth) — post-hoc simulation 용")
+    parser.add_argument("--no_early_stop", action="store_true",
+                        help="Early stop 완전 비활성 (20 epoch 전부 돌림)")
     parser.add_argument("--avg_last_n", type=int, default=0,
                         help="[deprecated] post-hoc weight 평균 (0=비활성)")
     parser.add_argument("--smooth_window", type=int, default=3,
@@ -1028,7 +1032,7 @@ def main():
 
         # Test 평가: 절대규칙 — ep >= early_stop_start 면 매 epoch 평가 (best 여부 무관)
         ep_test_metrics = None
-        force_test_eval = epoch >= early_stop_start
+        force_test_eval = (epoch >= early_stop_start) or args.save_every_epoch
         if args.eval_test_every_epoch or force_test_eval:
             _, _, ep_test_recall, ep_test_f1, ep_test_metrics, _, _ = evaluate(
                 eval_model, test_loader, criterion, device, classes,
@@ -1091,6 +1095,14 @@ def main():
             all_steps[str(epoch)] = [round(g, 5) for g in grad_norms_per_step]
             with open(step_file, "w", encoding="utf-8") as f:
                 json.dump(all_steps, f, indent=2)
+
+        # Per-epoch checkpoint 저장 (post-hoc simulation 용)
+        if args.save_every_epoch:
+            ckpt_dir = log_dir / "checkpoints"
+            ckpt_dir.mkdir(exist_ok=True)
+            # CPU 로 옮겨서 저장 (GPU 메모리 절약)
+            ckpt_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+            torch.save(ckpt_state, ckpt_dir / f"ep_{epoch:03d}.pth")
 
         try:
             save_training_plots(history, log_dir)
@@ -1256,7 +1268,9 @@ def main():
         # Early stopping (절대규칙 #15):
         #   - patience_counter 는 early_stop_start 부터 카운트
         #   - min_training_epochs (= early_stop_start + patience) 전엔 절대 종료 금지
-        if (args.avg_last_n == 0
+        #   - --no_early_stop 이면 early stop 완전 비활성 (20 epoch 전부)
+        if (not args.no_early_stop
+                and args.avg_last_n == 0
                 and patience_counter >= args.patience
                 and epoch >= min_training_epochs):
             print(f"\n  ! Early stopping at epoch {epoch} (min={min_training_epochs})")

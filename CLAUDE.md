@@ -213,6 +213,16 @@ config.yaml                     # 전체 설정
 12. **성능은 항상 2개 보고**: Binary(abn_R/nor_R) + 6클래스(개별 recall)
 13. **모든 변경사항 즉시 skill/memory 업데이트** (config, 코드, 실험 결과, best model — 미루기 절대 금지)
 14. **⛔ 학습 결과 폴더 삭제 절대 금지** (`logs/<run_dir>/`). 새 실험은 무조건 새 폴더명 사용. 설정 변경 시 폴더명에 버전 식별자 포함 (예: `v9_noise25_n700_s42`). `rm -rf logs/...`, `shutil.rmtree(log_dir)` 절대 금지. 사용자가 명시적으로 삭제 요청 시에만 가능.
+15. **⭐ Best 업데이트 시작점 / Early stop 시작점 분리** (2026-04-09 확정):
+    - **Best 업데이트 시작**: smoothing 방식에 따라 다름
+      - `smooth_window=1` (single / raw val_f1): **ep 10 부터**
+      - `smooth_window=3` (med3) / `avg5` / 기타 smoothing: **ep 7 부터**
+    - **Early stop patience counter 시작**: **항상 ep 10 (고정)**
+    - **최소 학습 epoch = `10 + patience`**. 이 전엔 절대 종료 금지:
+      - patience 5 → 최소 epoch 15
+      - patience 10 → 최소 epoch 20
+    - **매 epoch test 평가 + test_history 기록**: **ep 10 부터 강제** (best 갱신 여부 무관)
+    - Why: val_f1 가 min_epochs 이전에 1.0 포화되면 strict > 1.0 이 불가능해져 첫 epoch 에서 freeze 되는 lottery 문제 방지. smoothing 이 있으면 ep 7 부터 저장 허용해서 더 좋은 early convergence 포착. test_history 는 사후 분석용 (어느 epoch 이 진짜 best 였는지 복원 가능).
 
 ---
 

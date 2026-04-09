@@ -250,6 +250,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
     total_loss = 0
     correct = 0
     total = 0
+    grad_norms_pre_clip = []  # per-step pre-clip gradient norm (for spike analysis)
 
     pbar = tqdm(loader, desc=f"Epoch {epoch}/{total_epochs} [Train]",
                 leave=False, ncols=100)
@@ -290,9 +291,10 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
                 if weights is not None and ohem_ratio == 0:
                     loss = (loss * weights).mean() if loss.dim() > 0 else loss
             scaler.scale(loss).backward()
-            # gradient clipping (cliff fall 안전망)
+            # gradient clipping (cliff fall 안전망) — pre-clip norm 캡처
             scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            gn = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0).item()
+            grad_norms_pre_clip.append(gn)
             scaler.step(optimizer)
             scaler.update()
         elif amp_dtype is not None and device.type == "cuda":
@@ -303,7 +305,8 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
                 if weights is not None and ohem_ratio == 0:
                     loss = (loss * weights).mean() if loss.dim() > 0 else loss
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            gn = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0).item()
+            grad_norms_pre_clip.append(gn)
             optimizer.step()
         else:
             # fp32 path
@@ -312,7 +315,8 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
             if weights is not None and ohem_ratio == 0:
                 loss = (loss * weights).mean() if loss.dim() > 0 else loss
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            gn = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0).item()
+            grad_norms_pre_clip.append(gn)
             optimizer.step()
 
         # EMA update (after optimizer.step)
@@ -326,7 +330,24 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
 
         pbar.set_postfix(loss=f"{total_loss/total:.4f}", acc=f"{correct/total:.3f}")
 
-    return total_loss / total, correct / total
+    # per-step grad norm 요약 통계 (NaN/inf 필터링)
+    import numpy as _np
+    _gn = _np.array([g for g in grad_norms_pre_clip if _np.isfinite(g)])
+    if len(_gn) > 0:
+        gn_stats = {
+            "mean": float(_gn.mean()),
+            "max": float(_gn.max()),
+            "p50": float(_np.percentile(_gn, 50)),
+            "p95": float(_np.percentile(_gn, 95)),
+            "p99": float(_np.percentile(_gn, 99)),
+            "std": float(_gn.std()),
+            "n_steps": int(len(_gn)),
+            "n_clipped": int((_gn > 1.0).sum()),  # pre-clip > 1.0 이었던 step 수
+        }
+    else:
+        gn_stats = None
+
+    return total_loss / total, correct / total, gn_stats, grad_norms_pre_clip
 
 
 @torch.no_grad()
@@ -584,22 +605,32 @@ def main():
                         choices=["multiclass", "binary", "anomaly_type"])
     parser.add_argument("--dropout", type=float, default=0.0)
     parser.add_argument("--mixup_alpha", type=float, default=0.2)
-    parser.add_argument("--ema_decay", type=float, default=0.0,
+    parser.add_argument("--ema_decay", type=float, default=0.999,
                         help="EMA of weights decay. 0=disabled. ConvNeXt-V2 official: 0.9999. 추천: 0.999~0.9999")
     parser.add_argument("--max_per_class", type=int, default=0,
                         help="학습 데이터 클래스당 최대 수 (0=전체)")
     parser.add_argument("--normal_ratio", type=int, default=0,
                         help="Binary mode: normal 학습 샘플 수 (0=전체, abnormal은 고정)")
     parser.add_argument("--ohem_ratio", type=float, default=0.0,
-                        help="OHEM ratio (0=off, 0.75=top75%, 0.5=top50%)")
+                        help="OHEM ratio (0=off, 0.75=top75pct, 0.5=top50pct)")
     parser.add_argument("--focal_gamma", type=float, default=0.0,
                         help="Focal Loss gamma (0 = 사실상 CrossEntropy)")
     parser.add_argument("--abnormal_weight", type=float, default=1.0,
                         help="Binary mode: abnormal class weight 배수 (1.0=균등, 0=inverse freq 자동)")
     parser.add_argument("--label_weights", type=str, default="",
                         help="Multiclass label별 weight (예: normal=0.5,spike=3.0,context=2.0)")
-    parser.add_argument("--min_epochs", type=int, default=1,
-                        help="최소 학습 epoch — best 갱신 허용 기준. 1=ep 1부터 best update + test_history 기록")
+    parser.add_argument("--min_epochs", type=int, default=-1,
+                        help="[DEPRECATED 방식] best 갱신 최소 epoch. -1=자동 (smoothed=7, single=10)")
+    parser.add_argument("--best_update_start_single", type=int, default=10,
+                        help="smooth_window<=1 일 때 best 저장 시작 epoch")
+    parser.add_argument("--best_update_start_smoothed", type=int, default=7,
+                        help="smooth_window>1 일 때 best 저장 시작 epoch")
+    parser.add_argument("--early_stop_start", type=int, default=10,
+                        help="patience counter 시작 epoch (smoothing 무관 고정)")
+    parser.add_argument("--val_loss_max_ratio", type=float, default=2.0,
+                        help="save guard: val_loss > best_val_loss * 이 비율이면 save 거부 (spike 차단)")
+    parser.add_argument("--save_strict_only", action="store_true", default=True,
+                        help="best 저장은 strict > 만 허용 (TIE-update 금지, 2026-04-09 기본값 True)")
     parser.add_argument("--avg_last_n", type=int, default=0,
                         help="[deprecated] post-hoc weight 평균 (0=비활성)")
     parser.add_argument("--smooth_window", type=int, default=3,
@@ -663,6 +694,31 @@ def main():
         torch.backends.cudnn.allow_tf32 = True
     print(f"  Precision: {args.precision} (amp_dtype={amp_dtype}, scaler={'on' if scaler else 'off'})")
     print(f"  Compile: {args.compile}")
+    print(f"{'='*60}")
+
+    # ========================================================================
+    # Best selection / early stop epoch 결정 (2026-04-09 절대규칙 #15)
+    #   - best_update_start: smoothing 에 따라 7 or 10
+    #   - early_stop_start:  항상 10 (고정)
+    #   - min_training_epochs = early_stop_start + patience (그 전엔 종료 금지)
+    # ========================================================================
+    if args.smooth_window > 1:
+        best_update_start = args.best_update_start_smoothed
+    else:
+        best_update_start = args.best_update_start_single
+    # legacy --min_epochs override (-1 이면 자동 값 사용)
+    if args.min_epochs > 0:
+        best_update_start = args.min_epochs
+    args.min_epochs = best_update_start  # 기존 코드 호환
+    early_stop_start = args.early_stop_start
+    min_training_epochs = early_stop_start + args.patience
+    print(f"\n  Best selection rule:")
+    print(f"    best_update_start:     ep {best_update_start} (smooth_window={args.smooth_window})")
+    print(f"    early_stop_start:      ep {early_stop_start}")
+    print(f"    patience:              {args.patience}")
+    print(f"    min_training_epochs:   {min_training_epochs}  (= {early_stop_start} + {args.patience})")
+    print(f"    val_loss_max_ratio:    {args.val_loss_max_ratio} (spike save guard)")
+    print(f"    save_strict_only:      {args.save_strict_only} (TIE-update {'금지' if args.save_strict_only else '허용'})")
     print(f"{'='*60}")
 
     all_classes = config["dataset"]["classes"]
@@ -919,6 +975,7 @@ def main():
     history = []
 
     best_val_recall = 0.0
+    best_val_loss_seen = None  # val_loss guard 기준 (처음엔 None, save 할 때마다 min 갱신)
     best_epoch = 0
     best_test_metrics = None
     best_test_recall = 0.0
@@ -951,7 +1008,7 @@ def main():
             print(f"\n  * Backbone unfrozen at epoch {epoch}")
 
         # Train (EMA 업데이트 포함)
-        train_loss, train_acc = train_one_epoch(
+        train_loss, train_acc, grad_stats, grad_norms_per_step = train_one_epoch(
             model, train_loader, criterion, optimizer, device, epoch, args.epochs,
             scaler=scaler, use_mixup=args.use_mixup, ohem_ratio=args.ohem_ratio,
             amp_dtype=amp_dtype, ema=ema,
@@ -967,9 +1024,10 @@ def main():
             amp_dtype=amp_dtype,
         )
 
-        # Test (옵션: 매 epoch 평가)
+        # Test 평가: 절대규칙 — ep >= early_stop_start 면 매 epoch 평가 (best 여부 무관)
         ep_test_metrics = None
-        if args.eval_test_every_epoch:
+        force_test_eval = epoch >= early_stop_start
+        if args.eval_test_every_epoch or force_test_eval:
             _, _, ep_test_recall, ep_test_f1, ep_test_metrics, _, _ = evaluate(
                 eval_model, test_loader, criterion, device, classes,
                 desc=f"Epoch {epoch}/{args.epochs} [TestEpoch]",
@@ -994,6 +1052,16 @@ def main():
             "lr": optimizer.param_groups[0]["lr"],
             "elapsed": round(elapsed, 1),
         }
+        # Grad norm 요약 (pre-clip, spike 분석용)
+        if grad_stats is not None:
+            epoch_log["grad_norm_mean"] = round(grad_stats["mean"], 4)
+            epoch_log["grad_norm_max"]  = round(grad_stats["max"], 4)
+            epoch_log["grad_norm_p50"]  = round(grad_stats["p50"], 4)
+            epoch_log["grad_norm_p95"]  = round(grad_stats["p95"], 4)
+            epoch_log["grad_norm_p99"]  = round(grad_stats["p99"], 4)
+            epoch_log["grad_norm_std"]  = round(grad_stats["std"], 4)
+            epoch_log["grad_n_clipped"] = grad_stats["n_clipped"]
+            epoch_log["grad_n_steps"]   = grad_stats["n_steps"]
         if ep_test_metrics is not None:
             ep_log_extras = {
                 "test_f1": round(ep_test_f1, 4),
@@ -1009,6 +1077,19 @@ def main():
         # 매 epoch마다 history.json + training_curves.png 갱신
         with open(log_dir / "history.json", "w", encoding="utf-8") as f:
             json.dump(history, f, indent=2)
+
+        # per-step grad_norm raw dump (spike 분석용) — step_grad_norms.json 에 누적
+        if grad_norms_per_step:
+            step_file = log_dir / "step_grad_norms.json"
+            if step_file.exists():
+                with open(step_file, encoding="utf-8") as f:
+                    all_steps = json.load(f)
+            else:
+                all_steps = {}
+            all_steps[str(epoch)] = [round(g, 5) for g in grad_norms_per_step]
+            with open(step_file, "w", encoding="utf-8") as f:
+                json.dump(all_steps, f, indent=2)
+
         try:
             save_training_plots(history, log_dir)
         except Exception:
@@ -1037,28 +1118,40 @@ def main():
         else:
             val_target_recall = val_f1
 
-        # Best 선택 로직 (TIE-UPDATE, train_tie.py 2026-04-09):
-        #   - strict improvement (>): 모델 저장 + test 평가 + patience reset
-        #   - tie (==):               모델 저장 + test 평가 + patience 증가 (last-tie wins)
-        #   - decrease (<):           patience 증가만
-        # min_epochs 이전에는 best 갱신 안 함
-        # Rationale: val_f1 포화 plateau 에서 strict > 만 쓰면 첫 도달 epoch 에 freeze.
-        # Tie 에서도 업데이트하여 더 수렴한 weights 선택하되, patience counter 는 누적되어
-        # 5 연속 non-strict (tie or decrease) 발생 시 early stop.
-        is_candidate = epoch >= args.min_epochs and val_target_recall >= best_val_recall
+        # Best 선택 로직 (2026-04-09 절대규칙 #15 반영):
+        #   1. best_update_start 이상 epoch 만 후보
+        #   2. strict improvement (>): 정상 save 대상
+        #   3. save_strict_only (default True): tie 는 저장 안 함
+        #   4. val_loss guard: val_loss > best_val_loss * val_loss_max_ratio 면 save reject (spike 차단)
+        #   5. Early stop counter 는 early_stop_start 부터 시작 (min_training_epochs 전엔 종료 X)
+        # ep >= early_stop_start: 매 epoch test 평가 + test_history 누적 (best 여부 무관)
+        is_candidate = epoch >= best_update_start and val_target_recall >= best_val_recall
         is_strict_improvement = is_candidate and val_target_recall > best_val_recall
 
-        if is_candidate:
-            if is_strict_improvement:
-                patience_counter = 0
-            else:
-                patience_counter += 1  # tie: 업데이트하되 counter 누적
+        # val_loss spike guard
+        save_rejected = False
+        if is_candidate and best_val_loss_seen is not None and val_loss > best_val_loss_seen * args.val_loss_max_ratio:
+            save_rejected = True
+            print(f"\n  ! SAVE REJECT (val_loss guard): val_loss={val_loss:.4f} > best_val_loss {best_val_loss_seen:.4f} × {args.val_loss_max_ratio}")
+
+        # strict-only 모드: tie 는 저장 안 함
+        should_save = is_strict_improvement and not save_rejected
+        if args.save_strict_only:
+            pass  # 이미 is_strict_improvement 만 저장
+        else:
+            # legacy tie-update 모드 (historic fallback)
+            should_save = is_candidate and not save_rejected
+
+        if should_save:
+            patience_counter = 0
             best_val_recall = val_target_recall
             best_epoch = epoch
+            if best_val_loss_seen is None or val_loss < best_val_loss_seen:
+                best_val_loss_seen = val_loss
             # best_model.pth 저장: EMA 있으면 EMA weights, 없으면 raw
             save_state = ema.module.state_dict() if ema is not None else model.state_dict()
             torch.save(save_state, str(log_dir / "best_model.pth"))
-            tag = "NEW BEST" if is_strict_improvement else f"TIE update (stag {patience_counter}/{args.patience})"
+            tag = "NEW BEST" if is_strict_improvement else "TIE save"
             print(f"\n  * {tag} (target={val_target_recall:.4f}) -> model saved{' (EMA)' if ema is not None else ''}")
 
             # Best 시 test 평가 (eval_model 사용 — EMA 있으면 EMA)
@@ -1139,9 +1232,12 @@ def main():
             with open(log_dir / "test_history.json", "w", encoding="utf-8") as f:
                 json.dump(test_history, f, indent=2, ensure_ascii=False)
         else:
-            # Decrease (smoothed < best) or pre-min_epochs: patience 증가
-            patience_counter += 1
-            print(f"\n  No improvement ({patience_counter}/{args.patience})")
+            # No save — patience counter 는 early_stop_start 이후에만 증가
+            if epoch >= early_stop_start:
+                patience_counter += 1
+                print(f"\n  No improvement ({patience_counter}/{args.patience})")
+            else:
+                print(f"\n  (pre-early_stop_start: patience counter 시작 안 함, ep {epoch} < {early_stop_start})")
 
         # epoch 시간 누적
         epoch_times.append(time.time() - t0)
@@ -1151,11 +1247,13 @@ def main():
             import copy as _copy
             avg_buffer.append({k: v.detach().cpu().clone() for k, v in model.state_dict().items()})
 
-        # Early stopping (최소 epoch 이후에만)
-        # smooth_window 활성: smoothed val_f1 기준으로 patience 누적 (이미 위 best 갱신 로직에서 처리됨)
-        # avg_last_n (deprecated) 활성 시: 비활성화
-        if args.avg_last_n == 0 and patience_counter >= args.patience and epoch >= args.min_epochs:
-            print(f"\n  ! Early stopping at epoch {epoch}")
+        # Early stopping (절대규칙 #15):
+        #   - patience_counter 는 early_stop_start 부터 카운트
+        #   - min_training_epochs (= early_stop_start + patience) 전엔 절대 종료 금지
+        if (args.avg_last_n == 0
+                and patience_counter >= args.patience
+                and epoch >= min_training_epochs):
+            print(f"\n  ! Early stopping at epoch {epoch} (min={min_training_epochs})")
             break
 
     # 전체 학습 시간

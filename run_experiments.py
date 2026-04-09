@@ -229,28 +229,72 @@ def build_experiments() -> List[Exp]:
     # 모두 train_tie.py + EMA 0.999 + strict save + val_loss guard + ep 10 매 test
     # ========================================================================
 
-    # ------- Phase 1: Spike-proof 검증 (n=700, spike-prone regime) -------
-    # n=700 이 n=2800 대비 4.6x 더 spike 많음 (0.55 vs 0.12 big/run, 100+ run 통계)
-    # spike-proof 로직은 spike 가 실제로 발생하는 n=700 에서 검증해야 함
-    # lr 3e-5, warmup 5, ep 20, patience 5 (min stop ep 15)
+    # ------- Phase 1c: No EMA + clip + wd/bs sweep (n=700) -------
+    # EMA 제거 (짧은 학습에서 93% 만 수렴). clip_grad_norm_(1.0) + fp16 + wd/bs 효과 검증.
+    # Group A: bs 32, wd 0.01 baseline
+    # Group B: bs 64, wd 0.01 (lr √2 scaling = 4e-5, gradient variance ↓)
+    # Group D: bs 32, wd 0.05 (regularization 강화)
+    # 주의: h200 profile 의 --batch_size 256 override 는 exp args 가 override 함 (args 가 나중)
     for seed in (1, 2, 3, 4, 42):
         exps.append(Exp(
-            name=f"v9_phase1_n700_s{seed}",
-            group="phase1",
+            name=f"v9_phase1c_A_bs32_wd01_n700_s{seed}",
+            group="phase1c_A",
             args=[
                 "--mode", "binary",
                 "--normal_ratio", "700",
                 "--seed", str(seed),
                 "--lr_backbone", "3e-5",
                 "--lr_head", "3e-4",
+                "--batch_size", "32",
+                "--weight_decay", "0.01",
                 "--warmup_epochs", "5",
                 "--epochs", "20",
                 "--patience", "5",
                 "--smooth_window", "3",
                 "--smooth_method", "median",
-                "--ema_decay", "0.999",
+                "--ema_decay", "0.0",
             ],
-            note="Phase1 n=700 — EMA + strict + val_loss guard (spike regime)",
+            note="Phase1c A — no EMA, bs 32, wd 0.01 (baseline)",
+        ))
+        exps.append(Exp(
+            name=f"v9_phase1c_B_bs64_wd01_n700_s{seed}",
+            group="phase1c_B",
+            args=[
+                "--mode", "binary",
+                "--normal_ratio", "700",
+                "--seed", str(seed),
+                "--lr_backbone", "4e-5",
+                "--lr_head", "4e-4",
+                "--batch_size", "64",
+                "--weight_decay", "0.01",
+                "--warmup_epochs", "5",
+                "--epochs", "20",
+                "--patience", "5",
+                "--smooth_window", "3",
+                "--smooth_method", "median",
+                "--ema_decay", "0.0",
+            ],
+            note="Phase1c B — no EMA, bs 64, wd 0.01, lr √2 scaling",
+        ))
+        exps.append(Exp(
+            name=f"v9_phase1c_D_bs32_wd05_n700_s{seed}",
+            group="phase1c_D",
+            args=[
+                "--mode", "binary",
+                "--normal_ratio", "700",
+                "--seed", str(seed),
+                "--lr_backbone", "3e-5",
+                "--lr_head", "3e-4",
+                "--batch_size", "32",
+                "--weight_decay", "0.05",
+                "--warmup_epochs", "5",
+                "--epochs", "20",
+                "--patience", "5",
+                "--smooth_window", "3",
+                "--smooth_method", "median",
+                "--ema_decay", "0.0",
+            ],
+            note="Phase1c D — no EMA, bs 32, wd 0.05 (regularization)",
         ))
 
     # ------- Phase 2: LR/warmup variations (3 config × 3 seeds) -------

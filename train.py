@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import time
+from datetime import datetime
 import yaml
 import numpy as np
 import torch
@@ -245,7 +246,8 @@ def mixup_data(x, y, alpha=0.2):
 
 
 def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_epochs,
-                    scaler=None, use_mixup=False, ohem_ratio=0.0, amp_dtype=None, ema=None):
+                    scaler=None, use_mixup=False, ohem_ratio=0.0, amp_dtype=None, ema=None,
+                    grad_clip=1.0):
     model.train()
     total_loss = 0
     correct = 0
@@ -293,7 +295,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
             scaler.scale(loss).backward()
             # gradient clipping (cliff fall 안전망) — pre-clip norm 캡처
             scaler.unscale_(optimizer)
-            gn = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0).item()
+            gn = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip).item()
             grad_norms_pre_clip.append(gn)
             scaler.step(optimizer)
             scaler.update()
@@ -305,7 +307,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
                 if weights is not None and ohem_ratio == 0:
                     loss = (loss * weights).mean() if loss.dim() > 0 else loss
             loss.backward()
-            gn = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0).item()
+            gn = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip).item()
             grad_norms_pre_clip.append(gn)
             optimizer.step()
         else:
@@ -315,7 +317,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
             if weights is not None and ohem_ratio == 0:
                 loss = (loss * weights).mean() if loss.dim() > 0 else loss
             loss.backward()
-            gn = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0).item()
+            gn = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip).item()
             grad_norms_pre_clip.append(gn)
             optimizer.step()
 
@@ -348,6 +350,53 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
         gn_stats = None
 
     return total_loss / total, correct / total, gn_stats, grad_norms_pre_clip
+
+
+def _resolve_run_name(raw_log_dir: str) -> tuple[str, str]:
+    """사용자 입력에서 조건명 추출 + 시작 시각 prefix 생성.
+
+    Accepts:
+      - "v9_test"          -> condition="v9_test"
+      - "logs/v9_test"     -> condition="v9_test"  (backward compat)
+      - "logs\\v9_test"    -> condition="v9_test"  (Windows)
+      - "logs" / ""        -> condition="run"      (fallback)
+    Returns:
+      (base_prefix, condition)
+      base_prefix = "YYMMDD_HHMMSS_<condition>"  (시작 시각은 고정)
+    """
+    raw = (raw_log_dir or "").replace("\\", "/").strip("/").strip()
+    if raw.startswith("logs/"):
+        condition = raw[len("logs/"):]
+    elif raw in ("logs", ""):
+        condition = "run"
+    else:
+        condition = raw
+    # nested path 방지 + Windows 금지 문자 치환
+    condition = condition.replace("/", "_").strip("_") or "run"
+    start_ts = datetime.now().strftime("%y%m%d_%H%M%S")
+    return f"{start_ts}_{condition}", condition
+
+
+def _rename_to_best_metrics(log_dir, base_prefix: str, test_f1: float, test_recall: float):
+    """best 갱신 시 log_dir 폴더명을 `<base_prefix>_F<f1>_R<recall>` 로 변경.
+
+    Returns (new_log_dir, new_predictions_dir). 실패 또는 동일명이면 원본 반환.
+    """
+    parent = log_dir.parent
+    new_name = f"{base_prefix}_F{test_f1:.4f}_R{test_recall:.4f}"
+    new_path = parent / new_name
+    if new_path == log_dir:
+        return log_dir, log_dir / "predictions"
+    if new_path.exists():
+        print(f"  ! rename skipped: {new_path.name} already exists")
+        return log_dir, log_dir / "predictions"
+    try:
+        log_dir.rename(new_path)
+        print(f"  * folder -> {new_path.name}")
+        return new_path, new_path / "predictions"
+    except OSError as e:
+        print(f"  ! rename failed ({e}); keeping {log_dir.name}")
+        return log_dir, log_dir / "predictions"
 
 
 @torch.no_grad()
@@ -577,81 +626,120 @@ def save_training_plots(history, save_dir):
 # Main
 # =============================================================================
 
+def _load_train_config(path: str | None) -> dict:
+    """yaml train config 로드. 파일 없으면 {} 반환 (하위호환)."""
+    if path is None:
+        # 기본 경로 탐색
+        for candidate in ("configs/train/winning.yaml", "configs/train/default.yaml"):
+            if Path(candidate).exists():
+                path = candidate
+                break
+    if path is None or not Path(path).exists():
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+    return cfg
+
+
 def main():
+    # ---- Step 1: --train_config 를 sys.argv 에서 직접 추출 (yaml default 적용용) ----
+    import sys
+    tc_path = None
+    _argv = sys.argv[1:]
+    if "--train_config" in _argv:
+        i = _argv.index("--train_config")
+        if i + 1 < len(_argv):
+            tc_path = _argv[i + 1]
+    tc = _load_train_config(tc_path)
+    if tc:
+        print(f"  [train_config] loaded: {tc_path or 'configs/train/winning.yaml'}")
+
+    def td(key, fallback):
+        """yaml 우선, 없으면 fallback."""
+        return tc.get(key, fallback)
+
+    # ---- Step 2: 전체 parser ----
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="config.yaml")
-    parser.add_argument("--epochs", type=int, default=20)
-    parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--lr_backbone", type=float, default=2e-5,
+    parser.add_argument("--train_config", default=None,
+                        help="학습 hparam YAML (default: configs/train/winning.yaml 자동 로드)")
+    parser.add_argument("--config", default=td("data_config", "config.yaml"))
+    parser.add_argument("--epochs", type=int, default=td("epochs", 20))
+    parser.add_argument("--batch_size", type=int, default=td("batch_size", 32))
+    parser.add_argument("--lr_backbone", type=float, default=td("lr_backbone", 2e-5),
                         help="Backbone peak LR. ConvNeXtV2-Tiny: 2e-5 (5e-5는 spike 유발). 다른 backbone도 2e-5부터 시작.")
-    parser.add_argument("--lr_head", type=float, default=2e-4,
+    parser.add_argument("--lr_head", type=float, default=td("lr_head", 2e-4),
                         help="Head peak LR. backbone의 10x 유지.")
-    parser.add_argument("--warmup_epochs", type=int, default=5)
-    parser.add_argument("--weight_decay", type=float, default=0.01)
-    parser.add_argument("--patience", type=int, default=5)
-    parser.add_argument("--normal_threshold", type=float, default=0.5,
+    parser.add_argument("--warmup_epochs", type=int, default=td("warmup_epochs", 5))
+    parser.add_argument("--weight_decay", type=float, default=td("weight_decay", 0.01))
+    parser.add_argument("--grad_clip", type=float, default=td("grad_clip", 1.0),
+                        help="Gradient clip max_norm (default 1.0 = winning). 0.5/2.0/5.0 등 시도 가능.")
+    parser.add_argument("--patience", type=int, default=td("patience", 5))
+    parser.add_argument("--normal_threshold", type=float, default=td("normal_threshold", 0.5),
                         help="Inference threshold. 0.5=standard, 0.7=약간 conservative. 극한값(0.999+) 금지 — test-peeking 이고 production 에서 fragile.")
-    parser.add_argument("--model_name", type=str, default="convnextv2_tiny.fcmae_ft_in22k_in1k")
-    parser.add_argument("--freeze_backbone_epochs", type=int, default=0)
-    parser.add_argument("--label_smoothing", type=float, default=0.0)
-    parser.add_argument("--log_dir", type=str, default="logs")
-    parser.add_argument("--scheduler", type=str, default="cosine",
+    parser.add_argument("--model_name", type=str, default=td("model_name", "convnextv2_tiny.fcmae_ft_in22k_in1k"))
+    parser.add_argument("--freeze_backbone_epochs", type=int, default=td("freeze_backbone_epochs", 0))
+    parser.add_argument("--label_smoothing", type=float, default=td("label_smoothing", 0.0))
+    parser.add_argument("--log_dir", type=str, default="logs",
+                        help="조건명만 입력 (예: v9_test). 'logs/' 는 자동. "
+                             "실제 폴더: 'logs/YYMMDD_HHMMSS_<조건명>_F<testF1>_R<testRecall>'. "
+                             "best 갱신 시마다 F/R 숫자 자동 갱신 (폴더 rename).")
+    parser.add_argument("--scheduler", type=str, default=td("scheduler", "cosine"),
                         choices=["cosine", "step", "plateau"])
-    parser.add_argument("--step_size", type=int, default=10)
-    parser.add_argument("--step_gamma", type=float, default=0.5)
-    parser.add_argument("--use_amp", action="store_true", default=True)
-    parser.add_argument("--use_mixup", action="store_true", default=False)
-    parser.add_argument("--mode", type=str, default="binary",
+    parser.add_argument("--step_size", type=int, default=td("step_size", 10))
+    parser.add_argument("--step_gamma", type=float, default=td("step_gamma", 0.5))
+    parser.add_argument("--use_amp", action="store_true", default=td("use_amp", True))
+    parser.add_argument("--use_mixup", action="store_true", default=td("use_mixup", False))
+    parser.add_argument("--mode", type=str, default=td("mode", "binary"),
                         choices=["multiclass", "binary", "anomaly_type"])
-    parser.add_argument("--dropout", type=float, default=0.0)
-    parser.add_argument("--mixup_alpha", type=float, default=0.2)
-    parser.add_argument("--ema_decay", type=float, default=0.0,
+    parser.add_argument("--dropout", type=float, default=td("dropout", 0.0))
+    parser.add_argument("--mixup_alpha", type=float, default=td("mixup_alpha", 0.2))
+    parser.add_argument("--ema_decay", type=float, default=td("ema_decay", 0.0),
                         help="EMA of weights decay. 0=disabled (default). 짧은 학습 (<5000 step) 에선 EMA 가 수렴 못해서 raw 보다 나쁨. 긴 학습에서만 0.999 권장.")
-    parser.add_argument("--max_per_class", type=int, default=0,
+    parser.add_argument("--max_per_class", type=int, default=td("max_per_class", 0),
                         help="학습 데이터 클래스당 최대 수 (0=전체)")
-    parser.add_argument("--normal_ratio", type=int, default=0,
+    parser.add_argument("--normal_ratio", type=int, default=td("normal_ratio", 0),
                         help="Binary mode: normal 학습 샘플 수 (0=전체, abnormal은 고정)")
-    parser.add_argument("--ohem_ratio", type=float, default=0.0,
+    parser.add_argument("--ohem_ratio", type=float, default=td("ohem_ratio", 0.0),
                         help="OHEM ratio (0=off, 0.75=top75pct, 0.5=top50pct)")
-    parser.add_argument("--focal_gamma", type=float, default=0.0,
+    parser.add_argument("--focal_gamma", type=float, default=td("focal_gamma", 0.0),
                         help="Focal Loss gamma (0 = 사실상 CrossEntropy)")
-    parser.add_argument("--abnormal_weight", type=float, default=1.0,
+    parser.add_argument("--abnormal_weight", type=float, default=td("abnormal_weight", 1.0),
                         help="Binary mode: abnormal class weight 배수 (1.0=균등, 0=inverse freq 자동)")
-    parser.add_argument("--label_weights", type=str, default="",
+    parser.add_argument("--label_weights", type=str, default=td("label_weights", ""),
                         help="Multiclass label별 weight (예: normal=0.5,spike=3.0,context=2.0)")
-    parser.add_argument("--min_epochs", type=int, default=-1,
+    parser.add_argument("--min_epochs", type=int, default=td("min_epochs", -1),
                         help="[DEPRECATED] best 갱신 최소 epoch. -1=자동 (smoothed=7, single=10)")
-    parser.add_argument("--best_update_start_single", type=int, default=10,
+    parser.add_argument("--best_update_start_single", type=int, default=td("best_update_start_single", 10),
                         help="smooth_window<=1 일 때 best 저장 시작 epoch")
-    parser.add_argument("--best_update_start_smoothed", type=int, default=7,
+    parser.add_argument("--best_update_start_smoothed", type=int, default=td("best_update_start_smoothed", 7),
                         help="smooth_window>1 일 때 best 저장 시작 epoch")
-    parser.add_argument("--early_stop_start", type=int, default=10,
+    parser.add_argument("--early_stop_start", type=int, default=td("early_stop_start", 10),
                         help="patience counter 시작 epoch (smoothing 무관 고정)")
-    parser.add_argument("--val_loss_max_ratio", type=float, default=2.0,
+    parser.add_argument("--val_loss_max_ratio", type=float, default=td("val_loss_max_ratio", 2.0),
                         help="save guard: val_loss > max(best * ratio, guard_min_abs) 이면 save 거부")
-    parser.add_argument("--val_loss_guard_min_abs", type=float, default=0.02,
+    parser.add_argument("--val_loss_guard_min_abs", type=float, default=td("val_loss_guard_min_abs", 0.02),
                         help="save guard 절대 floor: val_loss 가 이 값 미만이면 guard 발동 안 함")
-    parser.add_argument("--save_strict_only", action="store_true", default=True,
+    parser.add_argument("--save_strict_only", action="store_true", default=td("save_strict_only", True),
                         help="best 저장은 strict > 만 허용 (2026-04-09 기본값 True)")
-    parser.add_argument("--avg_last_n", type=int, default=0,
+    parser.add_argument("--avg_last_n", type=int, default=td("avg_last_n", 0),
                         help="[deprecated] post-hoc weight 평균 (0=비활성)")
-    parser.add_argument("--smooth_window", type=int, default=3,
+    parser.add_argument("--smooth_window", type=int, default=td("smooth_window", 3),
                         help="best 기준 val_f1을 최근 N epoch 통계로 smooth (0=비활성)")
-    parser.add_argument("--smooth_method", type=str, default="median",
+    parser.add_argument("--smooth_method", type=str, default=td("smooth_method", "median"),
                         choices=["mean", "median"],
                         help="smooth_window 통계 방법 (median: spike에 robust)")
-    parser.add_argument("--eval_test_every_epoch", action="store_true",
+    parser.add_argument("--eval_test_every_epoch", action="store_true", default=td("eval_test_every_epoch", False),
                         help="매 epoch 끝에 test 평가 + history에 기록")
-    parser.add_argument("--seed", type=int, default=42,
+    parser.add_argument("--seed", type=int, default=td("seed", 42),
                         help="학습 random seed (재현성)")
-    parser.add_argument("--num_workers", type=int, default=4,
+    parser.add_argument("--num_workers", type=int, default=td("num_workers", 4),
                         help="DataLoader worker 수 (Windows: 0~4, Linux 서버: 8~16 권장)")
-    parser.add_argument("--precision", type=str, default="fp16",
+    parser.add_argument("--precision", type=str, default=td("precision", "fp16"),
                         choices=["fp16", "bf16", "fp32"],
                         help="학습 정밀도 (H100/H200: bf16 권장 — overflow 없음, GradScaler 불필요)")
-    parser.add_argument("--compile", action="store_true",
+    parser.add_argument("--compile", action="store_true", default=td("compile", False),
                         help="torch.compile 활성화 (H100/H200에서 20~50%% 가속)")
-    parser.add_argument("--prefetch_factor", type=int, default=4,
+    parser.add_argument("--prefetch_factor", type=int, default=td("prefetch_factor", 4),
                         help="DataLoader prefetch_factor (서버: 8~16)")
     args = parser.parse_args()
 
@@ -965,11 +1053,34 @@ def main():
         scheduler = warmup_scheduler  # plateau는 별도 처리
     print(f"  Scheduler: warmup({args.warmup_epochs}ep) + {args.scheduler}")
 
-    # 로그
-    log_dir = Path(args.log_dir)
+    # 로그 — 조건명만 받아서 logs/<yymmdd_hhmmss>_<조건명> 폴더 생성
+    # best 갱신 시마다 뒤에 _F<test_f1>_R<test_recall> 이 붙도록 rename 된다.
+    base_prefix, condition_name = _resolve_run_name(args.log_dir)
+    logs_root = Path("logs")
+    log_dir = logs_root / base_prefix
     log_dir.mkdir(parents=True, exist_ok=True)
     predictions_dir = log_dir / "predictions"
     predictions_dir.mkdir(exist_ok=True)
+    print(f"  Run folder: {log_dir}")
+
+    # ⭐ Config YAML 자동 snapshot — 재현성 + 추적성
+    # 1) train_config_used.yaml = effective config (CLI override 반영된 최종 args)
+    # 2) data_config_used.yaml  = 학습 당시의 config.yaml (데이터 생성 config)
+    try:
+        _effective_train = vars(args).copy()
+        # Path / non-serializable 정리
+        _effective_train = {k: (str(v) if not isinstance(v, (int, float, str, bool, list, dict, type(None))) else v)
+                            for k, v in _effective_train.items()}
+        with open(log_dir / "train_config_used.yaml", "w", encoding="utf-8") as _f:
+            yaml.safe_dump(_effective_train, _f, sort_keys=False, allow_unicode=True)
+        # 원본 data config (config.yaml) 도 함께 복사
+        _src_cfg = Path(args.config)
+        if _src_cfg.exists():
+            import shutil as _sh
+            _sh.copy2(_src_cfg, log_dir / "data_config_used.yaml")
+        print(f"  Config snapshot: {log_dir}/train_config_used.yaml + data_config_used.yaml")
+    except Exception as _e:
+        print(f"  [warn] config snapshot failed: {_e}")
     history = []
 
     best_val_recall = 0.0
@@ -1009,7 +1120,7 @@ def main():
         train_loss, train_acc, grad_stats, grad_norms_per_step = train_one_epoch(
             model, train_loader, criterion, optimizer, device, epoch, args.epochs,
             scaler=scaler, use_mixup=args.use_mixup, ohem_ratio=args.ohem_ratio,
-            amp_dtype=amp_dtype, ema=ema,
+            amp_dtype=amp_dtype, ema=ema, grad_clip=args.grad_clip,
         )
 
         # 평가 모델: EMA 있으면 EMA, 없으면 원본
@@ -1161,9 +1272,36 @@ def main():
             best_test_f1 = test_f1
             print_class_table(test_metrics, title="Test Class Performance (Best)")
 
-            # test_history 누적 — FN/FP/TN/TP + 기본 메트릭
+            # Binary-view FN/FP/TN/TP — binary 모드뿐 아니라 multiclass 에서도 계산
+            # (multiclass 는 label 0=normal, else=abnormal 로 환원)
+            if args.mode == "binary":
+                cm = _compute_binary_confusion(test_preds, test_labels)
+            else:
+                import numpy as _np
+                bin_preds = (_np.asarray(test_preds) != 0).astype(int)
+                bin_labels = (_np.asarray(test_labels) != 0).astype(int)
+                cm = _compute_binary_confusion(bin_preds, bin_labels)
+
+            # test_metrics 는 mode 별 키가 다름. binary 는 "normal"/"abnormal",
+            # multiclass 는 각 class. 공통으로 binary-view recall 계산.
+            _tn, _fn, _fp, _tp = cm["tn"], cm["fn"], cm["fp"], cm["tp"]
+            test_nor_R = _tn / (_tn + _fp) if (_tn + _fp) > 0 else 0.0
+            test_abn_R = _tp / (_tp + _fn) if (_tp + _fn) > 0 else 0.0
+
+            # ★ BEST EPOCH TEST 결과 prominent 출력 (FN/FP 강조)
+            print()
+            print(f"  {'='*62}")
+            print(f"  [BEST@ep{epoch:02d}] TEST RESULTS  (val_target={val_target_recall:.4f})")
+            print(f"  {'-'*62}")
+            print(f"    test_f1  = {test_f1:.4f}   test_recall = {test_recall:.4f}")
+            print(f"    abn_R    = {test_abn_R:.4f}   nor_R       = {test_nor_R:.4f}")
+            print(f"    FN (missed anomaly)  = {_fn:4d}  / {_fn + _tp:4d} abnormal")
+            print(f"    FP (false alarm)     = {_fp:4d}  / {_fp + _tn:4d} normal")
+            print(f"    TN = {_tn}   TP = {_tp}")
+            print(f"  {'='*62}")
+
+            # test_history 누적
             tag_short = "NEW_BEST" if is_strict_improvement else "TIE"
-            cm = _compute_binary_confusion(test_preds, test_labels) if args.mode == "binary" else {}
             test_entry = {
                 "epoch": epoch,
                 "event": tag_short,
@@ -1173,13 +1311,11 @@ def main():
                 "val_target_smoothed": round(val_target_recall, 4),
                 "test_f1": round(test_f1, 4),
                 "test_recall": round(test_recall, 4),
-                "test_nor_R": round(test_metrics["normal"]["recall"], 4),
-                "test_abn_R": round(test_metrics["abnormal"]["recall"], 4),
-                **cm,  # tn, fn, fp, tp (binary only)
+                "test_nor_R": round(test_nor_R, 4),
+                "test_abn_R": round(test_abn_R, 4),
+                **cm,  # tn, fn, fp, tp
             }
             test_history.append(test_entry)
-            if cm:
-                print(f"    test FN={cm['fn']} FP={cm['fp']} TN={cm['tn']} TP={cm['tp']}  test_f1={test_f1:.4f}")
 
             # 오분류 이미지 저장
             save_predictions(test_ds, test_preds, test_labels, classes, predictions_dir, correct_cap=100)
@@ -1227,6 +1363,11 @@ def main():
             # test_history 별도 파일로도 저장 (가독성)
             with open(log_dir / "test_history.json", "w", encoding="utf-8") as f:
                 json.dump(test_history, f, indent=2, ensure_ascii=False)
+
+            # 폴더명에 best 성능 반영 (rename). 실패해도 학습은 계속.
+            log_dir, predictions_dir = _rename_to_best_metrics(
+                log_dir, base_prefix, best_test_f1, best_test_recall
+            )
         elif is_candidate:
             # Tie: save_strict_only (default True) 면 저장 안 함. patience counter 만.
             if epoch >= early_stop_start:
@@ -1367,6 +1508,14 @@ def main():
     bi["normalize"] = {"mean": input_mean, "std": input_std}
     with open(info_path, "w", encoding="utf-8") as f:
         json.dump(bi, f, indent=2, ensure_ascii=False)
+
+    # 최종 rename: averaging 으로 best 가 갱신된 경우 폴더명도 반영.
+    # (averaging 없더라도 호출은 no-op — 같은 이름이면 skip)
+    if best_test_f1 > 0 or best_test_recall > 0:
+        log_dir, predictions_dir = _rename_to_best_metrics(
+            log_dir, base_prefix, best_test_f1, best_test_recall
+        )
+        info_path = log_dir / "best_info.json"
 
     # 최종 요약
     print(f"\n{'='*60}")

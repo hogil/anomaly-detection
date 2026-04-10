@@ -60,12 +60,20 @@ def _is_datetime_x(x_val) -> bool:
     return False
 
 
-def _filter_outliers(fleet_data, sigma=5):
-    """전체 fleet의 y값 mean ± sigma*std 밖의 점 제거 (시각화 정리용)"""
+def _filter_outliers(fleet_data, sigma=5, target_id=None):
+    """fleet 멤버의 y값 mean ± sigma*std 밖의 점 제거 (시각화 정리용).
+
+    ⚠️ target_id 는 절대 filter 하지 않음 — spike defect 의 핵심 신호가
+    outlier 자체이므로 target 만큼은 그대로 보존해야 함.
+    (이전 버그: outlier_sigma=5 가 spike 점들을 잘라먹어 모델/사람 모두 못 봤음)
+    """
     if sigma <= 0 or not fleet_data:
         return fleet_data
+    # mean/std 계산도 fleet (target 제외) 기준으로
     all_y = []
-    for _, (x, y) in fleet_data.items():
+    for mid, (x, y) in fleet_data.items():
+        if mid == target_id:
+            continue
         if len(y) > 0:
             all_y.append(np.asarray(y, dtype=float))
     if not all_y:
@@ -82,6 +90,10 @@ def _filter_outliers(fleet_data, sigma=5):
     upper = mean + sigma * std
     filtered = {}
     for mid, (x, y) in fleet_data.items():
+        if mid == target_id:
+            # target 은 그대로 (spike 보존)
+            filtered[mid] = (x, y)
+            continue
         if len(y) == 0:
             filtered[mid] = (x, y)
             continue
@@ -147,8 +159,8 @@ class ImageRenderer:
     # ================================================================
 
     def render_overlay(self, fleet_data: dict, target_id: str, save_path: str):
-        # outlier filtering (mean ± N*std 밖의 점 제거)
-        fleet_data = _filter_outliers(fleet_data, sigma=self.outlier_sigma)
+        # outlier filtering (mean ± N*std 밖의 점 제거) — target 은 보존
+        fleet_data = _filter_outliers(fleet_data, sigma=self.outlier_sigma, target_id=target_id)
         fig, ax = self._create_figure()
         vmin, vmax = self._fleet_minmax(fleet_data)
         val_range = vmax - vmin if vmax - vmin > 1e-10 else 1.0
@@ -190,8 +202,8 @@ class ImageRenderer:
         if anomalous_ids is None:
             anomalous_ids = []
 
-        # outlier filtering (mean ± N*std 밖의 점 제거)
-        fleet_data = _filter_outliers(fleet_data, sigma=self.outlier_sigma)
+        # outlier filtering (mean ± N*std 밖의 점 제거) — target 은 보존
+        fleet_data = _filter_outliers(fleet_data, sigma=self.outlier_sigma, target_id=target_id)
 
         fig, ax = self._create_figure_display()
 

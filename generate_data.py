@@ -306,15 +306,56 @@ def generate(config: dict, num_workers: int = 1):
     print(f"\n  저장: {out_dir}/")
 
 
+def _snapshot_config(config: dict, source_path: Path) -> None:
+    """데이터 생성 시 config 을 configs/datasets/ 로 snapshot 저장.
+
+    - 파일명: {version}_{YYYYMMDD_HHMMSS}.yaml
+    - version 은 dataset.version 또는 최근 v9midN naming 에서 추론
+    - 기존 latest.yaml symlink (Windows 는 copy) 도 함께 갱신
+    """
+    import datetime as _dt
+    import shutil as _sh
+    out_dir = Path("configs/datasets")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # 버전 태그 결정 (dataset.version > timestamp)
+    ver = None
+    if isinstance(config.get("dataset"), dict):
+        ver = config["dataset"].get("version")
+    ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    tag = f"{ver}_{ts}" if ver else ts
+
+    snapshot_path = out_dir / f"dataset_{tag}.yaml"
+    # 원본 yaml 을 그대로 복사 (주석 보존)
+    _sh.copy2(source_path, snapshot_path)
+
+    # latest 포인터 (symlink 불가능할 때 copy)
+    latest_path = out_dir / "latest.yaml"
+    try:
+        if latest_path.exists() or latest_path.is_symlink():
+            latest_path.unlink()
+        _sh.copy2(source_path, latest_path)
+    except OSError:
+        pass
+
+    print(f"  [config snapshot] → {snapshot_path}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--workers", type=int, default=1,
                         help="병렬 worker 수 (1=순차 default, 0=auto cpu_count-1, N>1=N process)")
+    parser.add_argument("--no_snapshot", action="store_true",
+                        help="configs/datasets/ 자동 snapshot 비활성")
     args = parser.parse_args()
     with open(args.config, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
+
+    if not args.no_snapshot:
+        _snapshot_config(config, Path(args.config))
+
     generate(config, num_workers=args.workers)
 
 

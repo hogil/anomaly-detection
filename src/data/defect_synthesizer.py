@@ -43,9 +43,11 @@ class DefectSynthesizer:
         if len(valid_indices) == 0:
             return anomaly_values, DefectInfo(defect_type, 0, 0, 0, {})
 
-        # 불량 영역: 오른쪽 끝에서부터 (drift는 전용 범위 사용)
+        # 불량 영역: 오른쪽 끝에서부터 (drift, spike 는 전용 범위 사용)
         if defect_type == "drift" and "region_ratio_range" in self.cfg.get("drift", {}):
             region_ratio = self.rng.uniform(*self.cfg["drift"]["region_ratio_range"])
+        elif defect_type == "spike" and "region_ratio_range" in self.cfg.get("spike", {}):
+            region_ratio = self.rng.uniform(*self.cfg["spike"]["region_ratio_range"])
         else:
             region_ratio = self.rng.uniform(*self.cfg["region_ratio_range"])
         defect_length = max(1, int(total_length * region_ratio))

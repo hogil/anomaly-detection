@@ -139,9 +139,9 @@ image:
     fleet_color: "#B0B0B0"
     fleet_alpha: 0.40
     fleet_marker_size: 14
-    target_color: "#E53935"
-    target_alpha: 0.90
-    target_marker_size: 18
+    target_color: "#4878CF"
+    target_alpha: 0.75
+    target_marker_size: 16
   # display 이미지 제목 구성에 사용할 scenarios.csv 컬럼들 (순서대로 " / "로 연결)
   title_columns: ["device", "step", "item"]
   # display 이미지 x축 라벨 (None이면 timeseries.csv의 x_col 자동 사용)

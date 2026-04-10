@@ -110,3 +110,10 @@ images_smoke*/
 display_smoke*/
 config_smoke*.yaml
 .torch_compile_cache/
+
+# Stdout training logs
+logs_*.out
+gen_*.log
+
+# Manual backup dirs
+*_backup_*/

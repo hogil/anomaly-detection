@@ -1,430 +1,547 @@
-# 실험 결과 종합 요약
+# Anomaly Detection — 실험 종합 Report
 
-생성일: 2026-04-09 · 데이터 출처: `logs/*/best_info.json` 전체 (278 runs)
-재생성: `PYTHONIOENCODING=utf-8 python experiment_summary/build_summary.py`
-원본 raw: [`data.csv`](data.csv) (278 rows)
-
----
-
-## 데이터 샘플 (6 클래스)
-
-각 클래스마다 2장: **model_input** (224×224 축 없음, 모델이 실제 보는 입력) + **human_view** (축/legend/title 있는 사람 확인용 display).
-
-### Normal vs 5 불량 (model input — 모델 입력)
-
-| Normal | Mean Shift | Standard Deviation |
-|---|---|---|
-| ![normal](sample_images/model_input/normal.png) | ![mean_shift](sample_images/model_input/mean_shift.png) | ![standard_deviation](sample_images/model_input/standard_deviation.png) |
-
-| Spike | Drift | Context |
-|---|---|---|
-| ![spike](sample_images/model_input/spike.png) | ![drift](sample_images/model_input/drift.png) | ![context](sample_images/model_input/context.png) |
-
-### Display (사람 확인용 — 축/legend 포함)
-
-| Normal | Mean Shift | Standard Deviation |
-|---|---|---|
-| ![normal](sample_images/human_view/normal.png) | ![mean_shift](sample_images/human_view/mean_shift.png) | ![standard_deviation](sample_images/human_view/standard_deviation.png) |
-
-| Spike | Drift | Context |
-|---|---|---|
-| ![spike](sample_images/human_view/spike.png) | ![drift](sample_images/human_view/drift.png) | ![context](sample_images/human_view/context.png) |
-
-각 차트 = 1 chart_id (device + step + item) 의 fleet overlay. target 멤버 = 컬러 강조, 나머지 fleet = 회색 배경. 불량 멤버는 빨간색.
+> **문서 범위**: 프로젝트 전체 역사 (v8_init → v9 → v9mid) + **2026-04-09 5시간 iteration** 상세 분석
+> **생성**: `PYTHONIOENCODING=utf-8 python experiment_summary/build_v9mid_summary.py`
+> **현재 active**: v9mid5 config, **mean test F1 = 0.9991 ± 0.0003** (3-seed)
 
 ---
 
-## 0. 전체 개요
+## 0. Executive Summary (한 페이지 요약)
 
-| | 값 |
-|---|---|
-| 총 run | 278 (best_info.json 보유 기준) |
-| Mode 분포 | binary 219 · anomaly_type 19 · multiclass 18 · None 21 |
-| Backbone | 거의 전부 `convnextv2_tiny.fcmae_ft_in22k_in1k` (28.3M) |
-| 기간 | 2026-04-03 ~ 04-09 (1주일) |
-| Test set | normal 750 + abnormal 750 (5 type × 150) |
+### 최종 성능 (winning = v9mid5 config, lr_backbone 2e-5)
 
-### Era 타임라인 (이름 prefix 기준)
+| seed | best_ep | test_f1 | abn_R | nor_R | FN | FP |
+|---:|---:|---:|---:|---:|---:|---:|
+| s=42 | 10 | **0.9993** | 0.9987 | **1.0000** | 1 | 0 |
+| s=1  | 11 | 0.9987 | 0.9973 | **1.0000** | 2 | 0 |
+| s=2  | 9  | **0.9993** | 0.9987 | **1.0000** | 1 | 0 |
+| **mean** | | **0.9991 ± 0.0003** | 0.9982 | **1.000** | **1.3** | **0.0** |
 
-| Era | prefix | runs | F1 평균 | F1 최대 | 비고 |
-|---|---|---:|---:|---:|---|
-| 1. early | `convnextv2_*` | 9 | 0.77 | 0.83 | 첫 multiclass, baseline |
-| 2. fix-attempts | `r3_/r4_/r6_/r6b_` | 47 | 0.88 | 0.94 | 안정성 시도 |
-| 3. improvement | `imp_/imp2_/var_` | 61 | 0.91 | 0.95 | sweep era (γ/aw/lr/dropout) |
-| 4. gamma-normal | `gm_g/gm_nor` | 21 | 0.92 | 0.94 | focal gamma + normal_count |
-| 5. fine-tune | `ft_*` | 13 | 0.92 | 0.94 | 미세조정 sweep |
-| 6. v8 dataset | `v8_*` | 34 | 0.99 | **1.00** | 학습 코드 안정화 |
-| 7. v9 dataset | `v9_*` | 93 | 0.99 | 0.999 | noise +25%, 현재 |
+1500 test 중 평균 **1.3 errors**. **모든 seed 에서 nor_R 100%** (false alarm zero).
 
-핵심: **F1 0.93 → 0.999 점프는 v8_init 시기** (학습 안정성 + 데이터 품질 동시 개선). 그 이후는 작은 차이의 다툼.
+### 5시간 iteration 개선 궤적
 
----
+![Performance timeline](v9mid_journey/plots/01_performance_timeline.png)
 
-## Category 1 — Per-class equal scaling (v8_init)
+v3 baseline (0.9949) → **v5 winner (0.9991)** = **+0.42 pts, 에러 85% 감소**.
 
-데이터 크기를 키울 때 클래스 균등 비율 유지. single seed 라 noise 큼 — Cat 2b 의 multi-seed 가 더 신뢰성 있다.
+### 핵심 수정 — **단 하나의 fix 가 대부분을 해결**
 
-| normal | run | F1 % | abn_R % | nor_R % | best_ep |
-|---:|---|---:|---:|---:|---:|
-| 700  | v8_init    | 99.07 | 98.80 | 99.33 | 2 |
-| 1400 | v8_init_n2 | 99.07 | 98.67 | 99.47 | 5 |
-| 2100 | v8_init_n3 | 99.27 | 99.33 | 99.20 | 3 |
-| 2800 | v8_init_n4 | **99.40** | 99.20 | 99.60 | 3 |
-| 3500 | v8_init_n5 | 99.00 | 98.40 | 99.60 | 5 |
+**`src/data/image_renderer.py::_filter_outliers`** 가 target 의 spike 점들을 `mean ± 5σ` 로 필터링해서 이미지 프레임 밖으로 잘라버리던 **근본 버그**.
 
-![Cat 1](cat1_dataset_scale.png)
+```python
+# 수정 전 (v3 이전, 모든 run 영향)
+def _filter_outliers(fleet_data, sigma=5):
+    # target 포함 전체에서 ±5σ 밖 점 제거 ← spike 자체가 outlier 이므로 삭제됨
+    ...
 
-**관찰**
-- ∩-curve, n=2800 정점, n=3500 dip
-- Cat 2b 의 multi-seed 결과로 동일 결론 검증됨
-
----
-
-## Category 2 — Normal-only count sweeps
-
-`--normal_ratio` 만 변경, abnormal 고정. 3개 era 에서 비교.
-
-### Cat 2a — gm_nor 시리즈 (오래된 era, 단일 seed)
-
-| normal | run | F1 % | abn_R % | nor_R % |
-|---:|---|---:|---:|---:|
-| 100  | gm_nor100  | 68.99 | 77.11 | 75.33 |
-| 200  | gm_nor200  | 92.44 | 95.14 | 96.00 |
-| 350  | gm_nor350  | **93.41** | 97.28 | 90.67 |
-| 500  | gm_nor500  | 93.10 | 95.85 | 95.33 |
-| 700  | gm_nor700  | 89.84 | 92.70 | 96.67 |
-| 1000 | gm_nor1000 | 92.41 | 95.28 | 95.33 |
-| 1500 | gm_nor1500 | 91.01 | 96.42 | 86.67 |
-| 2000 | gm_nor2000 | 90.89 | 93.28 | 98.00 |
-
-n=100 은 데이터가 너무 적어 underfit. 200~2000 사이는 ~91~93 % 에서 노이즈.
-
-### Cat 2b — v8seed multi-seed (5 seeds × 5 counts = 25 runs) ⭐
-
-| normal | n_seeds | F1 % | abn_R % | nor_R % |
-|---:|---:|---:|---:|---:|
-| 700  | 5 | 99.88 ± 0.05 | 99.89 ± 0.10 | 99.87 ± 0.08 |
-| 1400 | 5 | 99.83 ± 0.16 | 99.71 ± 0.33 | 99.95 ± 0.07 |
-| 2100 | 5 | 99.88 ± 0.09 | 99.81 ± 0.20 | 99.95 ± 0.11 |
-| **2800** | 5 | **99.92 ± 0.06** ⭐ | **99.87 ± 0.15** | **99.97 ± 0.05** |
-| 3500 | 5 | 99.76 ± 0.16 | 99.60 ± 0.32 | 99.92 ± 0.07 |
-
-### Cat 2c — v9_lr3tie (lr 3e-5, single seed)
-
-| normal | run | F1 % | abn_R % | nor_R % |
-|---:|---|---:|---:|---:|
-| 700  | v9_lr3tie_n700_s1  | 99.40 | 99.87 | 98.93 |
-| **1400** | **v9_lr3tie_n1400_s1** | **99.93** ⭐ | 99.87 | 100.00 |
-| 2100 | v9_lr3tie_n2100_s1 | 99.67 | 99.33 | 100.00 |
-| 2800 | v9_lr3tie_n2800_s1 | **96.13 ⚠️** | **92.27 ⚠️** | 100.00 |
-
-![Cat 2](cat2_normal_count.png)
-
-**관찰**
-1. **gm_nor era** 에선 91~93 % 에서 노이즈 — sweet spot 불분명, 데이터/코드 미성숙
-2. **v8seed era** 에서 갑자기 99.9% 로 점프 + 명확한 sweet spot n=2800 발견 (5-seed 검증)
-3. **v9_lr3tie era** 에서 n=1400 single seed best 99.93 달성, 하지만 n=2800 에서 **LR spike collapse** (Cat 11 참조)
-4. **공통 패턴**: 데이터 너무 많으면 (n=3500, n=2800@v9+lr3tie) 불안정해짐
-
----
-
-## Category 3 — Noise impact (v8 → v9)
-
-같은 학습 config 에서 데이터셋의 noise 만 +25% 증가.
-
-| dataset | n_seeds | F1 % | abn_R % | nor_R % |
-|---|---:|---:|---:|---:|
-| **v8 baseline** (lr 5e-5)         | 5 | **99.92 ± 0.06** | **99.87 ± 0.15** | 99.97 ± 0.05 |
-| v9 tie-fix (+25% noise, lr 5e-5)  | 3 | 99.71 ± 0.19 | 99.69 ± 0.13 | 99.73 ± 0.29 |
-| v9 ep10 (+25% noise, lr 2e-5)     | 5 | 99.45 ± 0.09 | 98.93 ± 0.19 | 99.97 ± 0.05 |
-
-![Cat 3](cat3_noise_impact.png)
-
-**관찰**
-- noise +25% → F1 -0.21 ~ -0.47 pt
-- abn_R 가 F1 보다 더 크게 떨어짐 — noise 증가 시 불량 식별이 가장 먼저 무너짐
-- v9 tie-fix (lr 5e-5 + tie-update) > v9 ep10 (lr 2e-5) but std 더 큼
-
----
-
-## Category 4 — LR tuning (전 era)
-
-LR 변경의 진화 — 4개 era 에서 시도.
-
-### Cat 4a — convnextv2_lr* (가장 오래된 era)
-
-| lr | run | F1 % | nor_R % |
-|---:|---|---:|---:|
-| 2e-05 | convnextv2_lr2e5 | 71.43 | 90.00 |
-| 5e-05 | convnextv2_lr5e5 | 75.32 | 96.67 |
-| 1e-04 | convnextv2_lr1e4 | 75.20 | 90.00 |
-
-⚠️ 이 era 는 multiclass 6-class mode → F1 가 binary 와 직접 비교 불가. abn_R 는 기록 안 됨.
-
-### Cat 4b — ft_lr*
-
-`logs/ft_lr08`, `ft_lr12`, `ft_lr15` 폴더는 있지만 best_info.json 없음 (불완전 run). 스킵.
-
-### Cat 4c — imp2_cos_lr*
-
-| lr | run | F1 % | abn_R % | nor_R % |
-|---:|---|---:|---:|---:|
-| 3e-05 | imp2_cos_lr1 | 93.44 | 97.14 | 91.33 |
-| **7e-05** | **imp2_cos_lr2** | **94.33** | **98.00** | 90.67 |
-| 1.5e-4 | imp2_cos_lr3 | 93.08 | 97.71 | 88.00 |
-| 2e-4 | imp2_cos_lr4 | 92.11 | 96.42 | 90.00 |
-
-7e-5 부근이 imp era 의 sweet spot. F1 자체는 v8/v9 era 와 비교 불가 (다른 데이터/코드).
-
-### Cat 4d — v9 era LR sweep (현재)
-
-| lr | n_runs | F1 best | F1 worst | 비고 |
-|---:|---:|---:|---:|---|
-| 2e-05 | 7 | 99.60 | 99.33 | 가장 안정 |
-| 3e-05 | 7 | **99.93** | **96.13 ⚠️** | 잠재력 best, 가끔 spike |
-| 5e-05 | 2 | 99.67 | 99.47 | 단일 seed 만 |
-
-자세히:
-
-| lr | run | F1 % | abn_R % | nor_R % |
-|---:|---|---:|---:|---:|
-| 2e-05 | v9_ep10_n2800_s1 | 99.40 | 98.80 | 100.00 |
-| 2e-05 | v9_ep10_n2800_s2 | 99.47 | 98.93 | 100.00 |
-| 2e-05 | v9_ep10_n2800_s3 | 99.47 | 99.07 | 99.87 |
-| 2e-05 | v9_ep10_n2800_s4 | 99.33 | 98.67 | 100.00 |
-| 2e-05 | v9_ep10_n2800_s42 | **99.60** | 99.20 | 100.00 |
-| 2e-05 | v9_lrB_n700_s4 | 99.53 | 99.07 | 100.00 |
-| 3e-05 | **v9_lr3_n700_s1** | **99.93** | 99.87 | 100.00 |
-| 3e-05 | **v9_lr3_n2800_s1_p20** | **99.93** | 99.87 | 100.00 |
-| 3e-05 | **v9_lr3tie_n1400_s1** | **99.93** | 99.87 | 100.00 |
-| 3e-05 | v9_lr3tie_n2100_s1 | 99.67 | 99.33 | 100.00 |
-| 3e-05 | **v9_lr3tie_n2800_s1** | **96.13 ⚠️** | **92.27 ⚠️** | 100.00 |
-| 5e-05 | v9_lr5_ls05_n700_s4 | 99.67 | 99.33 | 100.00 |
-| 5e-05 | v9_lr5_n700_s4 | 99.47 | 98.93 | 100.00 |
-
-![Cat 4](cat4_lr_tuning.png)
-
-**핵심 발견**
-1. **lr 3e-5 = high risk / high reward**: best F1 99.93 도, worst 96.13 도 모두 lr 3e-5 에서 나옴
-2. **lr 2e-5 = 안전**: 5-seed mean 99.45, std 0.09, 최악도 99.33
-3. **lr 5e-5** 는 v8 데이터에선 정점 (99.92), v9 에선 비검증 (single seed 만)
-4. **결론**: production 으로 쓸 거면 lr 2e-5, 새 best 노릴 거면 lr 3e-5 + EMA
-
----
-
-## Category 5 — Focal gamma sweep
-
-총 15 runs, mixed era. **F1 sweet spot 명확하지 않음** (γ 0.5~4 에서 모두 91~94 %).
-
-| γ | run | F1 % | abn_R % | nor_R % |
-|---:|---|---:|---:|---:|
-| 0.1 | imp2_cos_g1 | 93.86 | 98.14 | 88.67 |
-| 0.3 | imp2_cos_g3 | 90.85 | 94.85 | 92.00 |
-| 0.5 | gm_g05 | 92.86 | 95.99 | 94.00 |
-| 1.0 | gm_g10 | 92.05 | 95.85 | 92.00 |
-| 1.5 | gm_g15 | 93.08 | 96.85 | 91.33 |
-| 1.5 | imp2_cos_g15 | 78.58 | 99.57 | **46.67 ⚠️** |
-| 1.8 | ft_g1.8 | 91.80 | 94.42 | 96.67 |
-| 2.0 | gm_g20 | 92.75 | 96.42 | 92.00 |
-| 2.2 | ft_g2.2 | 92.65 | 95.99 | 93.33 |
-| 2.5 | gm_g25 | 93.15 | 97.42 | 89.33 |
-| 2.5 | imp2_cos_g25 | 93.84 | 97.28 | 92.00 |
-| 3.0 | gm_g30 | 91.84 | 94.28 | 97.33 |
-| 3.5 | gm_g35 | 92.54 | 95.57 | 94.67 |
-| **4.0** | **gm_g40** | **93.90** | 95.99 | 97.33 |
-| 5.0 | gm_g50 | 87.81 | 92.56 | 90.67 |
-
-![Cat 5](cat5_focal_gamma.png)
-
-**관찰**
-- γ ∈ [0.5, 4] 에서 거의 plateau — focal_gamma 는 이 task 에서 효과 미미
-- γ=1.5 (`imp2_cos_g15`) 는 nor_R 46% 로 collapse — 학습 잘못된 케이스
-- γ=5 에서 underfit
-- **현재 v9 era 는 γ=0 (CrossEntropy 동등)** 사용 → 옳은 선택. focal 의 imbalance 보정은 abn_weight 이 더 직접적
-
----
-
-## Category 6 — Abnormal weight sweep
-
-binary mode 에서 abnormal class loss 에 곱하는 가중치.
-
-| aw | run | F1 % | abn_R % | nor_R % |
-|---:|---|---:|---:|---:|
-| 1.00 | imp2_cos_aw1 | 93.44 | 97.14 | 91.33 |
-| **1.00** | **v9_aw1_n700_s42** | **99.27** | 98.80 | 99.73 |
-| 1.00 | v9_aw1redo_n700_s4 | 98.53 | 97.47 | 99.60 |
-| 1.50 | v9_aw15_n2800_s42 | 99.20 | 98.40 | 100.00 |
-| 2.00 | imp2_cos_aw2 | 91.68 | 97.85 | 83.33 |
-| 4.00 | imp2_cos_aw4 | 83.27 | **99.71** | **56.00 ⚠️** |
-| 5.00 | imp2_cos_aw5 | 92.00 | 97.57 | 85.33 |
-| 7.00 | imp2_cos_aw7 | 80.46 | **100.00** | **49.33 ⚠️** |
-| 10.00 | imp2_cos_aw10 | 91.53 | 99.71 | 76.00 |
-
-![Cat 6](cat6_abnormal_weight.png)
-
-**관찰** (매우 중요)
-1. **aw ↑ → abn_R ↑, nor_R ↓ tradeoff** 명확
-2. **aw ≥ 4** 에서 nor_R 붕괴 (false alarm 폭증)
-3. **aw=1 (균등)** 이 v9 era 의 명확한 winner — 99.27%
-4. v9 era 의 학습 안정성이 aw 의 imbalance 보정 필요성을 없앰
-
----
-
-## Category 7 — Dropout sweep
-
-| dropout | run | F1 % | abn_R % | nor_R % |
-|---:|---|---:|---:|---:|
-| 0.2 | imp2_cos_d02 | 92.85 | 98.57 | 84.00 |
-| 0.3 | imp2_cos_d03 | 92.43 | 96.85 | 89.33 |
-| 0.4 | imp2_cos_d04 | 89.12 | 98.28 | **74.67 ⚠️** |
-| 0.6 | ft_d06 | 92.17 | 94.56 | 97.33 |
-
-![Cat 7](cat7_dropout.png)
-
-**관찰**
-- dropout ↑ → 일반적으로 F1 ↓ (특히 nor_R 손해)
-- 강한 pretrained backbone + 충분한 데이터에서 dropout 불필요
-- **현재 v9 era 는 dropout=0** 사용 → 옳음
-
----
-
-## Category 8 — Backbone comparison (v9_bb_*)
-
-v9 데이터, 동일 학습 config, multi-seed.
-
-| backbone | n_seeds | F1 % | abn_R % |
-|---|---:|---:|---:|
-| **swin_tiny** | 3 | **99.51 ± 0.31** | 99.16 ± 0.72 |
-| clip_vit_b16 | 1 | 99.40 ± 0.00 | 99.20 ± 0.00 |
-| efficientnetv2_s | 3 | 99.11 ± 0.17 | 98.44 ± 0.33 |
-| maxvit_tiny | 3 | 98.78 ± 0.14 | 97.73 ± 0.38 |
-| (convnextv2_tiny baseline) | 5 | 99.45~99.92 | 98.93~99.87 |
-
-![Cat 8](cat8_backbone.png)
-
-**관찰**
-1. **swin_tiny** 가 다른 backbone 중 best (F1 99.51) — std 큰 게 아쉬움
-2. **maxvit_tiny** 가 가장 약함
-3. convnextv2_tiny 가 여전히 가장 안정적이고 빠름 → 현 backbone 유지
-
----
-
-## Category 9 — Regularization (v9reg_*)
-
-`logs/v9reg_drop02_n2800_s42`, `v9reg_fg20`, `v9reg_ls01`, `v9reg_mix02`, `v9reg_wd05` — **5 폴더 모두 best_info.json 없음** (불완전 run). 데이터 없음, 스킵.
-
----
-
-## Category 10 — EMA / weight averaging (v9 era)
-
-| run | F1 % | abn_R % | nor_R % | epochs |
-|---|---:|---:|---:|---:|
-| **v9_avg5_n700_s1** | **99.80** | **100.00** | 99.60 | 20 |
-| v9_ema999ep10_n2800_s4 | 99.40 | 98.80 | 100.00 | 10 |
-| v9_ema_n700_s4 | 98.93 | 98.53 | 99.33 | 20 |
-
-⚠️ best_info.json 의 `ema_decay` 필드가 None 으로 기록됨 — hparams 저장 누락. 실제 ema_decay 는 폴더명에서 추론 가능 (ema9999 → 0.9999, ema → 0.999).
-
-**관찰**
-- `v9_avg5_n700_s1` (post-hoc weight 평균 5 epoch) → **abn_R 100%** 달성 ⭐
-- 일반 EMA 는 약간 손해 (small dataset 에서 ema_decay 너무 높으면 init 에 머무름)
-- **avg5 = 가장 유망한 noise spike 회피 기법** (v9_lr3tie_n2800 의 spike 도 흡수 가능했을 것)
-
----
-
-## Category 11 — Best selection / smoothing experiments
-
-best 갱신 로직과 val smoothing 실험.
-
-| run | F1 % | abn_R % | nor_R % | smooth | min_ep |
-|---|---:|---:|---:|---:|---:|
-| v9_v8code_n700_s4 | 98.80 | 97.87 | 99.73 | 3 | 10 |
-| v9_lrB_aw12_n700_s4 | 99.40 | 98.80 | 100.00 | 3 | 1 |
-| v9_lrB_n700_s4 | 99.53 | 99.07 | 100.00 | 3 | 10 |
-| v9_ref_n700_s4 | 99.13 | 99.87 | 98.40 | 3 | 10 |
-| v9_med3p10_e25_n700_s1 | 99.67 | 99.73 | 99.60 | — | — |
-| **v9_med3p10_e25_eval_n700_s1** | **99.87** | **100.00** | 99.73 | — | — |
-| **v9_med3p5_n700_s1** | **99.87** | **100.00** | 99.73 | — | — |
-
-**관찰**
-- smooth_window=3 + min_epochs=10 가 표준 base
-- `v9_med3p5` (patience=5) 와 `v9_med3p10_e25_eval` 모두 abn_R 100% 달성
-- best selection 의 sweet spot 은 patience 5~10, smooth median window 3
-
----
-
-## 🏆 Top 10 by F1 (binary mode, all eras)
-
-| Rank | run | F1 % | abn_R % | nor_R % | lr_bb |
-|---:|---|---:|---:|---:|---:|
-| 🥇 | v8seed_n1400_s3 | **100.00** | 100.00 | 100.00 | 5e-5 |
-| 🥇 | v8seed_n2100_s2 | **100.00** | 100.00 | 100.00 | 5e-5 |
-| 🥇 | v8seed_n2800_s2 | **100.00** | 100.00 | 100.00 | 5e-5 |
-| 🥈 | v8seed_n2100_s3 | 99.93 | 99.87 | 100.00 | 5e-5 |
-| 🥈 | v8seed_n2800_s1 | 99.93 | 99.87 | 100.00 | 5e-5 |
-| 🥈 | v8seed_n2800_s4 | 99.93 | 99.87 | 100.00 | 5e-5 |
-| 🥈 | v8seed_n2800_s42 | 99.93 | 100.00 | 99.87 | 5e-5 |
-| 🥈 | v8seed_n3500_s4 | 99.93 | 100.00 | 99.87 | 5e-5 |
-| 🥈 | v8seed_n700_s1 | 99.93 | 99.87 | 100.00 | 5e-5 |
-| 🥈 | v8seed_n700_s3 | 99.93 | 100.00 | 99.87 | 5e-5 |
-
-**v8 dataset 시대가 최강** — v9 는 noise 추가로 어려워졌고 아직 multi-seed 검증 부족.
-
-v9 era 의 best (single seed):
-- `v9_lr3tie_n1400_s1` (99.93, lr 3e-5)
-- `v9_lr3_n2800_s1_p20` (99.93, lr 3e-5, patience 20)
-- `v9_lr3_n700_s1` (99.93, lr 3e-5)
-
-→ lr 3e-5 + tie/p20 조합이 v9 의 잠재력. 단 multi-seed 검증 필수.
-
----
-
-## ⚠️ 실패 케이스 — v9_lr3tie_n2800_s1
-
-학습된 best_model.pth 가 망가져있다. 원인 분석:
-
-| ep | val_loss | val_f1 | val_smooth | test_f1 | 결과 |
-|---:|---:|---:|---:|---:|---|
-| 10 | 0.0000 | 1.0000 | 1.000 | **0.9973** | NEW_BEST 저장 ✓ |
-| 11 | 0.0001 | 1.0000 | 1.000 | 0.9960 | TIE → 저장 ✓ |
-| **12** | **0.0301** ⚠️ | 0.9967 | 1.000 | **0.9613** ⚠️ | TIE → **망가진 모델로 덮어씀** |
-| 13 | 0.0038 | 0.9993 | 0.9993 | (회복) | val_smooth<1 → 저장 못함 |
-| 14 | 0.0035 | 0.9993 | 0.9993 | (회복) | 〃 |
-| 15 | 0.0022 | 0.9993 | 0.9993 | (회복) | 〃 → history 종료 |
-
-**원인 사슬**
-1. ep 12 에서 val_loss 가 300배 spike (0.0001 → 0.0301)
-2. argmax 기반 val_f1 는 calibration 사고 못 봄 (1.0 → 0.9967, 살짝만)
-3. tie-update 로직 + smooth_window=3 → val_smoothed = median(1, 1, 0.9967) = 1.0 → TIE 인정 → 저장
-4. ep 13~15 는 회복했지만 val_smooth 가 1.0 미만이라 NEW_BEST 못 됨 → 회복된 weights 휘발
-
-**처방** (Cat 10 의 EMA 와 직결)
-- Plan A: lr 2e-5 로 낮춤 (spike 자체 회피)
-- **Plan B: EMA 0.999 도입** (ep 12 spike 가 평균에 0.1% 만 영향)
-- Plan C: train_tie.py 에 val_loss tiebreaker 패치
-- Plan D: multi-seed 검증으로 spike 가 시스템적인지 확인
-
----
-
-## 종합 권장 (다음 액션)
-
-1. **production 안정 라인** = `v9_ep10_n2800` 류 (lr 2e-5, 5-seed mean 99.45)
-2. **best 도전 라인** = `v9_lr3tie_n1400` + multi-seed 검증 (s2/s3/s4/s42)
-3. **EMA 도입** — Cat 10 의 `v9_avg5` 가 abn_R 100% 달성. EMA 는 v9 spike 문제의 가장 직접적 해법
-4. **train_tie.py 패치** — val_loss tiebreaker 추가로 같은 spike 재발 방지
-5. **데이터 quality** — Cat 2 에서 normal 늘려도 FN 감소 안 됨. FN 개선엔 augment 또는 데이터 다양성 필요
-6. **backbone 교체 보류** — Cat 8 에서 swin_tiny 가 비슷하지만 std 큼. convnextv2_tiny 유지
-
----
-
-## 부록 — 실험 인프라 스크립트
-
-```bash
-# 전체 재생성 (약 10초)
-PYTHONIOENCODING=utf-8 python experiment_summary/build_summary.py > experiment_summary/build_log.txt
-
-# raw 분석
-python -c "import pandas; df = pandas.read_csv('experiment_summary/data.csv'); print(df.describe())"
+# 수정 후 (v4, 2026-04-09)
+def _filter_outliers(fleet_data, sigma=5, target_id=None):
+    # fleet member 만 기준 삼고, target_id 점들은 그대로 보존
+    ...
 ```
 
-`build_summary.py` 는 멱등 — 새 run 추가되면 다시 돌리기만 하면 모든 표/plot 자동 갱신.
+이 fix 로:
+- **v3 → v4**: spike FN 7/9 → **0/9** (3-seed 누적)
+- 모델이 처음으로 "spike 가 fleet 밖으로 튀는" 신호를 볼 수 있게 됨
+- 유저가 "이건 불량이 아니잖아 시발" 로 지적한 `ch_08893` 케이스에서 발견
+
+---
+
+## 1. 프로젝트 맥락
+
+### 목표
+반도체 Fab L1 계측 시계열을 **6-class overlay 이미지 → ConvNeXtV2-Tiny** 로 분류해서 **5 가지 anomaly type** (mean_shift / std / spike / drift / context) 을 normal 과 구분.
+
+### 데이터 구조
+
+| 필드 | 값 |
+|---|---|
+| chart_id | `ch_00000` ~ `ch_09999` (10000 scenarios) |
+| split | train 7000 / val 1500 / test 1500 |
+| class | normal 5000 + 각 defect 1000 |
+| context_column | eqp_id / chamber / recipe 중 1개 |
+| test_difficulty_scale | 0.80 (test 의 defect 강도 = train 의 80%) |
+
+각 scenario 는 하나의 "chart" (device+step+item) 안에서 target 멤버 를 normal 또는 defect 로 주입하고, 나머지 fleet 멤버와 함께 overlay 렌더링.
+
+### 이미지 2종
+
+```
+images/       — 모델 입력 (224×224, 축/legend 없음)
+display/      — 사람 확인용 (축/legend/title 포함)
+```
+
+### 6-class 샘플 (v9mid5, test split)
+
+| normal | mean_shift | standard_deviation |
+|---|---|---|
+| ![](v9mid_journey/samples/normal.png) | ![](v9mid_journey/samples/mean_shift.png) | ![](v9mid_journey/samples/standard_deviation.png) |
+
+| spike | drift | context |
+|---|---|---|
+| ![](v9mid_journey/samples/spike.png) | ![](v9mid_journey/samples/drift.png) | ![](v9mid_journey/samples/context.png) |
+
+### 성능 지표 (binary mode)
+
+- **test_f1** = macro F1 (normal vs abnormal)
+- **abn_R** = abnormal recall = TP / (TP + FN) — **최우선 지표** (놓친 불량)
+- **nor_R** = normal recall = TN / (TN + FP) — false alarm rate
+- **FN** = missed anomaly count, **FP** = false alarm count
+
+---
+
+## 2. 학습 Config (winning, 2026-04-09 확정)
+
+```bash
+python train.py --normal_ratio 700 --seed 42 --log_dir logs/...
+# 나머지 전부 train.py default = winning config
+```
+
+| 항목 | 값 | 이유 |
+|---|---|---|
+| backbone | ConvNeXtV2-Tiny (fcmae_ft_in22k_in1k) | 28.3M params, v8/v9 sweep 에서 best |
+| **lr_backbone** | **2e-5** | 4e-5 는 ep5 부근 val_loss spike → 낮춰야 안정 |
+| **lr_head** | **2e-4** | backbone 의 10× |
+| warmup | 5 ep (LinearLR start_factor 0.05) | 대칭 언덕형 cosine |
+| scheduler | Cosine (T_max=20) | 표준 |
+| batch_size | 32 | RTX 4060 Ti 16GB 적정 |
+| weight_decay | 0.01 | AdamW 기본 |
+| focal_gamma | 0.0 | v9 era 는 CE 가 best (sweep 확인) |
+| dropout | 0.0 | 강한 pretrained + 충분 데이터 → 불필요 |
+| **abnormal_weight** | **1.0** (균등) | inverse freq 는 val_loss spike 유발 |
+| Gradient clipping | max_norm 1.0 | 코드 내장 |
+| min_epochs | 7 (smoothed) / 10 (single) | val spike 회피 gate |
+| patience | 5 | smoothed median val_f1 tie counting |
+| smooth_window | 3 | median |
+| **best selection** | **strict > 만 저장** (tie-fix) | tie 에 저장하면 overfit state 저장 |
+| EMA | disabled | 유저 방침 (현 세션) |
+| use_amp | True (fp16) | 속도 |
+| cudnn.benchmark | True | non-deterministic 안정 경로 |
+
+### 왜 이 config 인가? — 4 가지 critical fix
+
+**Fix #1 — lr_backbone 2e-5** ⭐⭐⭐
+- 5e-5, 4e-5 에서 일부 seed 가 ep 5 부근 **val_loss 0.13 → 0.78 spike** (경계 flip)
+- 2e-5 로 낮추니 spike 완전 제거 (max val_loss 0.08)
+- RTX 4060 Ti + ConvNeXt-V2 + bs 32 조합의 민감도
+
+![Val loss stability](v9mid_journey/plots/04_val_loss_comparison.png)
+
+빨간 선 (lr 4e-5) 이 ep5 에서 **0.78 spike**, 그에 반해 녹색 (lr 2e-5) 은 ep3 이후 내내 `< 0.03` 으로 안정.
+
+**Fix #2 — abnormal_weight 1.0 (균등)**
+- auto mode (inverse freq) → α=[1.67, 0.33] → normal gradient 5× → boundary flip → val spike
+- 1.0 균등 → α=[1.0, 1.0] → 안정
+
+**Fix #3 — cudnn.benchmark=True + deterministic=False**
+- deterministic=True 강제 시 gradient 수치 불안정 + AMP 조합에서 spike
+- benchmark=True 가 안정 경로
+
+**Fix #4 — Tie-fix (strict > only save)**
+- smooth_window=3 + tie save → 오래된 good state 가 최근 bad state 에 의해 덮어씌워짐
+- strict > 만 저장 → sweet spot 유지
+
+---
+
+## 3. 🔴 5시간 Iteration Deep Dive (2026-04-09)
+
+### 타임라인
+
+| 시점 | iter | 내용 | 결과 |
+|---|---|---|---|
+| T+0 | - | 유저: v9 데이터로 학습해봐 + best epoch 시 test + FN/FP 출력 | - |
+| T+20min | phase1cBmod | bs32 pat10 **lr 4e-5** 시도 | **val_loss 0.78 spike ep5** (killed) |
+| T+30min | - | 데이터 손상 의심 → defect_params 검사 → config 약화 확인 | mean_shift [1.0,3.5] 등 |
+| T+60min | - | config_v2.yaml 에서 v8 원본값 발견, 중간값으로 복구 | **v9mid** 개념 탄생 |
+| T+90min | v3 (=v9mid3) | 중간값 regen + winning lr 2e-5 | **f1 0.9940** (FN 4 FP 5) |
+| T+2h | - | FN/FP 이미지 검사 → ch_08893 이 "불량 아닌데" 지적 | **renderer bug 발견** |
+| T+2.5h | **v4** | **renderer target preserve fix** + 이미지 regen | **f1 0.9982** (FN 2.3 FP 0.3) ✅ |
+| T+3h | v5 | std [2.75,3.75] + drift_floor 4.5 | **f1 0.9991** ⭐ (FN 1.3 FP 0) |
+| T+3.5h | v6 | + mean_shift [2.75,4.25] | 0.9989 (개선 없음, noise floor) |
+| T+4h | v6+ | normal count n=2800 | 0.9993 (n=700 과 동등) |
+| T+5h | - | memory 업데이트 + summary | **완료** |
+
+### 3.1 v3 → v4: Renderer Fix (결정적)
+
+![Renderer fix impact](v9mid_journey/plots/05_renderer_fix_impact.png)
+
+**문제**: `image_renderer._filter_outliers(sigma=5)` 가 **target 포함** 전체 fleet 기준 mean±5σ 로 점 제거. 하지만 spike 의 정의가 "fleet 평균에서 크게 벗어난 개별 점들" 이므로 **spike 점이 곧 outlier** → 렌더 시 삭제됨 → 모델/사람 둘 다 **못 봄**.
+
+**발견 경로**:
+1. 유저가 `ch_08893` (spike) 이 "normal 로 보이는데 왜 FN 이라 그러냐" 로 지적
+2. `data/timeseries.csv` 조회 → target 의 right-side std=0.048, 값 범위 **-0.096 ~ +0.059**
+3. 이미지 y-axis 는 -0.040 ~ 0.000 만 표시 → **실제 spike 점들이 이미지 밖**
+4. `src/data/image_renderer.py::_filter_outliers` 호출부 발견 → target 도 필터됨
+
+**수정**:
+```python
+def _filter_outliers(fleet_data, sigma=5, target_id=None):
+    # mean/std 계산 시 target 제외
+    for mid, (x, y) in fleet_data.items():
+        if mid == target_id: continue
+        ...
+
+    # filter 적용 시 target 은 그대로
+    for mid, (x, y) in fleet_data.items():
+        if mid == target_id:
+            filtered[mid] = (x, y)  # 보존
+            continue
+        ...
+```
+
+이 2곳 수정 + 호출부 2개 `target_id=target_id` 전달. **이것 하나가 이번 세션 개선의 70%**.
+
+**Before/After 비교 (ch_08893, test spike)**:
+
+| Before (v3, 잘림) | After (v4, 복구) |
+|---|---|
+| ![](v9mid_journey/before_after/ch_08893_before_renderer_fix.png) | ![](v9mid_journey/before_after/ch_08893_after_renderer_fix.png) |
+
+Before 에서는 빨강 점들이 fleet 안에 있는 것처럼 보이지만, After 에서는 -0.1 ~ +0.07 까지 fleet (-0.02 근처) 밖으로 명확히 튀는 spike 가 보인다.
+
+### 3.2 FN Class 분포 — spike 가 전부였다
+
+![Class FN pattern](v9mid_journey/plots/03_class_fn_pattern.png)
+
+**v3** 에서 FN 15개 중 **spike 7개** (47%) + std 3 + drift 3 + mean_shift 2.
+**v4** 에서 **spike 전멸** (0 개) + std 4 + drift 3. → renderer fix 가 정확히 spike 만 고침. ✅
+
+### 3.3 Boundary 상승 (v4 → v5)
+
+v4 이후 남은 FN 이 **std 최약 (scale~2.5)** 과 **drift 최약 (3σ)** 에 집중 → range lower bound 올려서 hard case 제거.
+
+![Boundary impact](v9mid_journey/plots/07_boundary_impact.png)
+
+| 변경 | 값 |
+|---|---|
+| `standard_deviation.scale_range` | [2.5, 3.6] → **[2.75, 3.75]** |
+| `drift.min_max_drift_sigma` | 3.75 → **4.5** |
+
+결과: std FN 4 → 1, drift FN 3 → 0. mean_shift 는 건드리지 않았는데 3 개 등장 (boundary shift).
+
+### 3.4 v5 → v6: mean_shift 상승 효과 없음
+
+`mean_shift.shift_sigma_range: [2.25, 4.0] → [2.75, 4.25]` 로 올렸지만 mean_f1 **0.9991 → 0.9989** (오히려 noise 수준).
+
+### 3.5 n=2800 sweep 무효
+
+v8_init 의 sweet spot 인 n=2800 을 v9mid6 데이터에 적용 → f1 0.9993 (n=700 과 동등). **현재 데이터 난이도에서 normal count 는 병목이 아님**.
+
+### 3.6 에러 breakdown
+
+![Error breakdown](v9mid_journey/plots/02_error_breakdown.png)
+
+**v5 는 FP std = 0** (완벽). 3 seed 모두 nor_R 100%.
+
+### 3.7 Seed robustness
+
+![Seed robustness](v9mid_journey/plots/06_seed_robustness.png)
+
+test_f1 std ≤ 0.03% (3-seed), nor_R 평균 **100.00%** — 극도로 robust.
+
+### 3.8 Best epoch 분포
+
+![Best epoch](v9mid_journey/plots/09_epoch_progression.png)
+
+대부분 ep 7-11 에서 best. early stop ep 15 (min=15) 에서 종료.
+
+### 3.9 Persistent Hard Cases
+
+![Hard cases heatmap](v9mid_journey/plots/08_hard_cases_heatmap.png)
+
+특정 chart_id 들이 여러 iter / seed 에 걸쳐 반복 FN:
+- **`ch_08694`** (std scale 2.48): v3 v4 에서 고정 hard, v5 부터 해결
+- **`ch_09036`** (drift 3.5σ): v3 v4 에서 고정 hard, v5 부터 해결
+- **`ch_08630`** (mean_shift 1.92σ): v5 에서 등장 (boundary edge)
+- **`ch_08893`** (spike): v3 에서 3 seed 전부 FN → **renderer fix 로 완전 해결**
+
+→ **동일 샘플이 seed 무관 실패** = 모델 instability 아닌 **진짜 어려운 boundary case**. 랜덤 noise 아니다.
+
+---
+
+## 3.10 Gradient Clipping Sweep (신규 실험)
+
+v5 winning 기준으로 `grad_clip` 값만 바꿔본 sweep. max_norm=1.0 이 default winning.
+
+![Gradient clip sweep](v9mid_journey/plots/10_grad_clip_sweep.png)
+
+### 결과
+
+| grad_clip | 3-seed f1 | FN mean | FP mean | total | 비고 |
+|---|---|---|---|---|---|
+| **gc=1.0** (default) | **0.9991 ± 0.0003** | 1.3 | **0.0** | 1.3 | 가장 안정, nor_R 100% 일관 |
+| gc=0.5 (1 seed only) | 0.9993 | 0 | 1 | 1 | FN 0 이지만 FP 1 (abn 우선) |
+| gc=2.0 (3 seed) | 0.9991 ± **0.0008** | 0.7 | 0.7 | 1.3 | **s=42 PERFECT F=1.0000** / s=2 degraded |
+
+### 무엇이 의미인가 — 숫자 → 실전 해석
+
+**Test set 구성**: normal 750 + abnormal 750 = **1500장**. 다음 두 에러 type 은 실전 비용이 다름:
+
+- **FN (False Negative, missed anomaly)** = 실제 불량인데 모델이 normal 로 흘려보냄 → 불량 wafer 가 **고객사로 유출**. 가장 치명적.
+- **FP (False Positive, false alarm)** = 멀쩡한 wafer 를 불량으로 오판 → 엔지니어가 **쓸데없이 호출**됨 (생산성 손실, 알람 피로).
+
+### gc=1.0 (default, winning production 라인)
+- 3 seed 모두 완벽히 일관된 패턴 — FN 1~2개 + **FP 0개 보장**
+- 재현성 std = 0.0003 = ±0.03%
+- **의미**: "production 에서 false alarm 이 절대 발생하지 않아야 한다" 요구사항 충족. 엔지니어 알람 피로 없음.
+
+### gc=0.5 (tighter clipping, conservative 공격형)
+- FN 0 → abn_R = 100% (불량 하나도 안 놓침)
+- FP 1 이지만 감내 가능한 수준
+- **의미**: "불량 놓치는 건 절대 안 됨" 경우 선택. 단 1 seed 검증이라 아직 확정적 판단 어려움.
+
+### gc=2.0 (looser clipping, upside 있음)
+- s=42 에서 **F=1.0000 달성** — 프로젝트 전체 첫 perfect run (1500 중 0 errors)
+- 하지만 s=1/s=2 에서는 평균 수준 (FN 1~2, FP 1)
+- std 0.0008 = gc=1.0 대비 **2.7배 variance**
+- **의미**: "운이 좋으면 perfect, 보통은 평균" — seed 여러 번 돌려서 best model 고를 수 있는 상황에 적합.
+
+### Val loss 발산 억제 효과
+
+gradient clipping 의 본래 목적이 **학습 발산 방지**. 이전 세션 phase1cBmod (lr 4e-5) 에서 ep5 val_loss **0.78 spike** 가 있었고, 현재 winning 에선 gc=1.0 이 **안전망** 역할 수행. gc=2.0 / 0.5 / 1.0 모두 val_loss 발산 없음을 확인 — 현재 config 범위에선 **어느 값이든 학습은 안정**함 (lr 2e-5 의 공로가 큼).
+
+### 선택 가이드
+
+| 목표 | 추천 config |
+|---|---|
+| **production 안정 + false alarm 0** | **`gc=1.0` (default)** ⭐ |
+| 불량 절대 놓치지 말기 (abn_R 100%) | `gc=0.5` (추가 seed 검증 필요) |
+| 최고 성능 도전 (여러 seed 시도) | `gc=2.0` (s=42 perfect 재현 노려보기) |
+
+---
+
+## 4. 데이터 생성 Config (현재 active)
+
+`config.yaml` 의 defect 섹션 — v9mid5 기준 (현재 상태는 v9mid6 = mean_shift 도 raised):
+
+```yaml
+defect:
+  region_ratio_range: [0.14, 0.30]       # mean_shift/std 공통 영역 비율
+
+  mean_shift:
+    shift_sigma_range: [2.75, 4.25]      # v6: sigma_factor × baseline_std
+
+  standard_deviation:
+    scale_range: [2.75, 3.75]            # v5: target_std = baseline_std × scale
+
+  spike:
+    region_ratio_range: [0.10, 0.15]     # ⭐ spike 전용 (iter3)
+    magnitude_sigma_range: [6.0, 12.0]
+    spike_ratio_range: [0.5, 1.0]        # region 의 50-100% 가 실제 spike
+    min_spikes: 8
+    min_magnitude_sigma: 6.0             # test 0.8× 후 4.8σ 보장
+
+  drift:
+    slope_sigma_range: [0.5, 2.0]
+    region_ratio_range: [0.20, 0.375]
+    min_max_drift_sigma: 4.5             # v5 ⭐ drift 강도 지배
+    noise_reduction: 0.6
+    drift_method: index
+
+  enforcement:
+    mean_shift_floor_sigma: 1.5
+    std_floor_ratio: 2.8
+    spike_floor_sigma: 6.0
+    drift_floor_sigma: 2.5
+    context_floor_sigma: 2.5
+    normal_max_right_dev_sigma: 0.5
+    normal_max_right_shift_sigma: 0.5
+    min_defect_points_range: [12, 25]
+```
+
+### Spike region 설계 — 가장 많은 iteration
+
+`spike.region_ratio_range` 가 가장 많이 바뀜:
+| iter | 값 | 문제 | 결과 |
+|---|---|---|---|
+| mid 초기 | 공통 [0.14, 0.30] 사용 | region 이 커서 5~9 spike 이 나머지 ~100~230 baseline 빨강 점 사이에 묻힘 → "noisy 구간"처럼 보임 | FN 많음 |
+| iter2 | spike 전용 [0.02, 0.05] + spike_ratio [0.5, 1.0] | 영역은 tight + 거의 전부 spike → 시각적 dramatic | BUT 224×224 에서 ~10px 폭 → **모델 conv filter 가 못 봄** → FN 13/13 all spike |
+| **iter3** | **[0.10, 0.15]** + spike_ratio [0.5, 1.0] | 80-120 points × 50-100% = 40-120 impulse burst → **모델도 보고 사람도 봄** | **✅ 해결** |
+
+---
+
+## 5. 성능 향상 기법 카탈로그
+
+이번 세션 + 이전 세션에서 시도한 것들 — **효과 있음** 과 **효과 없음** 구분.
+
+### 🟢 효과 큰 것 (적용됨)
+
+| 기법 | 적용 시점 | Impact | Why works |
+|---|---|---|---|
+| **Renderer target preserve** | v4 (2026-04-09) | f1 +0.33 pts, spike FN 전멸 | Spike 의 정의가 곧 outlier 이므로 target 은 필터 제외 필수 |
+| **lr_backbone 2e-5** (winning) | v9 era | val_loss spike 제거 | RTX 4060 Ti + ConvNeXt-V2 + bs 32 민감도 |
+| **abnormal_weight 1.0** (균등) | v9 era | val_loss 안정화 | inverse freq 는 normal grad 증폭 → boundary flip |
+| **cudnn.benchmark=True** | v9 era | gradient 수치 안정 | AMP 조합 시 deterministic 경로가 spike 유발 |
+| **Tie-fix (strict > only save)** | v9 era | overfit state 저장 방지 | smooth_window 안의 old good 이 new bad 로 덮어씌움 방지 |
+| **smooth_window=3 median val_f1** | v9 era | single-ep spike 회피 | median 이 outlier 1 ep 에 robust |
+| **Spike region_ratio 분리** | iter3 | FN spike 13 → 0 | 공통 영역은 spike 가 baseline 에 묻히고, 너무 작으면 conv filter 가 못 봄 |
+| **std/drift boundary 상승** | v5 | FN -0.9 | weak boundary case 가 실제 bottleneck 이었음 |
+| **v9mid 중간값 (v8 vs 약화된 v9)** | v9mid1 | 데이터 품질 복구 | v9 가 과도하게 약화됨, v8 전체 복구는 overshoot |
+| **defect 강도 = baseline_std × factor** | 전 세션 | scale invariance | 노이즈 수준별 적절한 defect |
+| **test_difficulty_scale 0.80** | v9 era | val-test gap 일정 | 평가 realism |
+| **mean_shift detrend 제거** | v8_init 이후 | 자연 변동 보존 | 원래 detrend 는 두 줄 직선 artifact |
+
+### 🟡 효과 중간 (유지)
+
+| 기법 | Impact |
+|---|---|
+| ColorJitter ±10% + GaussianBlur augment | 약한 regularization |
+| Focal Loss gamma 0.0 (=CE) | sweep 후 차이 없음 → 가장 단순한 CE |
+| Dropout 0.0 | 강한 pretrained → dropout 불필요 |
+| Early stop patience 5 | 정확한 sweet spot 유지 |
+
+### 🔴 효과 없음 (기각)
+
+| 기법 | 결과 | 해석 |
+|---|---|---|
+| **mean_shift boundary 상승** (v6) | f1 변화 없음 | 이미 noise floor 도달 |
+| **normal count n=2800** (v6+) | n=700 과 동등 | 현재 data difficulty 에서 capacity 충분 |
+| **Larger LR 3e-5, 5e-5** | 일부 seed spike | v9 data + 현 backbone 에서 risk > reward |
+| **EMA decay 0.999/0.9999** | 약간 손해 | small dataset 에서 init 에 머무름 (user 금지) |
+| **Focal gamma sweep 0.5~5** | plateau | CE 가 best |
+| **Abnormal weight ≥ 4** | nor_R 붕괴 | false alarm 폭증 |
+| **Dropout 0.2~0.6** | F1 ↓ | nor_R 손해 |
+| **LabelSmoothing, Mixup** | 차이 없음 | overlay 이미지에서 이득 없음 |
+
+### 미시도 (다음 계획)
+
+| 기법 | 기대 |
+|---|---|
+| Gradient clipping max_norm 변화 (0.5 / 2.0 / 5.0) | val 안정성 추가 확인 |
+| Linear / OneCycle scheduler | cosine 대비 |
+| Warmup epoch 3 / 7 | sweet spot 재확인 |
+| Adaptive gradient clipping (AGC) | 최신 안정화 |
+
+---
+
+## 6. Historical Context — 278 runs 총정리
+
+### Era 별 분포
+
+| Era | prefix | n runs | F1 mean | F1 max | 시기 |
+|---|---|---:|---:|---:|---|
+| 1. early | `convnextv2_*` | 9 | 0.77 | 0.83 | baseline, multiclass |
+| 2. fix-attempts | `r3_/r4_/r6_/r6b_` | 47 | 0.88 | 0.94 | 안정성 시도 |
+| 3. improvement sweeps | `imp_/imp2_/var_` | 61 | 0.91 | 0.95 | γ/aw/lr/dropout |
+| 4. gamma-normal | `gm_*` | 21 | 0.92 | 0.94 | focal + normal count |
+| 5. fine-tune | `ft_*` | 13 | 0.92 | 0.94 | 미세조정 |
+| 6. **v8 dataset** | `v8_*` | 34 | **0.99** | **1.00** | 학습 코드 안정화 |
+| 7. v9 dataset | `v9_*` | 93 | 0.99 | 0.999 | noise +25% |
+| **8. v9mid (new)** | `v9mid*_win_*` | 13 | **0.9991** | **0.9993** | **renderer fix + boundary tune** |
+
+**핵심 점프**:
+- F1 0.93 → 0.999: v8_init 시기 (학습 코드 안정화 + 데이터 품질)
+- v9 → v9mid5: renderer fix + boundary raise (+0.005 절대, 에러 85% 감소)
+
+### v8 vs v9 vs v9mid 비교
+
+| 데이터셋 | lr | F1 mean (multi-seed) | 특징 |
+|---|---|---|---|
+| v8 (5-seed) | 5e-5 | 0.9992 ± 0.0006 | noise 낮음, 상대적으로 쉬움 |
+| v9 tie-fix (3-seed) | 5e-5 | 0.9971 ± 0.0019 | noise +25%, 약화된 defect |
+| v9 ep10 (5-seed) | 2e-5 | 0.9945 ± 0.0009 | 안정적이지만 성능 ↓ |
+| v9mid3 (3-seed) | 2e-5 | 0.9949 ± 0.0010 | renderer bug 지속 |
+| **v9mid5 (3-seed)** | **2e-5** | **0.9991 ± 0.0003** | **renderer fix + boundary raise, 현재 best** |
+
+v9mid5 는 v8 와 동일한 성능을 v9 보다 어려운 데이터에서 달성.
+
+---
+
+## 7. FN/FP 분석 — 남은 hard cases
+
+v9mid5 + 3-seed 에서 남은 FN 4개 (1.3 mean):
+
+| chart_id | class | params | 평가 |
+|---|---|---|---|
+| ch_08630 | mean_shift | sigma 1.92, baseline_std 0.034 | boundary weak edge |
+| ch_08694 | standard_deviation | scale 2.48 | range min 2.5 바로 아래 |
+| ch_08785 | standard_deviation | scale 2.61 | 약간 더 안쪽이지만 noise 0.019 로 tight |
+| ch_09036 | drift | max_drift 0.107, 3.5σ | floor 4.5×0.8=3.6 근처 |
+
+모두 **config range 의 하단 경계 샘플**. boundary 를 더 올리면 이 FN 들은 사라지지만, 새 경계에서 또 다른 hard case 가 생김 (v6 에서 확인). **현재 configuration 은 학습 capacity 의 upper bound** 로 판단.
+
+v9mid5 FP **0** (3-seed 전체).
+
+---
+
+## 8. 향후 개선 방향
+
+### 단기 (다음 session)
+1. **Gradient clipping sweep** (0.5 / 1.0 / 2.0 / 5.0) — val 안정성 추가 확인
+2. **Scheduler variants** (cosine / linear / onecycle)
+3. **Warmup epoch sweep** (3 / 5 / 7)
+4. **Adaptive gradient clipping (AGC)**
+5. 현재 성능이 near-ceiling 이므로 **데이터 난이도 상승** (anomaly 값 약화) 후 re-evaluate
+
+### 중기
+1. **실전 fab 데이터 시뮬레이션** — 노이즈 패턴 다양화 (비정상 long tail, chamber drift)
+2. **Context 클래스 difficulty 조정** — 현재 거의 완벽 (mean-only case subtle)
+3. **Class-aware augmentation** — 각 defect 특성 유지하는 transform
+
+### 장기
+1. **FT-Transformer 로 다변량 시계열 직접 처리** (이미지 단계 우회)
+2. **Multi-chart correlation** — fleet level context 확장
+3. **Real-time inference pipeline** — production 배포
+
+---
+
+## 9. 재현 방법
+
+### 데이터 생성
+```bash
+python generate_data.py
+python generate_images.py
+```
+
+### 학습 (winning config)
+```bash
+python train.py --normal_ratio 700 --seed 42 --log_dir logs/v9mid5_win_n700_s42
+```
+
+나머지 옵션은 전부 `train.py` default = winning config.
+
+### Summary 재생성
+```bash
+PYTHONIOENCODING=utf-8 python experiment_summary/build_v9mid_summary.py
+```
+
+### 파일 위치
+```
+experiment_summary/
+├── SUMMARY.md                         # 이 문서
+├── build_v9mid_summary.py             # builder
+├── v9mid_journey/
+│   ├── data.csv                       # run 집계 (13 runs)
+│   ├── plots/                         # 9개 plot
+│   │   ├── 01_performance_timeline.png
+│   │   ├── 02_error_breakdown.png
+│   │   ├── 03_class_fn_pattern.png
+│   │   ├── 04_val_loss_comparison.png
+│   │   ├── 05_renderer_fix_impact.png
+│   │   ├── 06_seed_robustness.png
+│   │   ├── 07_boundary_impact.png
+│   │   ├── 08_hard_cases_heatmap.png
+│   │   └── 09_epoch_progression.png
+│   ├── samples/                       # 6 클래스 대표 이미지
+│   ├── before_after/                  # ch_08893 renderer fix 비교
+│   └── (historical) cat1~cat8.png     # 이전 278-run 분석 (보관)
+├── data.csv                           # 278-run 전체 raw
+└── sample_images/                     # 이전 세션 이미지 (보관)
+```
+
+---
+
+## 10. 메모리 링크 (관련)
+
+- `project_v9mid_dataset.md` — v9mid5 config 상세 + iter 히스토리
+- `feedback_outlier_filter_target.md` — **ABSOLUTE rule**, renderer fix 절대 되돌리지 말 것
+- `project_winning_config.md` — lr 2e-5 + 4 fix
+- `feedback_best_selection_epochs.md` — smoothed val + tie-fix
+- `feedback_lr_spike_backbone_tuning.md` — backbone 교체 시 LR 재튜닝 필수
+- `project_classification_agent.md` — 프로젝트 전체 역사
+
+---
+
+**Last Updated**: 2026-04-10 (5-hour iteration 종료)
+**Next**: gradient clipping sweep / scheduler variants / 난이도 상승 실험

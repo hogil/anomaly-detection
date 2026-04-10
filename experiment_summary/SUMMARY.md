@@ -6,45 +6,38 @@
 
 ---
 
-## 0. Executive Summary (한 페이지 요약)
+## 0. Executive Summary
 
-### 최종 성능 (winning = v9mid5 config, lr_backbone 2e-5)
+### 최종 성능 (v9mid7_harder + red target, winning config)
 
-| seed | best_ep | test_f1 | abn_R | nor_R | FN | FP |
-|---:|---:|---:|---:|---:|---:|---:|
-| s=42 | 10 | **0.9993** | 0.9987 | **1.0000** | 1 | 0 |
-| s=1  | 11 | 0.9987 | 0.9973 | **1.0000** | 2 | 0 |
-| s=2  | 9  | **0.9993** | 0.9987 | **1.0000** | 1 | 0 |
-| **mean** | | **0.9991 ± 0.0003** | 0.9982 | **1.000** | **1.3** | **0.0** |
+| seed | test_f1 | abn_R | nor_R | FN | FP |
+|---:|---:|---:|---:|---:|---:|
+| s=42 | **0.9987** | 0.9973 | **1.0000** | 2 | 0 |
+| s=1 | **0.9993** | **1.0000** | 0.9987 | 0 | 1 |
+| **mean** | **0.9990** | 0.9987 | 0.9993 | **1.0** | **0.5** |
 
-1500 test 중 평균 **1.3 errors**. **모든 seed 에서 nor_R 100%** (false alarm zero).
+harder data (anomaly 약화) 에서도 1500 test 중 평균 **1.5 errors**. **5-seed 실험 진행 중 (추가 결과 업데이트 예정)**.
 
-### 5시간 iteration 개선 궤적
+### 핵심 성능 개선 기법 5가지
 
-![Performance timeline](v9mid_journey/plots/01_performance_timeline.png)
+| # | 기법 | 효과 |
+|---|---|---|
+| 1 | **LR 2e-5 + Cosine + Warmup 5ep** | val_loss spike 완전 제거, 학습 안정화 |
+| 2 | **Gradient Clipping** (max_norm 1.0) | 추가 안정화 + FN/FP trade-off 조절 |
+| 3 | **Target Color 빨강** (#E53935) | fleet 대비 시각 신호 강화 → harder data 에러 67%↓ |
+| 4 | **Smoothed Median Val F1** (window=3) | val 포화 시 단발성 spike 무시, 안정 구간 선택 |
+| 5 | **Tie-fix (strict > only save)** | overfit state 덮어쓰기 방지 |
 
-v3 baseline (0.9949) → **v5 winner (0.9991)** = **+0.42 pts, 에러 85% 감소**.
+### 버그 수정 (오류 교정)
 
-### 핵심 수정 — **단 하나의 fix 가 대부분을 해결**
+| 수정 | 문제 |
+|---|---|
+| renderer `_filter_outliers` target preserve | spike 점이 이미지에서 잘려 모델이 못 봄 |
+| config.yaml defect 범위 복구 | defect 강도가 약화된 채 커밋되어 있었음 |
 
-**`src/data/image_renderer.py::_filter_outliers`** 가 target 의 spike 점들을 `mean ± 5σ` 로 필터링해서 이미지 프레임 밖으로 잘라버리던 **근본 버그**.
+### 성능 변화 요약
 
-```python
-# 수정 전 (v3 이전, 모든 run 영향)
-def _filter_outliers(fleet_data, sigma=5):
-    # target 포함 전체에서 ±5σ 밖 점 제거 ← spike 자체가 outlier 이므로 삭제됨
-    ...
-
-# 수정 후 (v4, 2026-04-09)
-def _filter_outliers(fleet_data, sigma=5, target_id=None):
-    # fleet member 만 기준 삼고, target_id 점들은 그대로 보존
-    ...
-```
-
-이 fix 로:
-- **v3 → v4**: spike FN 7/9 → **0/9** (3-seed 누적)
-- 모델이 처음으로 "spike 가 fleet 밖으로 튀는" 신호를 볼 수 있게 됨
-- 유저가 "이건 불량이 아니잖아 시발" 로 지적한 `ch_08893` 케이스에서 발견
+![Full journey](v9mid_journey/plots/13_full_performance_trend.png)
 
 ---
 
@@ -146,20 +139,7 @@ python train.py --normal_ratio 700 --seed 42 --log_dir logs/...
 
 ## 3. Iteration Deep Dive (2026-04-09~10)
 
-### Quick Summary — 각 iteration 이 한 일
-
-| iter | 핵심 변경 | test_f1 (mean) | FN→ | FP→ | 핵심 교훈 |
-|---|---|---|---|---|---|
-| v3 | baseline (before fix) | 99.49% | 5.0 | 2.7 | renderer 가 spike 을 잘라먹음 |
-| **v4** | **renderer target preserve** | **99.82%** | 2.3 | 0.3 | **전체 개선의 70%**. 이미지 품질이 핵심 |
-| v5 | std/drift boundary 상승 | 99.91% | 1.3 | 0.0 | boundary hard case 제거 |
-| v6 | + mean_shift boundary | 99.89% | 1.3 | 0.3 | 추가 개선 없음 (noise floor) |
-| v7h Blue | harder data (anomaly ↓) | 99.64% | 3.5 | 1.0 | 난이도 올리니 하락 |
-| **v7h Red** | **target color 빨강** | **99.90%** | **1.0** | **0.5** | **색 contrast 가 성능 직결** |
-
-![Full journey](v9mid_journey/plots/13_full_performance_trend.png)
-
----
+> 각 iteration 의 상세 분석. Section 0 의 요약표 참조.
 
 ### 타임라인
 
@@ -465,48 +445,16 @@ defect:
 
 ---
 
-## 5. 성능 향상 기법 카탈로그
-
-이번 세션 + 이전 세션에서 시도한 것들 — **효과 있음** 과 **효과 없음** 구분.
-
-### 🟢 효과 큰 것 (적용됨)
-
-| 기법 | 적용 시점 | Impact | Why works |
-|---|---|---|---|
-| **Renderer target preserve** | v4 (2026-04-09) | f1 +0.33 pts, spike FN 전멸 | Spike 의 정의가 곧 outlier 이므로 target 은 필터 제외 필수 |
-| **lr_backbone 2e-5** (winning) | v9 era | val_loss spike 제거 | RTX 4060 Ti + ConvNeXt-V2 + bs 32 민감도 |
-| **abnormal_weight 1.0** (균등) | v9 era | val_loss 안정화 | inverse freq 는 normal grad 증폭 → boundary flip |
-| **cudnn.benchmark=True** | v9 era | gradient 수치 안정 | AMP 조합 시 deterministic 경로가 spike 유발 |
-| **Tie-fix (strict > only save)** | v9 era | overfit state 저장 방지 | smooth_window 안의 old good 이 new bad 로 덮어씌움 방지 |
-| **smooth_window=3 median val_f1** | v9 era | single-ep spike 회피 | median 이 outlier 1 ep 에 robust |
-| **Spike region_ratio 분리** | iter3 | FN spike 13 → 0 | 공통 영역은 spike 가 baseline 에 묻히고, 너무 작으면 conv filter 가 못 봄 |
-| **std/drift boundary 상승** | v5 | FN -0.9 | weak boundary case 가 실제 bottleneck 이었음 |
-| **v9mid 중간값 (v8 vs 약화된 v9)** | v9mid1 | 데이터 품질 복구 | v9 가 과도하게 약화됨, v8 전체 복구는 overshoot |
-| **defect 강도 = baseline_std × factor** | 전 세션 | scale invariance | 노이즈 수준별 적절한 defect |
-| **test_difficulty_scale 0.80** | v9 era | val-test gap 일정 | 평가 realism |
-| **mean_shift detrend 제거** | v8_init 이후 | 자연 변동 보존 | 원래 detrend 는 두 줄 직선 artifact |
-
-### 🟡 효과 중간 (유지)
-
-| 기법 | Impact |
-|---|---|
-| ColorJitter ±10% + GaussianBlur augment | 약한 regularization |
-| Focal Loss gamma 0.0 (=CE) | sweep 후 차이 없음 → 가장 단순한 CE |
-| Dropout 0.0 | 강한 pretrained → dropout 불필요 |
-| Early stop patience 5 | 정확한 sweet spot 유지 |
-
-### 🔴 효과 없음 (기각)
+## 5. 시도했으나 효과 없던 것들
 
 | 기법 | 결과 | 해석 |
 |---|---|---|
-| **mean_shift boundary 상승** (v6) | f1 변화 없음 | 이미 noise floor 도달 |
-| **normal count n=2800** (v6+) | n=700 과 동등 | 현재 data difficulty 에서 capacity 충분 |
-| **Larger LR 3e-5, 5e-5** | 일부 seed spike | v9 data + 현 backbone 에서 risk > reward |
-| **EMA decay 0.999/0.9999** | 약간 손해 | small dataset 에서 init 에 머무름 (user 금지) |
-| **Focal gamma sweep 0.5~5** | plateau | CE 가 best |
-| **Abnormal weight ≥ 4** | nor_R 붕괴 | false alarm 폭증 |
-| **Dropout 0.2~0.6** | F1 ↓ | nor_R 손해 |
-| **LabelSmoothing, Mixup** | 차이 없음 | overlay 이미지에서 이득 없음 |
+| normal count n=2800 | n=700 과 동등 | 현재 data 에서 capacity 충분 |
+| LR 3e-5, 5e-5 | seed 별 spike | high risk / high reward |
+| Focal gamma 0.5~5 | plateau | CE 가 best |
+| Abnormal weight ≥ 4 | nor_R 붕괴 | false alarm 폭증 |
+| Dropout 0.2~0.6 | F1 ↓ | nor_R 손해 |
+| LabelSmoothing, Mixup | 차이 없음 | overlay 이미지에서 이득 없음 |
 
 ### 미시도 (다음 계획)
 

@@ -1,6 +1,6 @@
 # Anomaly Detection — 실험 종합 Report
 
-> **문서 범위**: 프로젝트 전체 역사 (v8_init → v9 → v9mid) + **2026-04-09 5시간 iteration** 상세 분석
+> **문서 범위**: v9mid iteration (2026-04-09~10) — 데이터 복구, renderer fix, rendering sweep, harder data
 > **생성**: `PYTHONIOENCODING=utf-8 python experiment_summary/build_v9mid_summary.py`
 > **현재 active**: v9mid5 config, **mean test F1 = 0.9991 ± 0.0003** (3-seed)
 
@@ -467,40 +467,7 @@ defect:
 
 ---
 
-## 6. Historical Context — 278 runs 총정리
-
-### Era 별 분포
-
-| Era | prefix | n runs | F1 mean | F1 max | 시기 |
-|---|---|---:|---:|---:|---|
-| 1. early | `convnextv2_*` | 9 | 0.77 | 0.83 | baseline, multiclass |
-| 2. fix-attempts | `r3_/r4_/r6_/r6b_` | 47 | 0.88 | 0.94 | 안정성 시도 |
-| 3. improvement sweeps | `imp_/imp2_/var_` | 61 | 0.91 | 0.95 | γ/aw/lr/dropout |
-| 4. gamma-normal | `gm_*` | 21 | 0.92 | 0.94 | focal + normal count |
-| 5. fine-tune | `ft_*` | 13 | 0.92 | 0.94 | 미세조정 |
-| 6. **v8 dataset** | `v8_*` | 34 | **0.99** | **1.00** | 학습 코드 안정화 |
-| 7. v9 dataset | `v9_*` | 93 | 0.99 | 0.999 | noise +25% |
-| **8. v9mid (new)** | `v9mid*_win_*` | 13 | **0.9991** | **0.9993** | **renderer fix + boundary tune** |
-
-**핵심 점프**:
-- F1 0.93 → 0.999: v8_init 시기 (학습 코드 안정화 + 데이터 품질)
-- v9 → v9mid5: renderer fix + boundary raise (+0.005 절대, 에러 85% 감소)
-
-### v8 vs v9 vs v9mid 비교
-
-| 데이터셋 | lr | F1 mean (multi-seed) | 특징 |
-|---|---|---|---|
-| v8 (5-seed) | 5e-5 | 0.9992 ± 0.0006 | noise 낮음, 상대적으로 쉬움 |
-| v9 tie-fix (3-seed) | 5e-5 | 0.9971 ± 0.0019 | noise +25%, 약화된 defect |
-| v9 ep10 (5-seed) | 2e-5 | 0.9945 ± 0.0009 | 안정적이지만 성능 ↓ |
-| v9mid3 (3-seed) | 2e-5 | 0.9949 ± 0.0010 | renderer bug 지속 |
-| **v9mid5 (3-seed)** | **2e-5** | **0.9991 ± 0.0003** | **renderer fix + boundary raise, 현재 best** |
-
-v9mid5 는 v8 와 동일한 성능을 v9 보다 어려운 데이터에서 달성.
-
----
-
-## 7. FN/FP 분석 — 남은 hard cases
+## 6. FN/FP 분석 — 남은 hard cases
 
 v9mid5 + 3-seed 에서 남은 FN 4개 (1.3 mean):
 
@@ -517,7 +484,7 @@ v9mid5 FP **0** (3-seed 전체).
 
 ---
 
-## 8. 향후 개선 방향
+## 7. 향후 개선 방향
 
 ### 단기 (다음 session)
 1. **Gradient clipping sweep** (0.5 / 1.0 / 2.0 / 5.0) — val 안정성 추가 확인
@@ -538,7 +505,7 @@ v9mid5 FP **0** (3-seed 전체).
 
 ---
 
-## 9. 재현 방법
+## 8. 재현 방법
 
 ### 데이터 생성
 ```bash
@@ -584,7 +551,7 @@ experiment_summary/
 
 ---
 
-## 10. 메모리 링크 (관련)
+## 9. 메모리 링크 (관련)
 
 - `project_v9mid_dataset.md` — v9mid5 config 상세 + iter 히스토리
 - `feedback_outlier_filter_target.md` — **ABSOLUTE rule**, renderer fix 절대 되돌리지 말 것

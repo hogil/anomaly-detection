@@ -360,6 +360,22 @@ gradient clipping 의 본래 목적이 **학습 발산 방지**. 이전 세션 p
 
 **에러 67% 감소** (4.5 → 1.5). s=1 에서 **FN=0** (harder data 에서 불량 하나도 안 놓침).
 
+### 실제 사례: Blue 에서 틀리고 Red 에서 맞은 이미지 (모델 입력 224×224)
+
+**ch_08574** (mean_shift sigma=1.50) — 같은 데이터, 색만 다름:
+
+| Blue target — **모델 FN** (놓침) | Red target — **모델 TP** (정답) |
+|---|---|
+| ![](v9mid_journey/color_comparison/ch08574_blue_model_input.png) | ![](v9mid_journey/color_comparison/ch08574_red_model_input.png) |
+
+**ch_08623** (mean_shift sigma=1.54):
+
+| Blue — **FN** | Red — **TP** |
+|---|---|
+| ![](v9mid_journey/color_comparison/ch08623_blue_model_input.png) | ![](v9mid_journey/color_comparison/ch08623_red_model_input.png) |
+
+Blue 에서는 target 이 fleet 과 밝기/채도가 비슷해서 shift 패턴이 묻힘. Red 에서는 3 RGB 채널 전부에서 fleet 과 큰 차이 → CNN 이 "빨간 cluster 가 회색 대비 쏠렸다" 를 학습 가능.
+
 ### 왜 Red 가 더 좋나?
 
 모델은 224×224 pixel 이미지에서 "target 점의 공간 분포" vs "fleet 점의 공간 분포" 를 비교해서 anomaly 패턴을 감지.

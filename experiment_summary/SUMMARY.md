@@ -8,25 +8,35 @@
 
 ## 0. Executive Summary
 
-### 최종 성능 (v9mid7_harder + red target, winning config)
+### 기법별 성능 (n=5 seeds, mean ± std 기준)
 
-| seed | test_f1 | abn_R | nor_R | FN | FP |
-|---:|---:|---:|---:|---:|---:|
-| s=42 | **0.9987** | 0.9973 | **1.0000** | 2 | 0 |
-| s=1 | **0.9993** | **1.0000** | 0.9987 | 0 | 1 |
-| **mean** | **0.9990** | 0.9987 | 0.9993 | **1.0** | **0.5** |
+> 동일 데이터 + 동일 학습 config 에서 **하나의 변수만 바꿔** 측정. 미완료 항목은 추가 seed 완료 후 갱신.
 
-harder data (anomaly 약화) 에서도 1500 test 중 평균 **1.5 errors**. **5-seed 실험 진행 중 (추가 결과 업데이트 예정)**.
+**기본 조건 (mid data, v9mid6)**:
+
+| 기법 | seeds | test_f1 (mean±std) | FN mean | FP mean | total | 비고 |
+|---|---|---|---|---|---|---|
+| **Winning baseline** (gc=1.0, blue) | 7 | **99.90 ± 0.03%** | 1.2 | 0.4 | 1.6 | **stable baseline** |
+| gc=0.5 (tighter clip) | 1 | 99.93% | 0 | 1 | 1 | *추가 seed 필요* |
+| gc=2.0 (looser clip) | 3 | 99.91 ± 0.08% | 0.7 | 0.7 | 1.3 | seed 분산 큼 |
+
+**harder data (v9mid7_harder, anomaly 약화)**:
+
+| rendering | seeds | test_f1 (mean±std) | FN mean | FP mean | total | 비고 |
+|---|---|---|---|---|---|---|
+| Blue target (#4878CF) | *5 진행 중* | *업데이트 예정* | | | | |
+| **Red target (#E53935)** | 2 | **99.90 ± 0.03%** | 1.0 | 0.5 | 1.5 | *추가 seed 필요* |
+| Red no-fleet (fleet 제거) | 0 | *미시작* | | | | *실험 예정* |
 
 ### 핵심 성능 개선 기법 5가지
 
-| # | 기법 | 효과 |
-|---|---|---|
-| 1 | **LR 2e-5 + Cosine + Warmup 5ep** | val_loss spike 완전 제거, 학습 안정화 |
-| 2 | **Gradient Clipping** (max_norm 1.0) | 추가 안정화 + FN/FP trade-off 조절 |
-| 3 | **Target Color 빨강** (#E53935) | fleet 대비 시각 신호 강화 → harder data 에러 67%↓ |
-| 4 | **Smoothed Median Val F1** (window=3) | val 포화 시 단발성 spike 무시, 안정 구간 선택 |
-| 5 | **Tie-fix (strict > only save)** | overfit state 덮어쓰기 방지 |
+| # | 기법 | 무엇을 바꿨나 | 왜 효과가 있나 |
+|---|---|---|---|
+| 1 | **LR 2e-5 + Cosine + Warmup 5ep** | peak LR 4e-5→2e-5 | val_loss spike (0.78) 완전 제거 |
+| 2 | **Gradient Clipping** (1.0) | gradient 크기 상한 | 추가 안정화 + FN/FP trade-off 조절 |
+| 3 | **Target Color 빨강** | 파랑→빨강 + alpha↑ | fleet 대비 contrast 강화 → subtle shift 감지 |
+| 4 | **Smoothed Median Val F1** (window=3) | raw→median 3ep | val 포화 시 spike 무시 |
+| 5 | **Tie-fix (strict > only)** | tie 에 save 금지 | overfit state 덮어쓰기 방지 |
 
 ### 버그 수정 (오류 교정)
 

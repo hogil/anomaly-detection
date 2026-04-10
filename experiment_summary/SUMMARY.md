@@ -157,7 +157,12 @@ python train.py --normal_ratio 700 --seed 42 --log_dir logs/...
 | T+4h | v6+ | normal count n=2800 | 0.9993 (n=700 과 동등) |
 | T+5h | - | memory 업데이트 + summary | **완료** |
 
-### 3.1 v3 → v4: Renderer Fix (결정적)
+### 3.1 v3 → v4: Renderer Fix (버그 수정)
+
+| iter | 변경 | test_f1 | FN | FP |
+|---|---|---|---|---|
+| v3 | baseline | 99.49% | 5.0 | 2.7 |
+| **v4** | **renderer fix** | **99.82%** | **2.3** | **0.3** |
 
 ![Renderer fix impact](v9mid_journey/plots/05_renderer_fix_impact.png)
 
@@ -205,6 +210,12 @@ Before 에서는 빨강 점들이 fleet 안에 있는 것처럼 보이지만, Af
 renderer fix 는 spike 측정 오류만 해결. **std/drift/mean_shift FN 은 별도 원인** (defect 강도 boundary).
 
 ### 3.3 Boundary 상승 (v4 → v5)
+
+| iter | 변경 | test_f1 | FN | FP |
+|---|---|---|---|---|
+| v3 | baseline | 99.49% | 5.0 | 2.7 |
+| v4 | renderer fix | 99.82% | 2.3 | 0.3 |
+| **v5** | **std/drift raise** | **99.91%** | **1.3** | **0.0** |
 
 **v4 에서 모델이 놓친 FN 이미지 예시** — 이것들이 왜 어려운지:
 
@@ -268,7 +279,14 @@ test_f1 std ≤ 0.03% (3-seed), nor_R 평균 **100.00%** — 극도로 robust.
 
 ---
 
-## 3.10 Gradient Clipping Sweep (신규 실험)
+## 3.10 Gradient Clipping Sweep
+
+| iter | 변경 | test_f1 | FN | FP |
+|---|---|---|---|---|
+| v3 | baseline | 99.49% | 5.0 | 2.7 |
+| v4 | renderer fix | 99.82% | 2.3 | 0.3 |
+| v5 | boundary raise | 99.91% | 1.3 | 0.0 |
+| **v5+gc** | **gradient clip sweep** | 아래 표 참조 | | |
 
 v5 winning 기준으로 `grad_clip` 값만 바꿔본 sweep. max_norm=1.0 이 default winning.
 
@@ -320,6 +338,14 @@ gradient clipping 의 본래 목적이 **학습 발산 방지**. 이전 세션 p
 ---
 
 ## 3.11 Target Color Experiment — Rendering 이 성능에 미치는 영향
+
+| iter | 변경 | test_f1 | FN | FP |
+|---|---|---|---|---|
+| v3 | baseline | 99.49% | 5.0 | 2.7 |
+| v4 | renderer fix | 99.82% | 2.3 | 0.3 |
+| v5 | boundary raise | 99.91% | 1.3 | 0.0 |
+| v7h Blue | harder data | 99.64% | 3.5 | 1.0 |
+| **v7h Red** | **color change** | **99.90%** | **1.0** | **0.5** |
 
 **가설**: 모델 입력 이미지에서 target (highlight) 과 fleet (background) 의 색 대비가 강할수록, 모델이 subtle shift 를 더 잘 학습한다.
 

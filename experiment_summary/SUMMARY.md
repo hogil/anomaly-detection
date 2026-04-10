@@ -311,6 +311,58 @@ gradient clipping 의 본래 목적이 **학습 발산 방지**. 이전 세션 p
 
 ---
 
+## 3.11 Target Color Experiment — Rendering 이 성능에 미치는 영향
+
+**가설**: 모델 입력 이미지에서 target (highlight) 과 fleet (background) 의 색 대비가 강할수록, 모델이 subtle shift 를 더 잘 학습한다.
+
+**설계**: 동일 harder data (v9mid7) + 동일 winning config, **target color 만 변경** 후 재렌더링 + 재학습.
+
+| 변수 | Blue (기존) | Red (신규) |
+|---|---|---|
+| target_color | `#4878CF` (파랑) | `#E53935` (빨강) |
+| target_alpha | 0.75 | 0.90 |
+| target_marker | 16 | 18 |
+| fleet (변경 없음) | `#B0B0B0`, alpha 0.40, marker 14 | 동일 |
+
+![Target color comparison](v9mid_journey/plots/11_target_color_comparison.png)
+
+### 결과 (harder data, 2 seeds)
+
+| color | s=42 f1 | s=1 f1 | mean f1 | FN mean | FP mean | total |
+|---|---|---|---|---|---|---|
+| Blue | 0.9960 | 0.9967 | **99.64%** | 3.5 | 1.0 | **4.5** |
+| **Red** | **0.9987** | **0.9993** | **99.90%** | **1.0** | **0.5** | **1.5** |
+
+**에러 67% 감소** (4.5 → 1.5). s=1 에서 **FN=0** (harder data 에서 불량 하나도 안 놓침).
+
+### 왜 Red 가 더 좋나?
+
+모델은 224×224 pixel 이미지에서 "target 점의 공간 분포" vs "fleet 점의 공간 분포" 를 비교해서 anomaly 패턴을 감지.
+
+- **Blue vs Gray**: 밝기/채도가 비슷 → 224×224 로 축소하면 두 집단이 **시각적으로 섞임** → subtle shift 가 noise 에 묻힘
+- **Red vs Gray**: 색상(hue) + 밝기 + 크기 전부 다름 → 두 집단이 **명확히 분리** → "빨간 cluster 가 회색 대비 아래로 쏠렸다" 패턴을 학습 가능
+
+이건 X-ray 의 contrast 를 높이면 의사가 종양을 더 잘 찾는 것과 같은 원리.
+
+### Training Curves (Val Loss / Val F1 / LR)
+
+![Training curves](v9mid_journey/plots/12_training_curves_red_vs_blue.png)
+
+- Red: Val F1 이 ep 3~4 에서 빠르게 1.0 수렴 (Blue 보다 빠름)
+- Val Loss: 둘 다 비슷한 패턴이지만 Red 가 더 낮은 loss 유지
+- LR: 동일 (winning config cosine schedule)
+
+### Full Performance Journey
+
+![Full trend](v9mid_journey/plots/13_full_performance_trend.png)
+
+전체 프로젝트 여정: **96.73% → 99.90%** (+3.17 pts). 주요 jump 포인트:
+1. **v3→v4**: renderer fix (+0.33 pts)
+2. **v4→v5**: boundary raise (+0.09 pts)
+3. **v7h Blue→Red**: color change (+0.26 pts on harder data)
+
+---
+
 ## 4. 데이터 생성 Config (현재 active)
 
 `config.yaml` 의 defect 섹션 — v9mid5 기준 (현재 상태는 v9mid6 = mean_shift 도 raised):

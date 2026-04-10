@@ -144,7 +144,22 @@ python train.py --normal_ratio 700 --seed 42 --log_dir logs/...
 
 ---
 
-## 3. 🔴 5시간 Iteration Deep Dive (2026-04-09)
+## 3. Iteration Deep Dive (2026-04-09~10)
+
+### Quick Summary — 각 iteration 이 한 일
+
+| iter | 핵심 변경 | test_f1 (mean) | FN→ | FP→ | 핵심 교훈 |
+|---|---|---|---|---|---|
+| v3 | baseline (before fix) | 99.49% | 5.0 | 2.7 | renderer 가 spike 을 잘라먹음 |
+| **v4** | **renderer target preserve** | **99.82%** | 2.3 | 0.3 | **전체 개선의 70%**. 이미지 품질이 핵심 |
+| v5 | std/drift boundary 상승 | 99.91% | 1.3 | 0.0 | boundary hard case 제거 |
+| v6 | + mean_shift boundary | 99.89% | 1.3 | 0.3 | 추가 개선 없음 (noise floor) |
+| v7h Blue | harder data (anomaly ↓) | 99.64% | 3.5 | 1.0 | 난이도 올리니 하락 |
+| **v7h Red** | **target color 빨강** | **99.90%** | **1.0** | **0.5** | **색 contrast 가 성능 직결** |
+
+![Full journey](v9mid_journey/plots/13_full_performance_trend.png)
+
+---
 
 ### 타임라인
 
@@ -360,6 +375,43 @@ gradient clipping 의 본래 목적이 **학습 발산 방지**. 이전 세션 p
 1. **v3→v4**: renderer fix (+0.33 pts)
 2. **v4→v5**: boundary raise (+0.09 pts)
 3. **v7h Blue→Red**: color change (+0.26 pts on harder data)
+
+---
+
+## 3.12 Smoothed Median Val F1 — Best Model Selection 전략
+
+학습 중 "어느 epoch 의 model 을 저장할 것인가" 를 결정하는 핵심 로직.
+
+![Smoothed median](v9mid_journey/plots/14_smoothed_median_val_f1.png)
+
+### 문제
+
+val_f1 이 1.0 으로 빨리 포화 → 매 epoch "tie" 발생 → raw val_f1 기준으로는 **가장 처음 1.0 찍은 epoch** 이 best. 하지만 이 epoch 은 overfitting 초기일 수 있어서 test_f1 은 오히려 낮을 수 있음.
+
+### 해결: smoothed median (window=3)
+
+```python
+# 최근 3 epoch val_f1 의 median
+vals = sorted(val_f1_window)  # [ep-2, ep-1, ep]
+val_target = vals[1]          # median (중앙값)
+```
+
+- **median 사용 이유**: mean 은 single spike 에 왜곡됨 (예: 1 epoch 만 val_f1=0.95 면 mean 이 크게 하락). Median 은 3 중 2 가 좋으면 좋은 값 유지 → **spike 에 robust**.
+- **strict > only save**: smoothed 값이 이전 best 보다 **엄격히 클 때만** 저장. tie (==) 에서는 저장 안 함 → overfit epoch 이 이전 good epoch 을 덮어쓰는 것 방지.
+
+### 효과 (v9mid5 s=42 예시)
+
+- raw val_f1: ep 3 에서 이미 1.0 도달 → 가장 이른 epoch 이 best 후보
+- smoothed median: ep 7~10 구간에서 stable 하게 높은 값 유지 → **이 구간이 진짜 sweet spot**
+- 결과: smoothed 기준 best = ep 10 (test_f1 0.9993) vs raw 기준이면 ep 3 (test_f1 더 낮을 가능성)
+
+### Config
+
+```yaml
+smooth_window: 3        # 최근 N epoch
+smooth_method: median   # mean 이 아닌 median (spike robust)
+save_strict_only: true  # tie save 금지
+```
 
 ---
 

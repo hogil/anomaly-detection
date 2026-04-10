@@ -195,12 +195,14 @@ def _filter_outliers(fleet_data, sigma=5, target_id=None):
 
 Before 에서는 빨강 점들이 fleet 안에 있는 것처럼 보이지만, After 에서는 -0.1 ~ +0.07 까지 fleet (-0.02 근처) 밖으로 명확히 튀는 spike 가 보인다.
 
-### 3.2 FN Class 분포 — spike 가 전부였다
+### 3.2 FN Class 분포 — renderer fix 전후 변화
 
 ![Class FN pattern](v9mid_journey/plots/03_class_fn_pattern.png)
 
-**v3** 에서 FN 15개 중 **spike 7개** (47%) + std 3 + drift 3 + mean_shift 2.
-**v4** 에서 **spike 전멸** (0 개) + std 4 + drift 3. → renderer fix 가 정확히 spike 만 고침. ✅
+**v3** (fix 전): FN 15개 — spike 7 + std 3 + drift 3 + mean_shift 2. spike 가 가장 많지만 **다른 클래스도 존재**.
+**v4** (fix 후): spike FN 7→0 으로 해결. std 4 + drift 3 은 남음 → boundary 조정으로 추후 해결 (v5).
+
+renderer fix 는 spike 측정 오류만 해결. **std/drift/mean_shift FN 은 별도 원인** (defect 강도 boundary).
 
 ### 3.3 Boundary 상승 (v4 → v5)
 

@@ -154,11 +154,15 @@ class ImageRenderer:
         # outlier filter sigma (0 = disabled, default 5)
         self.outlier_sigma = float(img_cfg.get("outlier_sigma", 5))
 
+        # 수평 기준선 on/off (default: True)
+        self.baseline_line = bool(img_cfg.get("baseline_line", True))
+
     # ================================================================
     # 학습용 (target=하이라이트 + fleet=회색, 축 없음)
     # ================================================================
 
-    def render_overlay(self, fleet_data: dict, target_id: str, save_path: str):
+    def render_overlay(self, fleet_data: dict, target_id: str, save_path: str,
+                       target_value: float = None):
         # outlier filtering (mean ± N*std 밖의 점 제거) — target 은 보존
         fleet_data = _filter_outliers(fleet_data, sigma=self.outlier_sigma, target_id=target_id)
         fig, ax = self._create_figure()
@@ -184,6 +188,21 @@ class ImageRenderer:
                            s=self.target_marker, c=self.target_color,
                            alpha=self.target_alpha, edgecolors="none", zorder=2)
 
+        # 수평 기준선 (target_value 또는 fleet_median) — 연한 회색
+        if self.baseline_line:
+            line_val = target_value
+            if line_val is None:
+                fleet_y_all = []
+                for mid, (_, yv) in fleet_data.items():
+                    if mid != target_id and len(yv) > 0:
+                        fleet_y_all.append(yv)
+                if fleet_y_all:
+                    line_val = float(np.median(np.concatenate(fleet_y_all)))
+            if line_val is not None:
+                line_norm = (line_val - vmin) / val_range
+                ax.axhline(line_norm, color="#C8C8C8", linestyle="-",
+                           linewidth=1.0, alpha=0.6, zorder=0)
+
         ax.set_ylim(-0.1, 1.1)
         x_min, x_max = self._x_range(fleet_data)
         if x_min is not None and x_max is not None:
@@ -198,7 +217,8 @@ class ImageRenderer:
                                save_path: str, anomalous_ids: list = None,
                                defect_start_idx=None, title: str = None,
                                x_label: str = "Sample Index",
-                               y_label: str = "Measurement Value (nm)"):
+                               y_label: str = "Measurement Value (nm)",
+                               target_value: float = None):
         if anomalous_ids is None:
             anomalous_ids = []
 
@@ -262,6 +282,20 @@ class ImageRenderer:
                                s=DISPLAY_MARKER_TARGET, c=COLOR_NORMAL,
                                alpha=0.65, edgecolors="white", linewidths=0.3,
                                zorder=2, label=target_id)
+
+        # 수평 기준선 (target_value 또는 fleet_median) — 검은색
+        if self.baseline_line:
+            line_val_disp = target_value
+            if line_val_disp is None:
+                fleet_y_all_disp = []
+                for mid, (_, yv) in fleet_data.items():
+                    if mid != target_id and len(yv) > 0:
+                        fleet_y_all_disp.append(yv)
+                if fleet_y_all_disp:
+                    line_val_disp = float(np.median(np.concatenate(fleet_y_all_disp)))
+            if line_val_disp is not None:
+                ax.axhline(line_val_disp, color="#333333", linestyle="-",
+                           linewidth=1.0, alpha=0.7, zorder=0)
 
         # 축 범위
         x_min, x_max = self._x_range(fleet_data)

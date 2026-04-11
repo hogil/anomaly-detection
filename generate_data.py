@@ -87,6 +87,28 @@ def scale_config(config: dict, scale: float) -> dict:
     return cfg
 
 
+def _compute_target_value(result, sid: str, rng: np.random.Generator, cls: str) -> float:
+    """수평 기준선 위치 계산 — fleet(정상 멤버) median.
+
+    anomaly 를 제외한 정상 데이터의 중심을 보여준다.
+    모든 클래스 공통: fleet (target 제외) 의 median 사용.
+    """
+    fleet_vals = [
+        r["value"]
+        for r in result.timeseries_rows
+        if r["chart_id"] == sid and r.get(result.context_column) != result.target
+    ]
+    if fleet_vals:
+        return float(np.median(fleet_vals))
+
+    # fleet 없으면 전체 median fallback
+    all_vals = [r["value"] for r in result.timeseries_rows if r["chart_id"] == sid]
+    if all_vals:
+        return float(np.median(all_vals))
+
+    return 0.0
+
+
 def generate_batch(config, classes, count_per_class, rng, start_id, label):
     """순차 생성 (기본). count_per_class: int 또는 dict {class: count}."""
     gen = ScenarioGenerator(config, rng=rng)
@@ -102,6 +124,8 @@ def generate_batch(config, classes, count_per_class, rng, start_id, label):
             result = gen.generate(sid, cls)
 
             all_ts_rows.extend(result.timeseries_rows)
+            tv = _compute_target_value(result, sid, rng, cls)
+
             all_sc_rows.append({
                 "chart_id": sid,
                 "class": cls,
@@ -113,6 +137,7 @@ def generate_batch(config, classes, count_per_class, rng, start_id, label):
                 "contexts": ",".join(result.contexts),
                 "defect_start_idx": result.defect_start_idx,
                 "defect_params": json.dumps(result.defect_params),
+                "target_value": round(float(tv), 6),
             })
             sc_id += 1
 
@@ -158,6 +183,7 @@ def _gen_one(task: tuple):
 
     sid = f"ch_{sid_int:05d}"
     result = gen.generate(sid, cls)
+    target_value = _compute_target_value(result, sid, rng, cls)
 
     sc_row = {
         "chart_id": sid,
@@ -170,6 +196,7 @@ def _gen_one(task: tuple):
         "contexts": ",".join(result.contexts),
         "defect_start_idx": result.defect_start_idx,
         "defect_params": json.dumps(result.defect_params),
+        "target_value": round(float(target_value), 6),
     }
     return sid_int, sc_row, result.timeseries_rows
 

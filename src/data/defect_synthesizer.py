@@ -34,7 +34,8 @@ class DefectSynthesizer:
         self.rng = rng or np.random.default_rng()
 
     def inject(self, values: np.ndarray, mask: np.ndarray,
-               defect_type: str, fleet_range: float = 0.0) -> Tuple[np.ndarray, DefectInfo]:
+               defect_type: str, fleet_range: float = 0.0,
+               fleet_noise_std: float = 0.0) -> Tuple[np.ndarray, DefectInfo]:
         self._fleet_range = fleet_range  # drift에서 사용
         anomaly_values = values.copy()
         total_length = len(values)
@@ -59,13 +60,17 @@ class DefectSynthesizer:
         if len(affected) == 0:
             return anomaly_values, DefectInfo(defect_type, start_idx, end_idx, 0, {})
 
-        # 정상 영역의 std 측정 (불량 강도의 기준)
+        # 정상 영역의 std 측정 (target 자신의 pre-defect 구간)
         normal_indices = valid_indices[valid_indices < start_idx]
         if len(normal_indices) > 2:
-            baseline_std = np.nanstd(values[normal_indices])
+            target_baseline_std = np.nanstd(values[normal_indices])
         else:
-            baseline_std = np.nanstd(values[valid_indices])
-        baseline_std = max(baseline_std, 0.01)  # 최소값 보장
+            target_baseline_std = np.nanstd(values[valid_indices])
+        target_baseline_std = max(target_baseline_std, 0.01)  # 최소값 보장
+
+        # Effective std = max(target baseline, fleet noise)
+        # → target이 조용한 구간이어도 anomaly 는 fleet 시각 noise 기준으로 크게 들어감
+        baseline_std = max(target_baseline_std, fleet_noise_std)
 
         inject_fn = {
             "mean_shift": self._inject_mean_shift,
@@ -102,6 +107,13 @@ class DefectSynthesizer:
                                    start: int, end: int, baseline_std: float) -> dict:
         cfg = self.cfg["standard_deviation"]
         scale = self.rng.uniform(*cfg["scale_range"])
+
+        # Low-noise 보정: baseline_std 가 매우 작으면 scale 을 1.15~1.3× boost
+        # (조용한 normal 샘플에서 std anomaly 가 보이도록)
+        low_noise_thr = cfg.get("low_noise_threshold", 0.04)
+        if baseline_std < low_noise_thr:
+            low_boost = float(self.rng.uniform(1.15, 1.30))
+            scale *= low_boost
 
         # 목표 산포 = baseline_std × scale
         # baseline에 추가 노이즈만 더해서 패턴 보존하면서 산포 확대

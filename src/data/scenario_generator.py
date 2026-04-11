@@ -141,7 +141,7 @@ class ScenarioGenerator:
                 tgt_mean = 0.0
                 tgt_std = 0.05
 
-            # === Fleet visible range 계산 (drift max_drift에 사용) ===
+            # === Fleet visible range + std 계산 ===
             all_fleet_vals = []
             for mid in contexts:
                 if mid == target:
@@ -153,12 +153,16 @@ class ScenarioGenerator:
             if all_fleet_vals:
                 fleet_p5, fleet_p95 = np.percentile(all_fleet_vals, [5, 95])
                 fleet_visible_range = max(fleet_p95 - fleet_p5, 0.05)
+                fleet_noise_std = max(float(np.std(all_fleet_vals)), 0.01)
             else:
                 fleet_visible_range = 0.1
+                fleet_noise_std = 0.05
 
-            # 불량 주입 (fleet_range 전달)
+            # 불량 주입 (fleet_range + fleet_noise_std 전달)
             new_values, info = self.defect_synth.inject(
-                values, mask, cls, fleet_range=fleet_visible_range
+                values, mask, cls,
+                fleet_range=fleet_visible_range,
+                fleet_noise_std=fleet_noise_std,
             )
 
             if info.num_affected < MIN_DEFECT_POINTS:
@@ -173,7 +177,9 @@ class ScenarioGenerator:
                         mask[t] = True
                         values[t] = tgt_mean + self.rng.normal(0, tgt_std)
                     new_values, info = self.defect_synth.inject(
-                        values, mask, cls, fleet_range=fleet_visible_range
+                        values, mask, cls,
+                        fleet_range=fleet_visible_range,
+                        fleet_noise_std=fleet_noise_std,
                     )
 
             context_data[target] = (new_values, mask)
@@ -249,37 +255,45 @@ class ScenarioGenerator:
         max_right_shift = enf.get("normal_max_right_shift_sigma", 0.5)
 
         fleet_all_vals = []
-        fleet_right_vals = []
+        fleet_member_means = []  # 각 멤버의 평균 (between-member spread 계산용)
+        fleet_within_stds = []   # 각 멤버의 내부 std (within-member noise)
         for mid in contexts:
             if mid == target:
                 continue
             v, m = context_data[mid]
             vi = np.where(m)[0]
             if len(vi) > 0:
-                fleet_all_vals.append(v[vi])
+                vals = v[vi]
+                fleet_all_vals.append(vals)
+                fleet_member_means.append(float(np.mean(vals)))
+                fleet_within_stds.append(float(np.std(vals)))
         if not fleet_all_vals:
             return
 
         fleet_all = np.concatenate(fleet_all_vals)
         fleet_mean = float(np.mean(fleet_all))
-        fleet_std = max(float(np.std(fleet_all)), 1e-6)
+        fleet_std = max(float(np.std(fleet_all)), 1e-6)       # 전체 (within + between)
+        fleet_within_std = max(float(np.mean(fleet_within_stds)), 1e-6) if fleet_within_stds else fleet_std
 
         tv, tm = context_data[target]
         tvi = np.where(tm)[0]
         if len(tvi) == 0:
             return
 
-        # 1) 전체 산포 제어: target std가 fleet std의 1.2배 초과 시 축소
+        # 1) 전체 산포 제어: target std가 fleet within_std 의 1.2배 초과 시 축소
+        # (between 편차 포함한 fleet_std 대신 within_std 기준 → 더 엄격)
         target_std = float(np.nanstd(tv[tvi]))
         target_mean = float(np.nanmean(tv[tvi]))
-        if target_std > fleet_std * 1.2:
-            scale = (fleet_std * float(self.rng.uniform(0.85, 1.1))) / target_std
+        if target_std > fleet_within_std * 1.2:
+            scale = (fleet_within_std * float(self.rng.uniform(0.85, 1.1))) / target_std
             tv[tvi] = target_mean + (tv[tvi] - target_mean) * scale
             target_mean = float(np.nanmean(tv[tvi]))
 
-        # 2) 전체 평균 제어: fleet_mean에서 너무 멀면 재정렬
-        if abs(target_mean - fleet_mean) > fleet_std * 1.0:
-            tv[tvi] += (fleet_mean - target_mean) * float(self.rng.uniform(0.7, 1.0))
+        # 2) 전체 평균 제어: fleet_mean 에서 fleet_within_std × 0.6 초과 이탈 시 재정렬
+        # (normal 은 fleet 중심에 가까워야 함 → 엄격)
+        mean_gap_thr = fleet_within_std * 0.6
+        if abs(target_mean - fleet_mean) > mean_gap_thr:
+            tv[tvi] += (fleet_mean - target_mean) * float(self.rng.uniform(0.8, 1.0))
             target_mean = float(np.nanmean(tv[tvi]))
 
         # 3) 좌/우 영역 분리 (time_index 70%)
@@ -470,12 +484,15 @@ class ScenarioGenerator:
         context_data[target] = (tv, tm)
 
     def _inject_context(self, context_data, contexts, target):
-        """Context anomaly: target의 전체 평균을 fleet 평균에서 멀리 이동 + 산포 증가.
-        단순하고 명확하게:
-          - 평균: target_mean → fleet_mean ± factor × fleet_std
-          - 산포: 기존 산포에 추가 노이즈 더해 scale 배 확대
+        """Context anomaly: target의 전체 평균을 fleet 대비 이동 + 산포 증가.
+
+        reference 모드 (config target_deviation.reference):
+          - "within" (기본): fleet_std (군내 noise) 기준 — 기존 방식
+          - "between": fleet 멤버별 mean 의 std (군간 산포) 기준 — 더 현실적
         """
         dev_cfg = self.ctx_cfg["target_deviation"]
+        mean_ref_mode = dev_cfg.get("mean_reference", dev_cfg.get("reference", "within"))
+        std_ref_mode = dev_cfg.get("std_reference", dev_cfg.get("reference", "within"))
 
         values, mask = context_data[target]
         valid = np.where(mask)[0]
@@ -484,6 +501,8 @@ class ScenarioGenerator:
 
         # Fleet 통계 (전체 멤버 합쳐서)
         fleet_all = []
+        fleet_member_means = []
+        fleet_member_stds = []
         for mid in contexts:
             if mid == target:
                 continue
@@ -491,11 +510,25 @@ class ScenarioGenerator:
             fvi = np.where(fm)[0]
             if len(fvi) > 0:
                 fleet_all.append(fv[fvi])
+                fleet_member_means.append(float(np.mean(fv[fvi])))
+                fleet_member_stds.append(float(np.std(fv[fvi])))
         if not fleet_all:
             return {}
         fleet_vals = np.concatenate(fleet_all)
         fleet_mean = float(np.mean(fleet_vals))
-        fleet_std = max(float(np.std(fleet_vals)), 0.01)
+        fleet_std = max(float(np.std(fleet_vals)), 0.01)  # 군내 (within)
+
+        # 군간 (between) 산포
+        fleet_between_std = max(float(np.std(fleet_member_means)), 0.001) if len(fleet_member_means) > 1 else fleet_std * 0.1
+
+        # reference 선택 (mean/std 각각)
+        mean_ref_std = fleet_between_std if mean_ref_mode == "between" else fleet_std
+        std_ref_std = fleet_std  # std 는 항상 within (between 쓰면 값이 너무 작아 효과 없음)
+        if std_ref_mode == "within":
+            std_ref_std = fleet_std
+        elif std_ref_mode == "between":
+            std_ref_std = fleet_between_std
+        ref_std = mean_ref_std  # 하위호환
 
         # target 현재 평균
         target_mean = float(np.mean(values[valid]))
@@ -504,28 +537,128 @@ class ScenarioGenerator:
         mean_shift = 0.0
         std_scale = 1.0
 
-        if deviation_type in ("mean", "both"):
-            factor = float(self.rng.uniform(*dev_cfg["mean_sigma_range"]))
-            direction = float(self.rng.choice([-1, 1]))
-            # target 평균을 fleet_mean + direction × factor × fleet_std 로 이동
-            target_pos = fleet_mean + direction * factor * fleet_std
-            mean_shift = target_pos - target_mean
-            values[valid] += mean_shift
+        # --- mean 주입: fleet 개별 std (noise) 도 고려한 교차 보정 ---
+        mean_target_nsigma = 0.0
+        fleet_std_avg = float(np.mean(fleet_member_stds)) if fleet_member_stds else fleet_std
+        fleet_std_between = max(float(np.std(fleet_member_stds)), 0.001) if len(fleet_member_stds) > 1 else 0.005
 
+        if deviation_type in ("mean", "both"):
+            target_nsigma = float(self.rng.uniform(*dev_cfg["mean_sigma_range"]))
+            direction = float(self.rng.choice([-1, 1]))
+
+            # 기본: delta = target_nsigma × fleet_between_std
+            delta = target_nsigma * fleet_between_std
+
+            # 교차 보정: fleet 개별 noise (std) 가 크면 delta 를 키워야 점들이 안 겹침
+            min_within_ratio = float(dev_cfg.get("mean_min_within_ratio", 0))
+            if min_within_ratio > 0:
+                min_delta = fleet_std_avg * min_within_ratio
+                delta = max(delta, min_delta)
+
+            # target 이동 (fleet 은 건드리지 않음 — 자연 변동만)
+            values[valid] += direction * delta - (target_mean - fleet_mean)
+            mean_shift = float(np.mean(values[valid])) - target_mean
+            mean_target_nsigma = target_nsigma
+
+        # --- std 주입: fleet mean spread 도 고려한 교차 보정 ---
+        std_target_nsigma = 0.0
         if deviation_type in ("std", "both"):
-            std_scale = float(self.rng.uniform(*dev_cfg["std_range"]))
-            # 기존 target std 측정 후 target_std = fleet_std × scale 되도록 추가 노이즈
+            std_key = "std_sigma_range" if "std_sigma_range" in dev_cfg else "std_range"
+            target_nsigma = float(self.rng.uniform(*dev_cfg[std_key]))
+
+            # 기본: target_std = fleet_std_avg + target_nsigma × fleet_std_between
+            desired_std = fleet_std_avg + target_nsigma * fleet_std_between
+
+            # 교차 보정: fleet mean spread 가 크면 전체 scatter 가 넓어서 std 차이 안 보임
+            # → target_std 는 (fleet 전체 시각 산포) × min_scale 이상이어야 함
+            # fleet 시각 산포 ≈ fleet_between_std (mean 퍼짐) + fleet_std_avg (개별 noise)
+            min_scale = float(dev_cfg.get("std_min_scale", 0))
+            if min_scale > 0:
+                fleet_visual_spread = fleet_between_std + fleet_std_avg
+                min_desired_std = fleet_visual_spread * min_scale
+                desired_std = max(desired_std, min_desired_std)
+
             cur_std = max(float(np.std(values[valid])), 1e-6)
-            target_std = fleet_std * std_scale
-            extra_var = max(target_std ** 2 - cur_std ** 2, 0)
+            extra_var = max(desired_std ** 2 - cur_std ** 2, 0)
             if extra_var > 0:
                 extra_noise = self.rng.normal(0, float(np.sqrt(extra_var)), len(valid))
                 values[valid] += extra_noise
+            std_scale = desired_std / max(fleet_std_avg, 1e-6)
+            std_target_nsigma = target_nsigma
+
+        # --- 사후 검증 + min_nsigma enforcement ---
+        min_mean_nsigma = float(dev_cfg.get("min_mean_nsigma", 0))
+        min_std_nsigma = float(dev_cfg.get("min_std_nsigma", 0))
+        fleet_std_between_post = max(float(np.std(fleet_member_stds)), 0.001) if len(fleet_member_stds) > 1 else 0.005
+        fleet_std_avg_post = float(np.mean(fleet_member_stds))
+
+        # mean enforcement — 실제 fleet stats 기준으로 재측정 + 반복 boost
+        for _enforce_iter in range(3):  # 최대 3회 반복
+            # 현재 fleet between_std 재계산 (fleet 값은 안 변하므로 동일하지만 명시적)
+            _fm_means = []
+            for mid in contexts:
+                if mid == target: continue
+                fv, fm_mask = context_data[mid]
+                fvi = np.where(fm_mask)[0]
+                if len(fvi) > 0:
+                    _fm_means.append(float(np.mean(fv[fvi])))
+            _fleet_mean = float(np.mean(_fm_means)) if _fm_means else fleet_mean
+            _fleet_bstd = max(float(np.std(_fm_means)), 0.001) if len(_fm_means) > 1 else 0.001
+
+            post_target_mean = float(np.mean(values[valid]))
+            post_mean_nsigma = abs(post_target_mean - _fleet_mean) / _fleet_bstd
+
+            if deviation_type not in ("mean", "both") or min_mean_nsigma <= 0:
+                break
+
+            # 추가: 가장 가까운 fleet 멤버보다 fleet_within_std 이상 떨어져야 함
+            _closest_fleet = min(_fm_means, key=lambda m: abs(m - post_target_mean))
+            _gap_from_closest = abs(post_target_mean - _closest_fleet)
+            _fleet_within_avg = float(np.mean([ms_val for mid, ms_val in zip(contexts, fleet_member_stds) if mid != target])) if fleet_member_stds else 0.01
+            _min_gap = _fleet_within_avg * float(dev_cfg.get("mean_min_within_ratio", 1.5))
+
+            need_boost = False
+            if post_mean_nsigma < min_mean_nsigma:
+                need_boost = True
+            if _gap_from_closest < _min_gap:
+                need_boost = True
+
+            if need_boost:
+                direction_sign = 1.0 if post_target_mean >= _fleet_mean else -1.0
+                # fleet 평균 기준 min_nsigma 와 closest 멤버 기준 min_gap 중 큰 값
+                needed_from_avg = min_mean_nsigma * _fleet_bstd
+                needed_from_closest = abs(_closest_fleet - _fleet_mean) + _min_gap
+                needed_delta = max(needed_from_avg, needed_from_closest)
+                current_delta = abs(post_target_mean - _fleet_mean)
+                boost = needed_delta - current_delta
+                if boost > 0:
+                    values[valid] += direction_sign * boost
+            else:
+                break
+
+        # std enforcement
+        post_target_std = float(np.std(values[valid]))
+        post_std_nsigma = abs(post_target_std - fleet_std_avg_post) / max(fleet_std_between_post, 1e-6)
+        if deviation_type in ("std", "both") and min_std_nsigma > 0 and post_std_nsigma < min_std_nsigma:
+            desired_std = fleet_std_avg_post + min_std_nsigma * fleet_std_between_post
+            cur_std = max(float(np.std(values[valid])), 1e-6)
+            extra_var = max(desired_std ** 2 - cur_std ** 2, 0)
+            if extra_var > 0:
+                extra_noise = self.rng.normal(0, float(np.sqrt(extra_var)), len(valid))
+                values[valid] += extra_noise
+            post_target_std = float(np.std(values[valid]))
+            post_std_nsigma = abs(post_target_std - fleet_std_avg_post) / max(fleet_std_between_post, 1e-6)
 
         context_data[target] = (values, mask)
         return {
             "deviation_type": deviation_type,
-            "mean_shift": float(mean_shift),
-            "std_scale": float(std_scale),
+            "mean_shift": float(np.mean(values[valid]) - target_mean),
+            "std_scale": float(post_target_std / max(fleet_std_avg_post, 1e-6)),
             "fleet_std": float(fleet_std),
+            "fleet_between_std": float(fleet_between_std),
+            "fleet_std_between": float(fleet_std_between_post),
+            "mean_target_nsigma": float(mean_target_nsigma),
+            "std_target_nsigma": float(std_target_nsigma),
+            "post_mean_nsigma": float(post_mean_nsigma),
+            "post_std_nsigma": float(post_std_nsigma),
         }

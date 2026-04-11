@@ -300,8 +300,9 @@ class BaselineGenerator:
         step_size = self.rng.uniform(*step_range)
         mean_revert = self.rng.uniform(*mr_range)
 
-        # 시작점 (chart 전체의 평균 위치)
-        offset = self.rng.uniform(vmin * 0.3, vmax * 0.3)
+        # 시작점 (chart 전체의 평균 위치) — value_range 의 80% 범위에서 랜덤
+        center_ratio = self.baseline_cfg.get("center_spread", 0.8)
+        offset = self.rng.uniform(vmin * center_ratio, vmax * center_ratio)
         signal = np.full(length, offset, dtype=float)
 
         for t in range(1, length):

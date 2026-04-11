@@ -107,7 +107,16 @@ def _render_one(row_dict: dict):
     train_path = images_dir / split / cls / filename
     disp_path = display_dir / split / cls / filename
 
-    renderer.render_overlay(fleet_data, target_id, str(train_path))
+    # target_value: 수평 기준선 (scenarios.csv 에서)
+    target_value = row_dict.get("target_value", None)
+    if target_value is not None:
+        try:
+            target_value = float(target_value)
+        except (TypeError, ValueError):
+            target_value = None
+
+    renderer.render_overlay(fleet_data, target_id, str(train_path),
+                            target_value=target_value)
 
     anomalous_ids = [target_id] if cls != "normal" else []
     disp_defect_start = defect_start if cls not in ("normal", "context") else None
@@ -118,6 +127,7 @@ def _render_one(row_dict: dict):
         title=chart_title,
         x_label=x_label,
         y_label=y_label,
+        target_value=target_value,
     )
     return sid
 

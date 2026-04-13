@@ -70,8 +70,17 @@ if sys.platform == "win32":
 
 ROOT = Path(__file__).resolve().parent
 LOGS = ROOT / "logs"
-ACTIVE_DATASET_CONFIG = ROOT / "dataset.yaml"
+DEFAULT_ACTIVE_DATASET_CONFIG = ROOT / "dataset.yaml"
+FALLBACK_ACTIVE_DATASET_CONFIG = ROOT / "configs" / "datasets" / "v11.yaml"
+ACTIVE_DATASET_CONFIG = DEFAULT_ACTIVE_DATASET_CONFIG
 RUN_BACKUP_DIR = ROOT / "configs" / "runs"
+
+
+def _path_for_cli(path: Path) -> str:
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
 
 # ============================================================================
 # 서버 프로파일
@@ -110,7 +119,7 @@ class Exp:
     require_image_dir: Optional[str] = None  # 필요한 image_dir 존재 확인
 
     def cmd(self, server_extra: Optional[List[str]] = None) -> List[str]:
-        config_path = self.require_config or ACTIVE_DATASET_CONFIG.name
+        config_path = self.require_config or _path_for_cli(ACTIVE_DATASET_CONFIG)
         base = [
             sys.executable, "-u", "train.py",
             "--log_dir", f"logs/{self.name}",
@@ -144,8 +153,11 @@ class Exp:
 
     def is_ready(self) -> tuple[bool, str]:
         """실행 가능 여부 + 이유 반환."""
-        if self.require_config and not Path(self.require_config).exists():
-            return False, f"config 없음: {self.require_config}"
+        cfg_path = Path(self.require_config) if self.require_config else ACTIVE_DATASET_CONFIG
+        if not cfg_path.is_absolute():
+            cfg_path = ROOT / cfg_path
+        if not cfg_path.exists():
+            return False, f"config 없음: {cfg_path}"
         if self.require_image_dir and not Path(self.require_image_dir).exists():
             return False, f"image_dir 없음: {self.require_image_dir}"
         return True, ""
@@ -411,8 +423,8 @@ def snapshot_run_spec(args, exps: List[Exp], num_gpus: int, server_extra: List[s
     payload = {
         "timestamp": ts,
         "entrypoint": "run_experiments_v11.py",
-        "active_dataset_config": str(ACTIVE_DATASET_CONFIG.relative_to(ROOT)),
-        "dataset_backup": str(dataset_backup_path.relative_to(ROOT)) if dataset_backup_path.exists() else None,
+        "active_dataset_config": _path_for_cli(ACTIVE_DATASET_CONFIG),
+        "dataset_backup": _path_for_cli(dataset_backup_path) if dataset_backup_path.exists() else None,
         "groups": list(args.groups),
         "base_n": args.base_n,
         "server": args.server,
@@ -798,6 +810,10 @@ def main():
         help="실행 그룹 (default: sweep). 권장 순서: sweep/perclass → lr gc smooth reg → combo → color",
     )
     parser.add_argument(
+        "--config", type=str, default="dataset.yaml",
+        help="활성 dataset config 경로 (default: dataset.yaml, 없으면 configs/datasets/v11.yaml fallback)",
+    )
+    parser.add_argument(
         "--base_n", type=int, default=700,
         help="lr/gc/smooth/reg/color 그룹에서 사용할 normal_ratio (default: 700). "
              "sweep 완료 후 best_n으로 설정 권장.",
@@ -834,6 +850,15 @@ def main():
     parser.add_argument("--combo-reg-tag", type=str, default=None, choices=list(REG_VARIANTS.keys()),
                         help="combo 그룹에서 사용할 reg tag")
     args = parser.parse_args()
+
+    global ACTIVE_DATASET_CONFIG
+    active_config = Path(args.config)
+    if not active_config.is_absolute():
+        active_config = ROOT / active_config
+    if not active_config.exists() and args.config == "dataset.yaml" and FALLBACK_ACTIVE_DATASET_CONFIG.exists():
+        print(f"[WARN] dataset.yaml 없음 → fallback 사용: {FALLBACK_ACTIVE_DATASET_CONFIG.relative_to(ROOT)}")
+        active_config = FALLBACK_ACTIVE_DATASET_CONFIG
+    ACTIVE_DATASET_CONFIG = active_config
 
     profile = SERVER_PROFILES[args.server]
     server_extra = list(profile["extra_args"])

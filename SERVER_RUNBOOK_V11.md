@@ -20,6 +20,9 @@ git checkout master
 git pull origin master
 ```
 
+별도 복사 없이 repo root의 `dataset.yaml` 을 바로 사용하면 됩니다.
+기본 설정은 `configs/datasets/v11.yaml` 과 동일합니다.
+
 ### 2.2 Python 환경
 
 ```bash
@@ -51,7 +54,28 @@ python download.py
 weights/convnextv2_tiny.fcmae_ft_in22k_in1k.pth
 ```
 
-## 4. 데이터셋 생성
+## 4. 가장 간단한 전체 실행
+
+가장 단순한 방식은 wrapper의 `all` stage 입니다.
+
+```bash
+bash scripts/run_v11_pipeline.sh all \
+  --config dataset.yaml \
+  --workers 8 \
+  --num-workers 8 \
+  --base-n 700 \
+  --name-prefix server_run
+```
+
+이 한 줄이 아래를 순서대로 실행합니다.
+
+1. dataset 생성
+2. normal_ratio sweep
+3. perclass sweep
+4. ablation
+5. paper table 생성
+
+## 5. 데이터셋 생성
 
 ```bash
 bash scripts/run_v11_pipeline.sh dataset --workers 8
@@ -65,7 +89,7 @@ python generate_images.py --config dataset.yaml --workers 8
 python scripts/validate_dataset.py --config dataset.yaml
 ```
 
-## 5. ref 1회 확인
+## 6. ref 1회 확인
 
 현재 ref는 `v11`에서 선택된 LR baseline입니다.
 
@@ -82,7 +106,7 @@ bash scripts/run_v11_pipeline.sh train \
   --num-workers 8
 ```
 
-## 6. normal_ratio sweep
+## 7. normal_ratio sweep
 
 ```bash
 bash scripts/run_v11_pipeline.sh sweep \
@@ -101,7 +125,7 @@ python run_experiments_v11.py \
   --name-prefix server_run
 ```
 
-## 7. train per-class count sweep
+## 8. train per-class count sweep
 
 이 실험은 train split에서 original class별 최대 개수를 동일하게 맞춥니다.
 
@@ -126,7 +150,7 @@ python run_experiments_v11.py \
   --name-prefix server_run
 ```
 
-## 8. ablation
+## 9. ablation
 
 현재 기준 `best_n=700`으로 진행합니다.
 
@@ -149,7 +173,7 @@ python run_experiments_v11.py \
   --name-prefix server_run
 ```
 
-## 9. summary / paper table
+## 10. summary / paper table
 
 ```bash
 bash scripts/run_v11_pipeline.sh summary --base-n 700 --name-prefix server_run
@@ -163,7 +187,7 @@ python run_experiments_v11.py --only-summary --base_n 700 --name-prefix server_r
 python scripts/paper_followup_v11.py --prefix server_run --base-n 700
 ```
 
-## 10. 백그라운드 실행 예시
+## 11. 백그라운드 실행 예시
 
 ### tmux
 
@@ -191,14 +215,14 @@ nohup bash scripts/run_v11_pipeline.sh perclass --name-prefix server_run --num-w
   > logs/server_perclass.out 2>&1 &
 ```
 
-## 11. 결과 위치
+## 12. 결과 위치
 
 - data: `data/scenarios.csv`, `data/timeseries.csv`
 - images: `images/`, `display/`
 - train 결과: `logs/YYMMDD_HHMMSS_<run_name>_F<test_f1>_R<test_recall>/`
 - paper table: `logs/paper_tables/`
 
-## 12. 운영 메모
+## 13. 운영 메모
 
 - Windows에서는 `num_workers=1`이 안전했고, Linux 서버는 `8`부터 시작하는 것이 합리적입니다.
 - `normal_ratio` sweep과 `perclass` sweep은 다른 실험입니다.

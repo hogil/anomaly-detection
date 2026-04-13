@@ -126,6 +126,7 @@ case "$STAGE" in
   sweep)
     run_cmd "$PYTHON" run_experiments_v11.py \
       --groups sweep \
+      --config "$CONFIG" \
       --num_workers "$NUM_WORKERS" \
       --name-prefix "$NAME_PREFIX" \
       "${EXTRA_ARGS[@]}"
@@ -134,6 +135,7 @@ case "$STAGE" in
   perclass)
     run_cmd "$PYTHON" run_experiments_v11.py \
       --groups perclass \
+      --config "$CONFIG" \
       --num_workers "$NUM_WORKERS" \
       --name-prefix "$NAME_PREFIX" \
       "${EXTRA_ARGS[@]}"
@@ -142,6 +144,7 @@ case "$STAGE" in
   ablation)
     run_cmd "$PYTHON" run_experiments_v11.py \
       --groups lr gc smooth reg \
+      --config "$CONFIG" \
       --base_n "$BASE_N" \
       --num_workers "$NUM_WORKERS" \
       --name-prefix "$NAME_PREFIX" \
@@ -151,6 +154,7 @@ case "$STAGE" in
   summary)
     run_cmd "$PYTHON" run_experiments_v11.py \
       --only-summary \
+      --config "$CONFIG" \
       --base_n "$BASE_N" \
       --name-prefix "$NAME_PREFIX" \
       "${EXTRA_ARGS[@]}"
@@ -164,9 +168,41 @@ case "$STAGE" in
       "${EXTRA_ARGS[@]}"
     ;;
 
+  all)
+    run_cmd "$PYTHON" generate_data.py --config "$CONFIG" --workers "$WORKERS"
+    run_cmd "$PYTHON" generate_images.py --config "$CONFIG" --workers "$WORKERS"
+    if [[ "$SKIP_VALIDATE" -eq 0 ]]; then
+      run_cmd "$PYTHON" scripts/validate_dataset.py --config "$CONFIG"
+    fi
+    run_cmd "$PYTHON" run_experiments_v11.py \
+      --groups sweep \
+      --config "$CONFIG" \
+      --num_workers "$NUM_WORKERS" \
+      --name-prefix "$NAME_PREFIX" \
+      "${EXTRA_ARGS[@]}"
+    run_cmd "$PYTHON" run_experiments_v11.py \
+      --groups perclass \
+      --config "$CONFIG" \
+      --num_workers "$NUM_WORKERS" \
+      --name-prefix "$NAME_PREFIX" \
+      "${EXTRA_ARGS[@]}"
+    run_cmd "$PYTHON" run_experiments_v11.py \
+      --groups lr gc smooth reg \
+      --config "$CONFIG" \
+      --base_n "$BASE_N" \
+      --num_workers "$NUM_WORKERS" \
+      --name-prefix "$NAME_PREFIX" \
+      "${EXTRA_ARGS[@]}"
+    run_cmd "$PYTHON" scripts/paper_followup_v11.py \
+      --prefix "$NAME_PREFIX" \
+      --base-n "$BASE_N" \
+      --num-workers "$NUM_WORKERS" \
+      "${EXTRA_ARGS[@]}"
+    ;;
+
   *)
     echo "Unknown stage: $STAGE" >&2
-    echo "Valid stages: weights, dataset, train, sweep, perclass, ablation, summary, paper" >&2
+    echo "Valid stages: weights, dataset, train, sweep, perclass, ablation, summary, paper, all" >&2
     exit 1
     ;;
 esac

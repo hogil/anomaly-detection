@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("weights", "dataset", "train", "sweep", "perclass", "ablation", "summary", "paper")]
+    [ValidateSet("weights", "dataset", "train", "sweep", "perclass", "ablation", "summary", "paper", "all")]
     [string]$Stage = "dataset",
     [string]$Python = "python",
     [string]$Config = "dataset.yaml",
@@ -60,6 +60,7 @@ switch ($Stage) {
         Invoke-Step -Args (@(
             "run_experiments_v11.py",
             "--groups", "sweep",
+            "--config", $Config,
             "--num_workers", "$NumWorkers",
             "--name-prefix", $NamePrefix
         ) + $ExtraArgs)
@@ -69,6 +70,7 @@ switch ($Stage) {
         Invoke-Step -Args (@(
             "run_experiments_v11.py",
             "--groups", "perclass",
+            "--config", $Config,
             "--num_workers", "$NumWorkers",
             "--name-prefix", $NamePrefix
         ) + $ExtraArgs)
@@ -78,6 +80,7 @@ switch ($Stage) {
         Invoke-Step -Args (@(
             "run_experiments_v11.py",
             "--groups", "lr", "gc", "smooth", "reg",
+            "--config", $Config,
             "--base_n", "$BaseN",
             "--num_workers", "$NumWorkers",
             "--name-prefix", $NamePrefix
@@ -88,12 +91,49 @@ switch ($Stage) {
         Invoke-Step -Args (@(
             "run_experiments_v11.py",
             "--only-summary",
+            "--config", $Config,
             "--base_n", "$BaseN",
             "--name-prefix", $NamePrefix
         ) + $ExtraArgs)
     }
 
     "paper" {
+        Invoke-Step -Args (@(
+            "scripts/paper_followup_v11.py",
+            "--prefix", $NamePrefix,
+            "--base-n", "$BaseN",
+            "--num-workers", "$NumWorkers"
+        ) + $ExtraArgs)
+    }
+
+    "all" {
+        Invoke-Step -Args @("generate_data.py", "--config", $Config, "--workers", "$Workers")
+        Invoke-Step -Args @("generate_images.py", "--config", $Config, "--workers", "$Workers")
+        if (-not $SkipValidate) {
+            Invoke-Step -Args @("scripts/validate_dataset.py", "--config", $Config)
+        }
+        Invoke-Step -Args (@(
+            "run_experiments_v11.py",
+            "--groups", "sweep",
+            "--config", $Config,
+            "--num_workers", "$NumWorkers",
+            "--name-prefix", $NamePrefix
+        ) + $ExtraArgs)
+        Invoke-Step -Args (@(
+            "run_experiments_v11.py",
+            "--groups", "perclass",
+            "--config", $Config,
+            "--num_workers", "$NumWorkers",
+            "--name-prefix", $NamePrefix
+        ) + $ExtraArgs)
+        Invoke-Step -Args (@(
+            "run_experiments_v11.py",
+            "--groups", "lr", "gc", "smooth", "reg",
+            "--config", $Config,
+            "--base_n", "$BaseN",
+            "--num_workers", "$NumWorkers",
+            "--name-prefix", $NamePrefix
+        ) + $ExtraArgs)
         Invoke-Step -Args (@(
             "scripts/paper_followup_v11.py",
             "--prefix", $NamePrefix,

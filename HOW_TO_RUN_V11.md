@@ -2,6 +2,13 @@
 
 현재 프로젝트의 기준 파이프라인은 `v11` 입니다. 이 문서는 회사 환경에서 데이터셋 생성부터 학습, sweep, ablation까지 다시 돌릴 때 필요한 파일과 명령을 정리한 실행 문서입니다.
 
+## 0. 설정 파일 원칙
+
+- 기본 활성 설정 파일은 repo root의 `dataset.yaml` 입니다.
+- 이 파일은 git에 포함됩니다. clone 후 별도 복사 없이 바로 실행하면 됩니다.
+- `configs/datasets/v11.yaml` 은 동일 내용의 버전 관리용 사본입니다.
+- `run_experiments_v11.py` 는 기본적으로 `dataset.yaml` 을 사용하고, 없으면 `configs/datasets/v11.yaml` 으로 fallback 합니다.
+
 ## 1. 현재 기준 ref
 
 - 데이터셋: `dataset.yaml`
@@ -187,6 +194,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_v11_pipeline.ps1 -Stage a
 powershell -ExecutionPolicy Bypass -File .\scripts\run_v11_pipeline.ps1 -Stage summary -BaseN 700 -NamePrefix company_run
 
 powershell -ExecutionPolicy Bypass -File .\scripts\run_v11_pipeline.ps1 -Stage paper -BaseN 700 -NamePrefix company_run
+
+powershell -ExecutionPolicy Bypass -File .\scripts\run_v11_pipeline.ps1 -Stage all -NamePrefix company_run -NumWorkers 1 -Workers 1
 ```
 
 ### Linux / bash
@@ -211,7 +220,17 @@ bash scripts/run_v11_pipeline.sh ablation --base-n 700 --name-prefix company_run
 bash scripts/run_v11_pipeline.sh summary --base-n 700 --name-prefix company_run
 
 bash scripts/run_v11_pipeline.sh paper --base-n 700 --name-prefix company_run
+
+bash scripts/run_v11_pipeline.sh all --name-prefix company_run --num-workers 8 --workers 8
 ```
+
+`all` stage는 아래를 순서대로 실행합니다.
+
+1. dataset 생성
+2. normal_ratio sweep
+3. perclass sweep
+4. ablation
+5. paper table 생성
 
 ## 6. 권장 실행 순서
 

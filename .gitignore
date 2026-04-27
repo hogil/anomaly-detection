@@ -126,6 +126,9 @@ experiments/
 validations/
 weak_anomaly_samples/
 configs/runs/
+experiment_summary/
+experiment_plan_fpfn/
+v10_preview/
 
 # Stdout training logs
 logs_*.out

@@ -892,9 +892,13 @@ def write_markdown(
         "",
         "Display용 이미지와 실제 학습 입력 이미지는 다릅니다. 아래 두 montage는 기존 `display_v11/`와 `images_v11/`에서 같은 class 순서로 가져온 예시입니다.",
         "",
-        "| display image | training image |",
-        "| --- | --- |",
-        "| ![display samples](sample_overview_display.png) | ![training samples](sample_overview_train.png) |",
+        "**Display images**",
+        "",
+        "![display samples](sample_overview_display.png)",
+        "",
+        "**Training images**",
+        "",
+        "![training samples](sample_overview_train.png)",
         "",
     ])
     lines.extend([f"- {line}" for line in strongest_candidates(records)])

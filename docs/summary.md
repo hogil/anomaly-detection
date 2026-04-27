@@ -1,6 +1,6 @@
 # 실험 요약
 
-_자동 갱신 시각: `2026-04-28T08:29:48`._
+_자동 갱신 시각: `2026-04-28T08:33:19`._
 
 ## 결과 해석
 
@@ -27,9 +27,13 @@ _자동 갱신 시각: `2026-04-28T08:29:48`._
 
 Display용 이미지와 실제 학습 입력 이미지는 다릅니다. 아래 두 montage는 기존 `display_v11/`와 `images_v11/`에서 같은 class 순서로 가져온 예시입니다.
 
-| display image | training image |
-| --- | --- |
-| ![display samples](sample_overview_display.png) | ![training samples](sample_overview_train.png) |
+**Display images**
+
+![display samples](sample_overview_display.png)
+
+**Training images**
+
+![training samples](sample_overview_train.png)
 
 - `label_smoothing` 현재 완료된 조건 중 최선은 `0.15` with `F1=0.9977`, `FN=0.8`, `FP=2.6`.
 - `abnormal_weight` 현재 완료된 조건 중 최선은 `1.5` with `F1=0.9979`, `FN=1.2`, `FP=2`.

@@ -914,13 +914,13 @@ def write_markdown(
     lines.extend(provisional_golden_recipe(records) or ["- No completed candidate set yet."])
     lines.extend([
         "",
-        "## Logical Member Attribution Plan",
+        "## Logical Member Attribution Example",
         "",
-        "_아직 실행 전 예시입니다._ 같은 chart에서 target highlight만 바꾸면, 실제 이상 member를 target으로 잡은 이미지만 anomaly이고 나머지 target은 normal입니다.",
+        "같은 family 안에 빨간 이상 member가 보여도, label은 파란 query target이 이상 member인지로 결정됩니다.",
         "",
         "![logical member attribution example](logical_member_example.png)",
         "",
-        "이 구조가 통과하려면 모델은 회색 fleet 안의 이상 존재 여부가 아니라 highlight 된 target member가 이상인지 봐야 합니다.",
+        "즉 family 전체 이상 감지가 아니라, highlight 된 member 단위로 불량 여부를 판단하는 학습 예시입니다.",
         "",
         "## Pending Round-2 Checks",
         "",

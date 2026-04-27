@@ -1,6 +1,6 @@
 # 실험 요약
 
-_자동 갱신 시각: `2026-04-28T08:15:59`._
+_자동 갱신 시각: `2026-04-28T08:29:48`._
 
 ## 결과 해석
 
@@ -23,27 +23,35 @@ _자동 갱신 시각: `2026-04-28T08:15:59`._
 
 - 고정 기준 ref: `fresh0412_v11_n700_existing` -> `F1=0.9901`, `FN=9.8`, `FP=5` over `5/5` seeds.
 - 메인 strict queue: `158` 완료 run, decision `queue_exhausted`.
-- Round-2 refinement: `10/40` 완료 run, stage `urgent_reference_then_round2`, status `running`.
+- Round-2 refinement: `11/40` 완료 run, stage `urgent_reference_then_round2`, status `running`.
+
+Display용 이미지와 실제 학습 입력 이미지는 다릅니다. 아래 두 montage는 기존 `display_v11/`와 `images_v11/`에서 같은 class 순서로 가져온 예시입니다.
+
+| display image | training image |
+| --- | --- |
+| ![display samples](sample_overview_display.png) | ![training samples](sample_overview_train.png) |
 
 - `label_smoothing` 현재 완료된 조건 중 최선은 `0.15` with `F1=0.9977`, `FN=0.8`, `FP=2.6`.
 - `abnormal_weight` 현재 완료된 조건 중 최선은 `1.5` with `F1=0.9979`, `FN=1.2`, `FP=2`.
 - `stochastic_depth` 현재 완료된 조건 중 최선은 `0.1` with `F1=0.9975`, `FN=1.2`, `FP=2.6`.
 - `GC` 넓은 양호 구간이 유지되고 있으며 완료 조건 중 현재 총 오류가 가장 낮은 쪽은 대략 `1.25` with `F1=0.9975`, `FN=1`, `FP=2.8`. 미완료 값은 본 표에서 제외했습니다.
-- `color`는 trend를 빨강으로 바꾸면 recall에 도움되고, fleet를 너무 연하게 하면 FP가 악화됩니다: `c01 0.9971 / FN 0.6 / FP 3.8` vs `c02 0.9944 / FN 1.8 / FP 6.6`.
+- `color`는 현재 유효한 비교가 baseline vs c01뿐입니다: `c01 0.9971 / FN 0.6 / FP 3.8`. c02/c03는 생성 이미지가 의도와 달라 재생성이 필요합니다.
 - `normal_ratio`: 현재 ref 기준 sweep에서는 3000~3500 구간이 좋아 보이지만, optimized-v11 sweep을 같이 보면 normal_ratio 증가가 항상 개선을 만들지는 않습니다.
 
 ## 임시 황금 레시피
 
 _아직 one-factor evidence 단계입니다. round-2 종료 후 joint combo validation이 필요합니다._
 
-- `normal_ratio = 3300`: `F1=0.9973`, `FN=2.4`, `FP=1.6`
-- `gc = 1.25`: `F1=0.9975`, `FN=1`, `FP=2.8`
-- `label_smoothing = 0.15`: `F1=0.9977`, `FN=0.8`, `FP=2.6`
-- `stochastic_depth = 0.1`: `F1=0.9975`, `FN=1.2`, `FP=2.6`
-- `focal_gamma = 0.5`: `F1=0.9969`, `FN=2.8`, `FP=1.8`
-- `abnormal_weight = 1.5`: `F1=0.9979`, `FN=1.2`, `FP=2`
-- `ema = 0.99`: `F1=0.9972`, `FN=1`, `FP=3.2`
-- `allow_tie_save = on`: `F1=0.9974`, `FN=2.2`, `FP=1.8`
+| axis | selected value | F1 | FN | FP | status |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `normal_ratio` | `3300` | 0.9973 | 2.4 | 1.6 | provisional |
+| `gc` | `1.25` | 0.9975 | 1 | 2.8 | provisional |
+| `label_smoothing` | `0.15` | 0.9977 | 0.8 | 2.6 | provisional |
+| `stochastic_depth` | `0.1` | 0.9975 | 1.2 | 2.6 | provisional |
+| `focal_gamma` | `0.5` | 0.9969 | 2.8 | 1.8 | provisional |
+| `abnormal_weight` | `1.5` | 0.9979 | 1.2 | 2 | provisional |
+| `ema` | `0.99` | 0.9972 | 1 | 3.2 | provisional |
+| `allow_tie_save` | `on` | 0.9974 | 2.2 | 1.8 | provisional |
 
 ## 남은 Round-2 확인 항목
 
@@ -261,7 +269,6 @@ _아직 one-factor evidence 단계입니다. round-2 종료 후 joint combo vali
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | baseline | 5/5 | 0.9901 | 0 | 9.8 | 0 | 5 | 0 | 기준 |
 | c01 | 5/5 | 0.9971 | +0.0069 | 0.6 | -9.2 | 3.8 | -1.2 | 완료 |
-| c02 | 5/5 | 0.9944 | +0.0043 | 1.8 | -8 | 6.6 | +1.6 | 완료 |
 
 ## allow_tie_save
 

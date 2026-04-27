@@ -514,6 +514,13 @@ def completed_or_reference(rows: list[ConditionRecord]) -> list[ConditionRecord]
     return [r for r in rows if r.status in {"complete", "reference"}]
 
 
+def report_rows(family: str, rows: list[ConditionRecord]) -> list[ConditionRecord]:
+    rows = completed_or_reference(rows)
+    if family == "color":
+        return [r for r in rows if r.label in {"baseline", "c01"}]
+    return rows
+
+
 def best_completed(rows: list[ConditionRecord], exclude_baseline: bool = True, prefer_strict_5seed: bool = True) -> ConditionRecord | None:
     candidates = [r for r in rows if r.status == "complete" and r.f1 is not None]
     if exclude_baseline:
@@ -546,10 +553,9 @@ def strongest_candidates(records: dict[str, dict[str, ConditionRecord]]) -> list
             )
         elif family == "color":
             c01 = next((r for r in rows if r.label.startswith("c01") and r.f1 is not None), None)
-            c02 = next((r for r in rows if r.label.startswith("c02") and r.f1 is not None), None)
-            if c01 and c02:
+            if c01:
                 lines.append(
-                    f"`color`는 trend를 빨강으로 바꾸면 recall에 도움되고, fleet를 너무 연하게 하면 FP가 악화됩니다: `c01 {fmt_float(c01.f1)} / FN {fmt_compact(c01.fn)} / FP {fmt_compact(c01.fp)}` vs `c02 {fmt_float(c02.f1)} / FN {fmt_compact(c02.fn)} / FP {fmt_compact(c02.fp)}`."
+                    f"`color`는 현재 유효한 비교가 baseline vs c01뿐입니다: `c01 {fmt_float(c01.f1)} / FN {fmt_compact(c01.fn)} / FP {fmt_compact(c01.fp)}`. c02/c03는 생성 이미지가 의도와 달라 재생성이 필요합니다."
                 )
         else:
             lines.append(
@@ -673,13 +679,15 @@ def provisional_golden_recipe(records: dict[str, dict[str, ConditionRecord]]) ->
             picks[family] = best_completed(rows)
 
     recipe_lines: list[str] = []
+    recipe_lines.extend([
+        "| axis | selected value | F1 | FN | FP | status |",
+        "| --- | ---: | ---: | ---: | ---: | --- |",
+    ])
     for family in ("normal_ratio", "gc", "label_smoothing", "stochastic_depth", "focal_gamma", "abnormal_weight", "ema", "allow_tie_save"):
         best = picks[family]
         if best is None:
             continue
-        recipe_lines.append(
-            f"- `{family} = {best.label}`: `F1={fmt_float(best.f1)}`, `FN={fmt_compact(best.fn)}`, `FP={fmt_compact(best.fp)}`"
-        )
+        recipe_lines.append(f"| `{family}` | `{best.label}` | {fmt_float(best.f1)} | {fmt_compact(best.fn)} | {fmt_compact(best.fp)} | provisional |")
     return recipe_lines
 
 
@@ -882,6 +890,12 @@ def write_markdown(
         f"- Main strict queue: `{main_complete}` completed runs, decision `{strict_summary.get('decision')}`.",
         f"- Round-2 refinement: `{round2_complete}/{round2_total}` completed runs, stage `{state.get('stage')}`, status `{state.get('status')}`.",
         "",
+        "Display용 이미지와 실제 학습 입력 이미지는 다릅니다. 아래 두 montage는 기존 `display_v11/`와 `images_v11/`에서 같은 class 순서로 가져온 예시입니다.",
+        "",
+        "| display image | training image |",
+        "| --- | --- |",
+        "| ![display samples](sample_overview_display.png) | ![training samples](sample_overview_train.png) |",
+        "",
     ])
     lines.extend([f"- {line}" for line in strongest_candidates(records)])
     if optimized_normal_ratio:
@@ -906,7 +920,7 @@ def write_markdown(
         "",
     ])
     for family in FAMILY_ORDER:
-        rows = completed_or_reference(sorted_family_rows(records, family))
+        rows = report_rows(family, sorted_family_rows(records, family))
         if not rows:
             continue
         plot_name = f"{family}.png"
@@ -915,7 +929,7 @@ def write_markdown(
             lines.append(f"- `{family}` learning-rate schedule: [{family}_lr_schedule.png]({plots_dir.name}/{family}_lr_schedule.png)")
 
     for family in FAMILY_ORDER:
-        rows = completed_or_reference(sorted_family_rows(records, family))
+        rows = report_rows(family, sorted_family_rows(records, family))
         if not rows:
             continue
         plot_name = f"{family}.png"

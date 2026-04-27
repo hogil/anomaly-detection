@@ -35,8 +35,8 @@
 - [SERVER_SETUP.md](SERVER_SETUP.md)
 - [SERVER_RUNBOOK_V11.md](SERVER_RUNBOOK_V11.md)
 - [SERVER_BATCH_PREDICT.md](SERVER_BATCH_PREDICT.md)
-- [docs/reports/strict_one_factor_latest/README.md](docs/reports/strict_one_factor_latest/README.md)
-  - 최신 strict one-factor 결과 snapshot
+- [docs/summary.md](docs/summary.md)
+  - 최신 strict one-factor 결과 해석, 요약, 축별 전체 표, plot
 
 ## Repo map
 

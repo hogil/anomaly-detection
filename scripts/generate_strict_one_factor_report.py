@@ -914,6 +914,19 @@ def write_markdown(
     lines.extend(provisional_golden_recipe(records) or ["- No completed candidate set yet."])
     lines.extend([
         "",
+        "## Logical Member Attribution Plan",
+        "",
+        "_아직 실행 전 계획입니다. 현재 strict one-factor sweep이 끝난 뒤 별도 phase로 진행합니다._",
+        "",
+        "- 목적: chart 전체에 이상이 있는지만 맞히는 것이 아니라, 같은 family 안에서 highlight 된 target member가 이상인지 구분하는 logical anomaly 학습을 검증합니다.",
+        "- 학습 구조: 하나의 device/step/item family에서 각 member를 한 번씩 target으로 highlight한 이미지를 만듭니다. 실제 이상 member를 target으로 highlight한 이미지는 anomaly, 정상 member를 target으로 highlight한 이미지는 normal로 둡니다.",
+        "- hard negative: 같은 family 안에 회색 이상 member가 보여도, 파란/빨간 target이 정상 member이면 label은 normal입니다. 이 샘플이 충분해야 모델이 'family 안에 이상이 보이면 anomaly'라는 shortcut을 버리고 highlight target만 보게 됩니다.",
+        "- counterfactual 조건: 같은 family의 이미지들은 target highlight만 바뀌고 나머지 픽셀/배치/렌더링은 최대한 동일해야 합니다. label별 marker 차이, z-order 차이, anti-aliasing leakage가 있으면 안 됩니다.",
+        "- target-flip evaluation: 같은 family에서 anomaly target 1장만 anomaly로 나오고, 나머지 normal target 이미지는 normal로 나와야 통과입니다.",
+        "- subset report: `blue-normal + gray-anomaly`, `blue-anomaly + gray-normal`, `all-normal` subset별 FN/FP를 따로 냅니다.",
+        "- shortcut leak check: normal target인데 family 안 회색 이상 member 때문에 anomaly로 예측하면 family-level shortcut입니다. 이 경우 logical attribution claim은 보류합니다.",
+        "- 운영 비용: production chart 하나에서 member N명을 각각 target으로 highlight해 N장 이미지를 만들고 N번 forward한 뒤, member별 anomaly score를 출력합니다.",
+        "",
         "## Pending Round-2 Checks",
         "",
     ])

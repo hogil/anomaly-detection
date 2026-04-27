@@ -10,6 +10,10 @@ data/*.json
 # Generated images (모델 입력 + display 모두)
 images/
 display/
+images_*/
+display_*/
+images_per_member_*/
+display_per_member_*/
 
 # Training artifacts
 logs/
@@ -19,6 +23,9 @@ weights/
 inference_output/
 inference_demo/
 test_render/
+server_inference/
+server_inference*/
+server_outputs/
 
 # Model checkpoints (anywhere)
 *.pth
@@ -110,6 +117,15 @@ images_smoke*/
 display_smoke*/
 config_smoke*.yaml
 .torch_compile_cache/
+
+# Generated anomaly datasets / reports
+data_*/
+data_per_member_*/
+preview/
+experiments/
+validations/
+weak_anomaly_samples/
+configs/runs/
 
 # Stdout training logs
 logs_*.out

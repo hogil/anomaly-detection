@@ -87,6 +87,7 @@ WD_MAP = {
 LS_MAP = {
     "002": 0.02,
     "005": 0.05,
+    "007": 0.07,
     "01": 0.10,
     "0125": 0.125,
     "015": 0.15,
@@ -133,8 +134,6 @@ FAMILY_BASELINES: dict[str, tuple[str, float | str]] = {
     "normal_ratio": ("700", 700.0),
     "lr": ("2e-5 / 2e-4", 2e-5),
     "warmup": ("5", 5.0),
-    "gc": ("1.0", 1.0),
-    "weight_decay": ("0.01", 0.01),
     "smoothing": ("3-median", 3.1),
     "label_smoothing": ("0.00", 0.00),
     "stochastic_depth": ("0.00", 0.00),
@@ -177,6 +176,15 @@ def display_label(row: ConditionRecord) -> str:
     return row.label
 
 
+def status_label(status: str) -> str:
+    return {
+        "reference": "기준",
+        "complete": "완료",
+        "partial": "부분완료",
+        "queued": "queued",
+    }.get(status, status)
+
+
 def load_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
@@ -196,6 +204,17 @@ def fmt_compact(value: float | None) -> str:
     if abs(value - round(value)) < 1e-9:
         return str(int(round(value)))
     return f"{value:.3f}".rstrip("0").rstrip(".")
+
+
+def fmt_delta(value: float | None, baseline: float, digits: int = 4) -> str:
+    if value is None:
+        return "-"
+    delta = value - baseline
+    if abs(delta) < 1e-9:
+        return "0"
+    if abs(delta) < 1 and digits > 3:
+        return f"{delta:+.{digits}f}".rstrip("0").rstrip(".")
+    return f"{delta:+.3f}".rstrip("0").rstrip(".")
 
 
 def candidate_base(tag_or_name: str) -> str:
@@ -385,6 +404,42 @@ def load_legacy_v11(records: dict[str, dict[str, ConditionRecord]], path: Path) 
         )
 
 
+def load_optimized_v11_normal_ratio(path: Path) -> list[ConditionRecord]:
+    payload = load_json(path)
+    rows = payload.get("by_group", {}).get("sweep", [])
+    by_level: dict[int, list[dict[str, Any]]] = {}
+    for row in rows:
+        name = row.get("name")
+        if not isinstance(name, str):
+            continue
+        match = re.search(r"_n(\d+)_s(?:42|[1-4])$", name)
+        if not match:
+            continue
+        by_level.setdefault(int(match.group(1)), []).append(row)
+
+    records: list[ConditionRecord] = []
+    for level, level_rows in sorted(by_level.items()):
+        f1s = [float(r["f1"]) for r in level_rows if r.get("f1") is not None]
+        fns = [float(r["FN"]) for r in level_rows if r.get("FN") is not None]
+        fps = [float(r["FP"]) for r in level_rows if r.get("FP") is not None]
+        records.append(
+            ConditionRecord(
+                family="normal_ratio_optimized_v11",
+                label=str(level),
+                sort_value=float(level),
+                seeds_done=len(level_rows),
+                seeds_total=len(level_rows),
+                f1=mean(f1s) if f1s else None,
+                fn=mean(fns) if fns else None,
+                fp=mean(fps) if fps else None,
+                status="reference" if level == 700 else "complete",
+                source="optimized_v11",
+                candidate=f"fresh0413_reset_v11_n{level}",
+            )
+        )
+    return records
+
+
 def load_summary_aggregates(records: dict[str, dict[str, ConditionRecord]], path: Path, source: str) -> None:
     payload = load_json(path)
     by_candidate = payload.get("aggregates", {}).get("by_candidate", {})
@@ -455,6 +510,10 @@ def sorted_family_rows(records: dict[str, dict[str, ConditionRecord]], family: s
     return sorted(rows, key=lambda r: (r.sort_value, r.label))
 
 
+def completed_or_reference(rows: list[ConditionRecord]) -> list[ConditionRecord]:
+    return [r for r in rows if r.status in {"complete", "reference"}]
+
+
 def best_completed(rows: list[ConditionRecord], exclude_baseline: bool = True, prefer_strict_5seed: bool = True) -> ConditionRecord | None:
     candidates = [r for r in rows if r.status == "complete" and r.f1 is not None]
     if exclude_baseline:
@@ -483,7 +542,7 @@ def strongest_candidates(records: dict[str, dict[str, ConditionRecord]]) -> list
             continue
         if family == "gc":
             lines.append(
-                f"`GC` broad good band remains active; current lowest total error is around `{best.label}` with `F1={fmt_float(best.f1)}`, `FN={fmt_compact(best.fn)}`, `FP={fmt_compact(best.fp)}`. `1.25` is pending."
+                f"`GC` broad good band remains active; current lowest completed total error is around `{best.label}` with `F1={fmt_float(best.f1)}`, `FN={fmt_compact(best.fn)}`, `FP={fmt_compact(best.fp)}`. Incomplete values are kept out of the main table."
             )
         elif family == "color":
             c01 = next((r for r in rows if r.label.startswith("c01") and r.f1 is not None), None)
@@ -573,6 +632,30 @@ def experiment_interpretation(records: dict[str, dict[str, ConditionRecord]]) ->
     return lines
 
 
+def evidence_limits(records: dict[str, dict[str, ConditionRecord]]) -> list[str]:
+    queued = 0
+    partial = 0
+    three_seed = 0
+    for family in FAMILY_ORDER:
+        for row in sorted_family_rows(records, family):
+            if row.status == "queued":
+                queued += 1
+            elif row.status == "partial":
+                partial += 1
+            elif row.status == "complete" and row.seeds_done < 5:
+                three_seed += 1
+
+    return [
+        "운영 baseline은 `fresh0412_v11_n700_existing`이며 band-hit은 `3/5`입니다. `s42`, `s2`는 FP가 낮아서 기준 자체가 완벽한 ref는 아니고, 논문에서는 이 한계를 명시해야 합니다.",
+        "`gc`와 `weight_decay`는 기존 ref를 축 내부 control point로 쓰지 않습니다. 기존 ref에는 기본값(`grad_clip=1.0`, `weight_decay=0.01`)이 기록돼 있지만, 같은 strict sweep에서 재실행한 control이 아니므로 곡선 해석에서는 제외합니다.",
+        "`label_smoothing=0.0`은 baseline train config에 명시된 no-smoothing 상태입니다. 단, `label_smoothing>0`에서는 loss 구현 경로가 `CrossEntropyLoss(label_smoothing=...)`로 바뀌므로 최종 claim에는 이 구현 차이를 한계로 적어야 합니다.",
+        "현재 표는 baseline-fixed one-factor evidence만 섞어 보여줍니다. alternate-parent stress, bad-case rescue, logical/per-member 실험은 별도 표로 분리해야 합니다.",
+        f"아직 claim 성숙 전인 조건이 남아 있습니다: queued `{queued}`개, partial `{partial}`개, 5-seed 미만 완료 `{three_seed}`개.",
+        "`stochastic_depth`는 학습 때 일부 residual/drop-path branch를 확률적으로 끄는 regularization입니다. 추론 때는 전체 경로를 쓰며, 모델이 한 경로에 과적합하지 않게 만들어 seed 안정성과 FN/FP 균형이 좋아지는지 보는 축입니다.",
+        "최종 논문화 전에는 각 축마다 per-seed/worst-seed, history의 val_loss/F1 진동, prediction trend의 반복 FP/FN chart_id, label-or-annotation suspect를 붙여야 합니다.",
+    ]
+
+
 def provisional_golden_recipe(records: dict[str, dict[str, ConditionRecord]]) -> list[str]:
     picks = {
         "normal_ratio": None,
@@ -609,12 +692,27 @@ def pending_round2(records: dict[str, dict[str, ConditionRecord]]) -> list[str]:
     return lines
 
 
-def plot_family(rows: list[ConditionRecord], out_path: Path, title: str, baseline: tuple[float, float, float]) -> None:
+def plot_family(
+    rows: list[ConditionRecord],
+    out_path: Path,
+    title: str,
+    baseline: tuple[float, float, float],
+    comparison_rows: list[ConditionRecord] | None = None,
+) -> None:
     baseline_f1, baseline_fn, baseline_fp = baseline
-    x_labels = [r.label for r in rows]
-    xs = list(range(len(rows)))
+    rows = completed_or_reference(rows)
+    comparison_rows = completed_or_reference(comparison_rows or [])
+    x_values = sorted({r.sort_value for r in rows + comparison_rows})
+    x_index = {value: idx for idx, value in enumerate(x_values)}
+    labels_by_idx = {
+        x_index[r.sort_value]: r.label
+        for r in rows + comparison_rows
+        if r.sort_value in x_index
+    }
+    x_labels = [labels_by_idx.get(idx, fmt_compact(value)) for idx, value in enumerate(x_values)]
+    xs = list(range(len(x_values)))
 
-    fig, axes = plt.subplots(1, 3, figsize=(max(10, len(rows) * 1.0), 4.2))
+    fig, axes = plt.subplots(1, 3, figsize=(max(10, len(x_values) * 1.0), 4.2))
     metrics = [
         ("F1", baseline_f1, lambda r: r.f1),
         ("FN", baseline_fn, lambda r: r.fn),
@@ -626,33 +724,38 @@ def plot_family(rows: list[ConditionRecord], out_path: Path, title: str, baselin
         ys_reference_y: list[float] = []
         ys_complete_x: list[int] = []
         ys_complete_y: list[float] = []
-        ys_partial_x: list[int] = []
-        ys_partial_y: list[float] = []
-        for idx, row in enumerate(rows):
+        for row in rows:
             value = getter(row)
             if value is None:
                 continue
+            idx = x_index[row.sort_value]
             if row.status == "reference":
                 ys_reference_x.append(idx)
                 ys_reference_y.append(float(value))
             elif row.status == "complete":
                 ys_complete_x.append(idx)
                 ys_complete_y.append(float(value))
-            elif row.status == "partial":
-                ys_partial_x.append(idx)
-                ys_partial_y.append(float(value))
         if ys_reference_x:
             ax.plot(ys_reference_x, ys_reference_y, color="#333333", marker="s", lw=0.0, ms=6, label="reference")
         if ys_complete_x:
-            ax.plot(ys_complete_x, ys_complete_y, color="#1f77b4", marker="o", lw=1.8, label="complete")
-        if ys_partial_x:
-            ax.plot(ys_partial_x, ys_partial_y, color="#ff7f0e", marker="D", lw=1.5, label="partial")
+            ax.plot(ys_complete_x, ys_complete_y, color="#1f77b4", marker="o", lw=1.8, label="current ref sweep")
+        comparison_y: list[float] = []
+        if comparison_rows:
+            comparison_x: list[int] = []
+            for row in comparison_rows:
+                value = getter(row)
+                if value is None:
+                    continue
+                comparison_x.append(x_index[row.sort_value])
+                comparison_y.append(float(value))
+            if comparison_x:
+                ax.plot(comparison_x, comparison_y, color="#2ca02c", marker="^", lw=1.8, label="optimized v11 sweep")
         ax.set_title(metric_name)
         ax.set_xticks(xs)
         ax.set_xticklabels(x_labels, rotation=45, ha="right")
         ax.grid(alpha=0.25, linestyle=":")
         if metric_name == "F1":
-            all_y = [baseline_f1] + ys_reference_y + ys_complete_y + ys_partial_y
+            all_y = [baseline_f1] + ys_reference_y + ys_complete_y + comparison_y
             lower = robust_lower_bound(all_y)
             if lower is None:
                 ax.set_ylim(max(0.0, min(all_y) - 0.01), min(1.0, max(all_y) + 0.01))
@@ -670,7 +773,7 @@ def plot_family(rows: list[ConditionRecord], out_path: Path, title: str, baselin
                     bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none", "pad": 1.5},
                 )
         else:
-            all_y = ys_reference_y + ys_complete_y + ys_partial_y
+            all_y = ys_reference_y + ys_complete_y + comparison_y
             upper = robust_upper_bound(all_y)
             if upper is not None:
                 ax.set_ylim(bottom=0.0, top=upper)
@@ -743,6 +846,7 @@ def plot_lr_schedule_family(rows: list[ConditionRecord], out_path: Path, family:
 def write_markdown(
     out_paths: list[Path],
     records: dict[str, dict[str, ConditionRecord]],
+    optimized_normal_ratio: list[ConditionRecord],
     plots_dir: Path,
     state: dict[str, Any],
     strict_summary: dict[str, Any],
@@ -766,6 +870,12 @@ def write_markdown(
     lines.extend([f"- {line}" for line in experiment_interpretation(records)])
     lines.extend([
         "",
+        "## Evidence Limits And Next Fixes",
+        "",
+    ])
+    lines.extend([f"- {line}" for line in evidence_limits(records)])
+    lines.extend([
+        "",
         "## Summary",
         "",
         f"- Frozen ref: `fresh0412_v11_n700_existing` -> `F1={fmt_float(baseline[0])}`, `FN={fmt_compact(baseline[1])}`, `FP={fmt_compact(baseline[2])}` over `5/5` seeds.",
@@ -774,6 +884,8 @@ def write_markdown(
         "",
     ])
     lines.extend([f"- {line}" for line in strongest_candidates(records)])
+    if optimized_normal_ratio:
+        lines.append("- `normal_ratio`: 현재 ref 기준 sweep에서는 3000~3500 구간이 좋아 보이지만, optimized-v11 sweep을 같이 보면 normal_ratio 증가가 항상 개선을 만들지는 않습니다.")
     lines.extend([
         "",
         "## Provisional Golden Recipe",
@@ -794,7 +906,7 @@ def write_markdown(
         "",
     ])
     for family in FAMILY_ORDER:
-        rows = sorted_family_rows(records, family)
+        rows = completed_or_reference(sorted_family_rows(records, family))
         if not rows:
             continue
         plot_name = f"{family}.png"
@@ -803,7 +915,7 @@ def write_markdown(
             lines.append(f"- `{family}` learning-rate schedule: [{family}_lr_schedule.png]({plots_dir.name}/{family}_lr_schedule.png)")
 
     for family in FAMILY_ORDER:
-        rows = sorted_family_rows(records, family)
+        rows = completed_or_reference(sorted_family_rows(records, family))
         if not rows:
             continue
         plot_name = f"{family}.png"
@@ -821,20 +933,46 @@ def write_markdown(
             ])
             for key, desc in COLOR_DESCRIPTIONS.items():
                 lines.append(f"- `{key}`: {desc}")
-            lines.append("")
+            lines.extend([
+                "",
+                "조건별 대표 sample:",
+                "",
+                "| baseline | c01 | c02 | c03 |",
+                "| --- | --- | --- | --- |",
+                "| ![baseline](color_samples/baseline_ch_09100.png) | ![c01](color_samples/c01_ch_09100.png) | ![c02](color_samples/c02_ch_09100.png) | ![c03](color_samples/c03_ch_09100.png) |",
+                "",
+            ])
         if family in {"lr", "warmup"}:
             lines.extend([
                 f"![{family} learning-rate schedule]({plots_dir.name}/{family}_lr_schedule.png)",
                 "",
             ])
         lines.extend([
-            "| condition | seeds | F1 | FN | FP | status |",
-            "| --- | ---: | ---: | ---: | ---: | --- |",
+            "| condition | seeds | F1 | ΔF1 | FN | ΔFN | FP | ΔFP | status |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
         ])
         for row in rows:
             lines.append(
-                f"| {display_label(row)} | {row.seeds_done}/{row.seeds_total} | {fmt_float(row.f1)} | {fmt_compact(row.fn)} | {fmt_compact(row.fp)} | {row.status} |"
+                f"| {display_label(row)} | {row.seeds_done}/{row.seeds_total} | {fmt_float(row.f1)} | {fmt_delta(row.f1, baseline[0])} | {fmt_compact(row.fn)} | {fmt_delta(row.fn, baseline[1], digits=3)} | {fmt_compact(row.fp)} | {fmt_delta(row.fp, baseline[2], digits=3)} | {status_label(row.status)} |"
             )
+        if family == "normal_ratio" and optimized_normal_ratio:
+            opt_baseline = next((r for r in optimized_normal_ratio if r.label == "700"), optimized_normal_ratio[0])
+            opt_base_f1 = opt_baseline.f1 if opt_baseline.f1 is not None else baseline[0]
+            opt_base_fn = opt_baseline.fn if opt_baseline.fn is not None else baseline[1]
+            opt_base_fp = opt_baseline.fp if opt_baseline.fp is not None else baseline[2]
+            lines.extend([
+                "",
+                "### optimized-v11 normal_ratio comparison",
+                "",
+                "이미 성능이 최적화된 v11 조건에서는 normal_ratio를 키워도 단조 개선되지 않습니다. 이 표는 normal 수 증가 효과가 데이터/학습 상태에 의존하며, 무조건적인 scale-up claim은 안 된다는 근거입니다.",
+                "",
+                "| condition | seeds | F1 | ΔF1 vs opt700 | FN | ΔFN vs opt700 | FP | ΔFP vs opt700 | status |",
+                "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+            ])
+            for row in optimized_normal_ratio:
+                lines.append(
+                    f"| {display_label(row)} | {row.seeds_done}/{row.seeds_total} | {fmt_float(row.f1)} | {fmt_delta(row.f1, opt_base_f1)} | {fmt_compact(row.fn)} | {fmt_delta(row.fn, opt_base_fn, digits=3)} | {fmt_compact(row.fp)} | {fmt_delta(row.fp, opt_base_fp, digits=3)} | {status_label(row.status)} |"
+                )
 
     body = "\n".join(lines) + "\n"
     for out_path in out_paths:
@@ -875,6 +1013,7 @@ def main() -> int:
     round2_summary = load_json(round2_summary_path)
     state = load_json(state_path)
     records = build_records(strict_summary_path, round2_summary_path, round2_queue_path)
+    optimized_normal_ratio = load_optimized_v11_normal_ratio(LOGS / "v11_experiments_summary_fresh0413_reset.json")
     baseline = baseline_metrics()
 
     plots_dir.mkdir(parents=True, exist_ok=True)
@@ -882,11 +1021,12 @@ def main() -> int:
         rows = sorted_family_rows(records, family)
         if not rows:
             continue
-        plot_family(rows, plots_dir / f"{family}.png", FAMILY_TITLES[family], baseline)
+        comparison = optimized_normal_ratio if family == "normal_ratio" else None
+        plot_family(rows, plots_dir / f"{family}.png", FAMILY_TITLES[family], baseline, comparison_rows=comparison)
         if family in {"lr", "warmup"}:
-            plot_lr_schedule_family(rows, plots_dir / f"{family}_lr_schedule.png", family)
+            plot_lr_schedule_family(completed_or_reference(rows), plots_dir / f"{family}_lr_schedule.png", family)
 
-    write_markdown([markdown_out, report_out], records, plots_dir, state, strict_summary, round2_summary)
+    write_markdown([markdown_out, report_out], records, optimized_normal_ratio, plots_dir, state, strict_summary, round2_summary)
     print(json.dumps({
         "markdown": str(markdown_out),
         "report": str(report_out),

@@ -36,6 +36,7 @@ def rewrite_report_text(text: str) -> str:
         "_Auto-updated at `": "_자동 갱신 시각: `",
         "## Summary": "## 요약",
         "## Interpretation": "## 결과 해석",
+        "## Evidence Limits And Next Fixes": "## 한계와 수정 필요 사항",
         "## Provisional Golden Recipe": "## 임시 황금 레시피",
         "_This is one-factor evidence only. Joint combo validation still has to be run after round-2 closes._":
             "_아직 one-factor evidence 단계입니다. round-2 종료 후 joint combo validation이 필요합니다._",
@@ -45,16 +46,16 @@ def rewrite_report_text(text: str) -> str:
         "Main strict queue:": "메인 strict queue:",
         "Round-2 refinement:": "Round-2 refinement:",
         "currently best completed point is": "현재 완료된 조건 중 최선은",
+        "broad good band remains active; current lowest completed total error is around": "넓은 양호 구간이 유지되고 있으며 완료 조건 중 현재 총 오류가 가장 낮은 쪽은 대략",
         "completed runs": "완료 run",
         "completed run": "완료 run",
         "completed point": "완료된 조건",
         "broad good band remains active; current lowest total error is around": "넓은 양호 구간이 유지되고 있으며 현재 총 오류가 가장 낮은 쪽은 대략",
+        "Incomplete values are kept out of the main table.": "미완료 값은 본 표에서 제외했습니다.",
         "helps recall but faint fleet hurts FP": "trend 빨강은 recall에 도움되고 fleet를 너무 연하게 하면 FP가 악화됩니다",
         "No queued round-2 conditions.": "대기 중인 round-2 조건이 없습니다.",
-        "reference": "기준",
         "complete": "완료",
         "partial": "부분완료",
-        "baseline": "기준",
         "strict": "strict",
         "legacy": "legacy",
         "round2": "round2",
@@ -91,6 +92,7 @@ def write_docs_index(docs_dir: Path, has_round2: bool, plots: list[str]) -> None
     if has_round2:
         lines.append("- [round2_summary.md](round2_summary.md): round-2 진행 현황")
     lines.extend([
+        "- [repo_file_audit.md](repo_file_audit.md): GitHub tracked file 유지/정리 판단",
         "- [plots/](plots): 축별 성능 플롯",
         "",
         "## 플롯 파일",

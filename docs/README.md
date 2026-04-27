@@ -2,6 +2,7 @@
 
 - [summary.md](summary.md): 최신 strict one-factor 결과 요약, 해석, 축별 전체 표
 - [round2_summary.md](round2_summary.md): round-2 진행 현황
+- [repo_file_audit.md](repo_file_audit.md): GitHub tracked file 유지/정리 판단
 - [plots/](plots): 축별 성능 플롯
 
 ## 플롯 파일

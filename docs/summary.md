@@ -1,6 +1,6 @@
 # 실험 요약
 
-_자동 갱신 시각: `2026-04-28T08:39:47`._
+_자동 갱신 시각: `2026-04-28T08:45:00`._
 
 ## 결과 해석
 
@@ -23,7 +23,7 @@ _자동 갱신 시각: `2026-04-28T08:39:47`._
 
 - 고정 기준 ref: `fresh0412_v11_n700_existing` -> `F1=0.9901`, `FN=9.8`, `FP=5` over `5/5` seeds.
 - 메인 strict queue: `158` 완료 run, decision `queue_exhausted`.
-- Round-2 refinement: `11/40` 완료 run, stage `urgent_reference_then_round2`, status `running`.
+- Round-2 refinement: `12/40` 완료 run, stage `urgent_reference_then_round2`, status `running`.
 
 Display용 이미지와 실제 학습 입력 이미지는 다릅니다. 아래 두 montage는 기존 `display_v11/`와 `images_v11/`에서 같은 class 순서로 가져온 예시입니다.
 
@@ -59,11 +59,11 @@ _아직 one-factor evidence 단계입니다. round-2 종료 후 joint combo vali
 
 ## Logical Member Attribution Example
 
-같은 family 안에 빨간 이상 member가 보여도, label은 파란 query target이 이상 member인지로 결정됩니다.
+같은 context chart를 member별 target 이미지로 확장합니다. 불량 member를 target으로 만든 이미지만 anomaly class이고, 양호 member를 target으로 만든 이미지는 normal class입니다.
 
-![logical member attribution example](logical_member_example.png)
+![logical member target examples](logical_member_targets_ch09100.png)
 
-즉 family 전체 이상 감지가 아니라, highlight 된 member 단위로 불량 여부를 판단하는 학습 예시입니다.
+즉 family 전체 이상 감지가 아니라, highlight 된 member 단위로 label을 부여하는 학습 예시입니다.
 
 ## 남은 Round-2 확인 항목
 

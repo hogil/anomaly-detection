@@ -42,13 +42,15 @@
   - 레포 전체 구조, active 영역, generated 영역, legacy clutter 후보
 - [scripts/README.md](scripts/README.md)
   - `scripts/` 내부 분류
+- [legacy/README.md](legacy/README.md)
+  - 루트에서 치운 historical 파일 모음
 
 ## Current rule of thumb
 
 - **코드 읽기 시작점**: `train.py`, `generate_data.py`, `generate_images.py`, `inference.py`
 - **실험 자동화**: `run_experiments_v11.py`, `scripts/`
 - **generated artifacts**: `data_*`, `images_*`, `display_*`, `logs/`, `validations/`
-- **historical top-level clutter**: `experiments_*.py`, `train_v8era.py`, `train_tie.py`, `run_chain.py` 계열은 현재 기준 주 경로가 아님
+- **historical files**: root 에서 치운 구버전 파일은 `legacy/` 아래에 모아둠
 
 ## Immediate cleanup stance
 
@@ -57,5 +59,6 @@
 1. 안내 문서 추가
 2. generated artifact ignore 강화
 3. active path와 legacy path 구분
+4. low-risk historical root 파일을 `legacy/`로 이동
 
 을 먼저 적용합니다.

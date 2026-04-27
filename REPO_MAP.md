@@ -66,43 +66,31 @@
 
 ### Top-level historical experiments
 
-- `experiments.py`
-- `experiments_round2.py`
-- `experiments_round3.py`
-- `experiments_round4.py`
-- `experiments_round5.py`
-- `experiments_round6.py`
-- `experiments_round6_extended.py`
-- `experiments_v2.py`
-- `experiments_v8.py`
-- `experiments_v8_init.py`
-- `experiments_v8_init_seeds.py`
-- `experiments_backbone.py`
-- `experiments_binary.py`
-- `experiments_finetune.py`
-- `experiments_gamma_normal.py`
-- `experiments_improved.py`
-- `experiments_improved2.py`
-- `experiments_labelweight.py`
-- `experiments_variance.py`
+아직 로컬에 남아 있을 수 있지만, GitHub 정리 기준에서는 historical 후보로 봅니다.
 
 ### Old train variants
 
-- `train_tie.py`
-- `train_v8era.py`
+- `legacy/train_variants/train_tie.py`
+- `legacy/train_variants/train_v8era.py`
 
 ### Old chain/orchestrator files
 
-- `run_pipeline.sh`
-- `run_full_matrix.sh`
-- `run_sweep_2gpu.sh`
-- `run_experiments.py`
+- `legacy/run_scripts/run_pipeline.sh`
+- `legacy/run_scripts/run_full_matrix.sh`
+- `legacy/run_scripts/run_sweep_2gpu.sh`
+- `legacy/runners/run_experiments.py`
 
 ### Old or backup configs
 
 - `config_2k.yaml`
 - `config_v2.yaml`
-- `config_backup_v9mid7h.yaml`
+- `legacy/configs/config_backup_v9mid7h.yaml`
+
+### Other legacy files already moved
+
+- `legacy/docs/EXPERIMENTS.md`
+- `legacy/docs/ema_design.md`
+- `legacy/inference/nt_inference.py`
 
 ## 4. Practical reading order
 
@@ -123,10 +111,9 @@ GitHub에서 처음 볼 때:
 
 이건 아직 적용 안 했고, 다음 정리 단계 후보입니다.
 
-1. `experiments_*.py`를 `legacy/experiments_top_level/`로 이동
-2. `train_tie.py`, `train_v8era.py`를 `legacy/train_variants/`로 이동
-3. 루트의 `run_*.sh` historical launcher를 `legacy/run_scripts/`로 이동
-4. `config_2k.yaml`, `config_v2.yaml`, `config_backup_v9mid7h.yaml`를 `legacy/configs/`로 이동
-5. `docs/` 아래에 paper/report 문서, runbook 문서, design note를 분리
+1. root 에 남아 있는 추가 historical 파일을 `legacy/`로 더 이동
+2. `config_2k.yaml`, `config_v2.yaml`까지 `legacy/configs/`로 이동
+3. `download.py` 같은 비핵심 루트 유틸 정리
+4. `docs/` 아래에 paper/report 문서, runbook 문서, design note를 분리
 
-지금은 dirty worktree를 깨지 않기 위해 이동 대신 문서화만 적용했습니다.
+지금은 dirty worktree를 깨지 않기 위해 **low-risk historical root 파일만 먼저 이동**했고, 나머지 큰 이동은 보류한 상태입니다.

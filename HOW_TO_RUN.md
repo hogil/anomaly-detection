@@ -121,13 +121,28 @@ validations/log_history_report_rawbase_grad_p99_curves.png
 
 성능 plot 이미지는 이 스크립트가 직접 생성합니다. `generate_images.py`는 학습/display 이미지 생성용입니다.
 
-## 8. 현재 서버 실험 재개
+## 8. Grad-CAM 확인
+
+```bash
+python scripts/gradcam_report.py \
+  --model-run logs/<run> \
+  --image-root images/test \
+  --out-dir validations/gradcam_probe \
+  --include-classes normal,mean_shift,standard_deviation,spike,drift,context \
+  --limit-per-class 5
+```
+
+출력은 `gradcam.csv`, `summary.md`, `overlays/`입니다. `right_mass_30`은 Grad-CAM heat 중 오른쪽 30%에 있는 비율입니다. Binary 모델에서는 `abnormal` logit 기준으로 설명합니다.
+
+## 9. 현재 서버 실험 재개
 
 ```bash
 bash scripts/sweeps_server/00_all.sh
 ```
 
-현재 서버 queue는 `lr`와 `warmup`을 먼저 실행합니다. ref 자체의 LR/warmup을 바꾸려면 `validations/paper_refcheck_raw_queue.json`에서 각 seed의 아래 값을 바꿉니다.
+현재 서버 queue는 `lr`, `warmup`, `normal_ratio`, `per_class`, regularization/loss 축, `color`, `allow_tie_save` 순서로 실행하고 `gc`는 마지막에 실행합니다. 축별로는 `scripts/sweeps_server/10_lr.sh`, `11_warmup.sh`, `20_normal_ratio.sh`, `90_gc.sh`처럼 따로 실행할 수 있습니다.
+
+ref 자체의 LR/warmup을 바꾸려면 `validations/paper_refcheck_raw_queue.json`에서 각 seed의 아래 값을 바꿉니다.
 
 ```json
 "--lr_backbone": "3e-5",
@@ -150,7 +165,7 @@ python train.py \
   --log_dir ref_lrwarm3_probe
 ```
 
-## 9. FP/FN이 치우칠 때
+## 10. FP/FN이 치우칠 때
 
 FP가 너무 많으면 정상 이미지를 anomaly로 많이 잡는 상태입니다. 먼저 `normal_ratio`나 `max_per_class`를 올려 normal 쪽 근거를 늘리고, `abnormal_weight`를 낮추거나 `focal_gamma`를 낮춰 anomaly 쪽 압박을 줄입니다. `label_smoothing`이 크면 결정 경계가 흐려질 수 있으니 낮은 값도 같이 봅니다.
 

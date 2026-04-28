@@ -15,3 +15,18 @@ run_paper_stage() {
   echo "== paper stage: $stage =="
   bash "$PAPER_RUNNER" "$@"
 }
+
+run_round1_axes() {
+  local stage="$1"
+  local axes="$2"
+  shift 2
+  run_paper_stage "$stage" \
+    --skip-weights \
+    --skip-dataset \
+    --skip-refcheck \
+    --round1-skip-completed \
+    --round1-include-axes "$axes" \
+    --skip-round2 \
+    --skip-post \
+    "$@"
+}

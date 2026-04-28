@@ -7,7 +7,7 @@ _자동 갱신 시각: `2026-04-29T06:03:42+09:00`._
 - 같은 baseline에서 한 번에 하나의 축만 바꾸는 strict one-factor 실험입니다.
 - 기본 seed는 `42, 1, 2, 3, 4`이고, 성능은 `F1`, `FN`, `FP`, 완료 seed 수로 봅니다.
 - 서버 rawbase 기준선은 `fresh0412_v11_refcheck_raw_n700`입니다. rawbase main sweep은 `grad_clip=0.0`, `smooth_window=1`, `label_smoothing=0.0`, `NT=0.9`로 맞춥니다.
-- 서버 queue는 summary 축 기준으로 `normal_ratio`, `per_class`, `LR`, `warmup`, `GC`, `label_smoothing`, `stochastic_depth`, `focal_gamma`, `abnormal_weight`, `ema`, `color`, `allow_tie_save`를 다시 봅니다. GC는 5조건만 유지하고, sample-skip은 main sweep에 섞지 않고 별도 1-run으로만 봅니다.
+- 서버 queue는 summary 축 기준으로 `LR`, `warmup`, `normal_ratio`, `per_class`, `label_smoothing`, `stochastic_depth`, `focal_gamma`, `abnormal_weight`, `ema`, `color`, `allow_tie_save`를 먼저 보고 `GC`는 마지막에 봅니다. GC는 5조건만 유지하고, sample-skip은 main sweep에 섞지 않고 별도 1-run으로만 봅니다.
 
 ## 성능 요약
 
@@ -60,7 +60,7 @@ _자동 갱신 시각: `2026-04-29T06:03:42+09:00`._
 
 | scope | 남은 내용 | runs |
 | --- | --- | ---: |
-| current rawbase queue | `LR`, `warmup` 먼저 실행 후 `normal_ratio`, `per_class`, `GC 5조건`, `label_smoothing 5조건`, `stochastic_depth 5조건`, `focal_gamma 5조건`, `abnormal_weight 5조건`, `ema 5조건`, `color`, `allow_tie_save` | pending |
+| current rawbase queue | `LR`, `warmup` 먼저 실행 후 `normal_ratio`, `per_class`, `label_smoothing 5조건`, `stochastic_depth 5조건`, `focal_gamma 5조건`, `abnormal_weight 5조건`, `ema 5조건`, `color`, `allow_tie_save`, 마지막 `GC 5조건` | pending |
 | server needed-only resume | 완료/스킵된 tag는 자동 제외하고 summary 축 잔여만 실행 | pending |
 | round2 | rawbase round1 완료 후 결과 기준으로 새 선정 | pending |
 

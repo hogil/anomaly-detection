@@ -14,6 +14,19 @@ This runs the still-needed rawbase round1 axes used by `docs/summary.md`. It ski
 
 ```bash
 bash scripts/sweeps_server/00_all.sh
+bash scripts/sweeps_server/01_refcheck.sh
+bash scripts/sweeps_server/10_lr.sh
+bash scripts/sweeps_server/11_warmup.sh
+bash scripts/sweeps_server/20_normal_ratio.sh
+bash scripts/sweeps_server/21_per_class.sh
+bash scripts/sweeps_server/30_label_smoothing.sh
+bash scripts/sweeps_server/31_stochastic_depth.sh
+bash scripts/sweeps_server/32_focal_gamma.sh
+bash scripts/sweeps_server/33_abnormal_weight.sh
+bash scripts/sweeps_server/34_ema.sh
+bash scripts/sweeps_server/40_color.sh
+bash scripts/sweeps_server/41_allow_tie_save.sh
+bash scripts/sweeps_server/90_gc.sh
 bash scripts/sweeps_server/06_sample_skip.sh
 ```
 
@@ -30,7 +43,7 @@ Defaults are inherited from `run_paper_server_all.sh`: data/image generation wor
 
 The active server baseline is raw: `grad_clip=0.0`, `smooth_window=1`, `smooth_method=median`. Prepared server queues rewrite run tags with `fresh0412_v11_rawbase_...` so old GC/smoothed logs are not reused. GC is limited to 5 conditions by `scripts/prepare_server_queue.py`.
 
-Round1 queue preparation removes tags already marked `complete` or `skipped` in `validations/server_paper_rawbase_strict_single_factor_summary.json` by default. The current resume runs `lr` and `warmup` first, then keeps `normal_ratio`, `per_class`, `gc`, `label_smoothing`, `stochastic_depth`, `focal_gamma`, `abnormal_weight`, `ema`, `color`, and `allow_tie_save`. Use `--round1-keep-completed` only when intentionally rebuilding the full prepared queue.
+Round1 queue preparation removes tags already marked `complete` or `skipped` in `validations/server_paper_rawbase_strict_single_factor_summary.json` by default. The current resume order is `lr`, `warmup`, `normal_ratio`, `per_class`, `label_smoothing`, `stochastic_depth`, `focal_gamma`, `abnormal_weight`, `ema`, `color`, `allow_tie_save`, then `gc` last. Use `--round1-keep-completed` only when intentionally rebuilding the full prepared queue.
 
 Main regularization/loss axes use 5 candidate conditions each: `label_smoothing`, `stochastic_depth`, `focal_gamma`, `abnormal_weight`, and `ema`.
 

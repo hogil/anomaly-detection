@@ -35,6 +35,7 @@ Outputs markdown, CSV tables, and PNG plots from `logs/*/history.json` and `best
 
 ## Analysis Helpers
 
+- `gradcam_report.py`: Grad-CAM overlays and left/right heat summaries for saved models
 - `generate_strict_one_factor_report.py`
 - `update_live_summary_doc.py`
 - `collect_instability_cases.py`

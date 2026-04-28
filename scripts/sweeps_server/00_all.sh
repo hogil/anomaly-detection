@@ -5,14 +5,6 @@ set -euo pipefail
 D="$(cd "$(dirname "$0")" && pwd)"
 source "$D/_common.sh"
 
-NEEDED_AXES="lr,warmup,normal_ratio,per_class,gc,label_smoothing,stochastic_depth,focal_gamma,abnormal_weight,ema,color,allow_tie_save"
+NEEDED_AXES="lr,warmup,normal_ratio,per_class,label_smoothing,stochastic_depth,focal_gamma,abnormal_weight,ema,color,allow_tie_save,gc"
 
-run_paper_stage "needed_only" \
-  --skip-weights \
-  --skip-dataset \
-  --skip-refcheck \
-  --round1-skip-completed \
-  --round1-include-axes "$NEEDED_AXES" \
-  --skip-round2 \
-  --skip-post \
-  "$@"
+run_round1_axes "needed_only" "$NEEDED_AXES" "$@"

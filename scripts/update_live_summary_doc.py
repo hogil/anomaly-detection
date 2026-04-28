@@ -349,8 +349,11 @@ def main() -> int:
     text = re.sub(r"_자동 갱신 시각: `[^`]+`._", f"_자동 갱신 시각: `{now}`._", text, count=1)
     text = replace_section(text, "## 현재 진행 상태", build_status(args))
     text = replace_section(text, "## 요약", build_overview(args))
-    tail_heading = "## Rawbase Live Tables And Plots" if "## Rawbase Live Tables And Plots" in text else "## 플롯 목록"
-    text = replace_tail(text, tail_heading, rawbase_live_sections(args))
+    live_lines = rawbase_live_sections(args)
+    if "## Rawbase Live Tables And Plots" in text:
+        text = replace_tail(text, "## Rawbase Live Tables And Plots", live_lines)
+    else:
+        text = text.rstrip() + "\n\n" + "\n".join(live_lines) + "\n"
     args.docs.write_text(text, encoding="utf-8")
     print(f"[live-summary] updated {args.docs}")
     return 0

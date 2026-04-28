@@ -59,7 +59,7 @@ ema_decay: 0.0                 # 0 = disabled. 유저 방침
 # ---------- best selection / early stop ----------
 best_update_start_single: 10   # smooth_window<=1
 best_update_start_smoothed: 7  # smooth_window>1
-early_stop_start: 10           # patience counter 시작
+early_stop_start: 12           # patience counter 시작
 min_epochs: -1                 # -1 = auto (smoothed=7, single=10) [deprecated]
 patience: 5                    # tie 연속 patience
 smooth_window: 3               # 최근 N epoch 통계

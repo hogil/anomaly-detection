@@ -44,7 +44,7 @@ python train.py \
 | `--save_strict_only` | True | `>` 만 best 업데이트. tie 덮어쓰기 방지 |
 | `--best_update_start_smoothed` | 7 | smooth_window>1 일 때 best 저장 시작 epoch |
 | `--best_update_start_single` | 10 | smooth_window≤1 일 때 best 저장 시작 epoch |
-| `--early_stop_start` | 10 | patience counter 시작 epoch |
+| `--early_stop_start` | 12 | patience counter 시작 epoch |
 | `--patience` | 5 | 연속 non-improvement → early stop. **20 으로 주면 사실상 off** |
 | `--val_loss_max_ratio` | 2.0 | save guard: val_loss > best_val_loss × 2 면 저장 거부 (degrade 방지) |
 | `--val_loss_guard_min_abs` | 0.02 | val_loss 이 값 미만이면 guard off |

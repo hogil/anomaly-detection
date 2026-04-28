@@ -562,6 +562,26 @@ def print_class_table(metrics, title=""):
     print(f"  {'AVERAGE':>20s} | {avg_r:7.3f} |         | {avg_f:7.3f} | {total_n:4d} | {total_fn:4d} | {total_fp:4d}")
 
 
+def resolve_scenarios_csv(data_dir: Path, raw_path: str | None) -> Path:
+    """Resolve scenarios.csv, including the common 'scenarious.csv' typo."""
+    path = Path(raw_path) if raw_path else (data_dir / "scenarios.csv")
+    if path.exists():
+        return path
+
+    if path.name.lower() == "scenarious.csv":
+        corrected = path.with_name("scenarios.csv")
+        if corrected.exists():
+            print(f"  [warn] scenarios path typo corrected: {path} -> {corrected}")
+            return corrected
+
+    available = sorted(p.name for p in data_dir.glob("*scenario*.csv")) if data_dir.exists() else []
+    hint = f" Available scenario files in {data_dir}: {available}" if available else ""
+    raise FileNotFoundError(
+        f"Scenarios CSV not found: {path}. Expected `{data_dir / 'scenarios.csv'}`."
+        f" If you passed `scenarious.csv`, use `scenarios.csv`.{hint}"
+    )
+
+
 def _confusion_matrix_np(y_true, y_pred, n_classes):
     """sklearn.metrics.confusion_matrix 대체 (numpy only).
 
@@ -791,7 +811,7 @@ def main():
                         help="smooth_window<=1 일 때 best 저장 시작 epoch")
     parser.add_argument("--best_update_start_smoothed", type=int, default=td("best_update_start_smoothed", 7),
                         help="smooth_window>1 일 때 best 저장 시작 epoch")
-    parser.add_argument("--early_stop_start", type=int, default=td("early_stop_start", 10),
+    parser.add_argument("--early_stop_start", type=int, default=td("early_stop_start", 12),
                         help="patience counter 시작 epoch (smoothing 무관 고정)")
     parser.add_argument("--val_loss_max_ratio", type=float, default=td("val_loss_max_ratio", 2.0),
                         help="save guard: val_loss > max(best * ratio, guard_min_abs) 이면 save 거부")
@@ -938,7 +958,7 @@ def main():
         print(f"    {k}: {v}")
 
     # 데이터
-    scenarios_csv = Path(args.scenarios_csv) if args.scenarios_csv else (data_dir / "scenarios.csv")
+    scenarios_csv = resolve_scenarios_csv(data_dir, args.scenarios_csv)
     sc_df = pd.read_csv(scenarios_csv)
     print(f"  Scenarios CSV: {scenarios_csv}")
     train_df = sc_df[sc_df["split"] == "train"]

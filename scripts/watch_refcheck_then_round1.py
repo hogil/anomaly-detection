@@ -15,7 +15,7 @@ from typing import Any, TextIO
 
 
 ROOT = Path(__file__).resolve().parents[1]
-NEEDED_ROUND1_AXES = "stochastic_depth,focal_gamma,abnormal_weight,ema,color,allow_tie_save"
+NEEDED_ROUND1_AXES = "normal_ratio,per_class,lr,warmup,gc,label_smoothing,stochastic_depth,focal_gamma,abnormal_weight,ema,color,allow_tie_save"
 
 
 def now() -> str:

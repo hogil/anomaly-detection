@@ -8,7 +8,7 @@ Current server default:
 bash scripts/sweeps_server/00_all.sh
 ```
 
-This runs only the still-needed rawbase round1 remainder. It skips weights, dataset generation, refcheck, GC, warmup, round2, and post-processing.
+This runs the still-needed rawbase round1 axes used by `docs/summary.md`. It skips weights, dataset generation, refcheck, round2, and post-processing.
 
 ## Commands
 
@@ -28,9 +28,9 @@ bash scripts/sweeps_server/06_sample_skip.sh
 
 Defaults are inherited from `run_paper_server_all.sh`: data/image generation workers `24`, training DataLoader workers `24`, and prefetch factor `4`.
 
-The active server baseline is raw: `grad_clip=0.0`, `smooth_window=1`, `smooth_method=median`. Prepared server queues rewrite run tags with `fresh0412_v11_rawbase_...` so old GC/smoothed logs are not reused. GC has already been covered by the dense historical sweep and rawbase partial checks, so the current server default does not schedule GC.
+The active server baseline is raw: `grad_clip=0.0`, `smooth_window=1`, `smooth_method=median`. Prepared server queues rewrite run tags with `fresh0412_v11_rawbase_...` so old GC/smoothed logs are not reused. GC is limited to 5 conditions by `scripts/prepare_server_queue.py`.
 
-Round1 queue preparation removes tags already marked `complete` or `skipped` in `validations/server_paper_rawbase_strict_single_factor_summary.json` by default. The current needed-only resume keeps only `stochastic_depth`, `focal_gamma`, `abnormal_weight`, `ema`, `color`, and `allow_tie_save`. Use `--round1-keep-completed` only when intentionally rebuilding the full prepared queue.
+Round1 queue preparation removes tags already marked `complete` or `skipped` in `validations/server_paper_rawbase_strict_single_factor_summary.json` by default. The current resume keeps `normal_ratio`, `per_class`, `lr`, `warmup`, `gc`, `label_smoothing`, `stochastic_depth`, `focal_gamma`, `abnormal_weight`, `ema`, `color`, and `allow_tie_save`. Use `--round1-keep-completed` only when intentionally rebuilding the full prepared queue.
 
 For local/Windows chaining without bash, use:
 

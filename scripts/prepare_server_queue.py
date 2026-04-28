@@ -40,6 +40,8 @@ def infer_axis(candidate: str) -> str:
         return "gc"
     if "_lrwarm" in candidate:
         return "warmup"
+    if re.search(r"_lr[0-9p]+e[45]_n700$", candidate):
+        return "lr"
     if "_regls" in candidate:
         return "label_smoothing"
     if "_regdp" in candidate:
@@ -54,6 +56,8 @@ def infer_axis(candidate: str) -> str:
         return "color"
     if "_tie_" in candidate:
         return "allow_tie_save"
+    if re.search(r"_pc\d+$", candidate):
+        return "per_class"
     if re.search(r"_n\d+$", candidate):
         return "normal_ratio"
     return "other"

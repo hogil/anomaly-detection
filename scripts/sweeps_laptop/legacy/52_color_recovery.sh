@@ -25,17 +25,17 @@ echo "[recovery] c02 image dir verified (train/val/test x 6 classes)"
 
 # 3. Relaunch color_ablation (run_one will skip the 5 completed c01 runs
 #    and the 5 broken c02 folders won't block re-run since they lack _F<score>)
-nohup bash scripts/sweeps_laptop/50_color_ablation.sh >> validations/color_ablation_resume.log 2>&1 &
+nohup bash scripts/sweeps_laptop/legacy/50_color_ablation.sh >> validations/color_ablation_resume.log 2>&1 &
 COLOR_PID=$!
 echo "[recovery] resumed color_ablation pid=${COLOR_PID}"
 
 # 4. Relaunch stress kickoff (waits on 50_color_ablation)
-nohup bash scripts/sweeps_laptop/41_stress_kickoff.sh > /dev/null 2>&1 &
+nohup bash scripts/sweeps_laptop/legacy/41_stress_kickoff.sh > /dev/null 2>&1 &
 STRESS_PID=$!
 echo "[recovery] relaunched stress_kickoff pid=${STRESS_PID}"
 
 # 5. Relaunch degraded axis kickoff (waits on 41_lr_sched_stress)
-nohup bash scripts/sweeps_laptop/42_deg_axis_kickoff.sh > /dev/null 2>&1 &
+nohup bash scripts/sweeps_laptop/legacy/42_deg_axis_kickoff.sh > /dev/null 2>&1 &
 DEG_PID=$!
 echo "[recovery] relaunched deg_axis_kickoff pid=${DEG_PID}"
 

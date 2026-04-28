@@ -52,7 +52,7 @@ try_variant() {
 
   # 3. Stress pilot on this variant (7 configs × 2 seeds = 14 runs)
   echo "[hard-pilot] launching stress pilot on $name at $(date)"
-  source scripts/sweeps_laptop/_common.sh
+  source scripts/sweeps_laptop/legacy/_common.sh
 
   local SEEDS=(42 1)
   local LR_VARIANTS=(

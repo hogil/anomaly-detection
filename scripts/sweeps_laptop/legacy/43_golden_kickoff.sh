@@ -18,4 +18,4 @@ echo "[golden-kickoff] building golden recipe at $(date)"
 python scripts/build_golden_recipe.py
 
 echo "[golden-kickoff] launching golden+control sweep at $(date)"
-exec bash scripts/sweeps_laptop/43_golden_recipe.sh
+exec bash scripts/sweeps_laptop/legacy/43_golden_recipe.sh

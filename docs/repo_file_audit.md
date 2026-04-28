@@ -1,6 +1,6 @@
 # GitHub 파일 감사
 
-_기준: `git ls-files` 135개 tracked file._
+_기준: sweep launcher 정리 후 tracked file tree._
 
 ## 결론
 
@@ -8,7 +8,7 @@ _기준: `git ls-files` 135개 tracked file._
 - `docs/reports/` 중첩 리포트는 제거했고, 최신 결과는 `docs/summary.md`와 `docs/plots/`로 바로 접근합니다.
 - `legacy/` 아래 파일은 지금 삭제하지 않고 historical archive로 유지합니다.
 - `configs/datasets/dataset_v11_202604*.yaml`처럼 timestamp가 붙은 과거 dataset snapshot은 실행에는 필요하지 않은 것이 많습니다. 다만 재현성 확인 가능성이 있어서 이번 커밋에서는 삭제하지 않고 “정리 후보”로 표시합니다.
-- `scripts/sweeps_laptop/`, `scripts/sweeps_server/`는 오래된 sweep launcher가 많지만, 실험 재현 기록 역할이 있으므로 이번에는 유지합니다.
+- `scripts/sweeps_server/`는 current paper pipeline entrypoint만 남겼고, 과거 server/laptop sweep launcher는 각 `legacy/`로 이동했습니다.
 - 로컬에는 untracked/modified 실험 파일이 많습니다. 이번 audit은 GitHub `main/master`에 tracked 된 파일만 대상으로 했습니다.
 
 ## 유지: 핵심 진입점
@@ -106,12 +106,13 @@ _기준: `git ls-files` 135개 tracked file._
 - `scripts/compare_conditions_0408.py`
 - `scripts/stability_and_worst_0408.py`
 
-## 유지하되 기본 진입점에서 숨김: sweep launchers
+## Sweep launchers
 
-- `scripts/sweeps_laptop/*.sh`: laptop sweep launcher 모음.
-- `scripts/sweeps_server/*.sh`: server sweep launcher 모음.
+- `scripts/sweeps_server/*.sh`: current paper server pipeline wrappers.
+- `scripts/sweeps_server/legacy/*.sh`: old broad server grid sweeps.
+- `scripts/sweeps_laptop/legacy/*.sh`: old laptop exploration sweeps.
 
-이 둘은 파일 수가 많지만 실험 실행 기록 역할이 있습니다. GitHub 첫 화면 혼란을 줄이려면 다음 정리에서 `legacy/sweeps_*/`로 옮기거나, 현재 `scripts/README.md`에서 “기본 진입점 아님”을 더 강하게 표시하면 됩니다.
+현재 서버 실험 진입점은 `scripts/sweeps_server/`입니다. `legacy/` 아래 파일은 실행 기록 보존용입니다.
 
 ## 유지: historical archive
 

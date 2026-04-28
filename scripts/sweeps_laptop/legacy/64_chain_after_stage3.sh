@@ -18,7 +18,7 @@ done
 echo "[combo-chain] Stage 3 finished at $(date)"
 
 # Run retry pilot
-bash scripts/sweeps_laptop/64_warm0_combo_retry.sh
+bash scripts/sweeps_laptop/legacy/64_warm0_combo_retry.sh
 
 # Analyze — wider target [5, 20] since we want stronger anchor than current 7
 echo "[combo-chain] analyzing at $(date)"

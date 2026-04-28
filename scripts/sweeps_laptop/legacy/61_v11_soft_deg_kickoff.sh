@@ -26,12 +26,12 @@ ls -d logs/*v11r_baseline*_F* 2>/dev/null | awk -F'/' '{print "  "$NF}'
 
 # 2a. Launch color image generation in parallel (CPU, for Stage 3 color experiments)
 echo "[v11-chain] launching v11 color image gen in background at $(date)"
-nohup bash scripts/sweeps_laptop/61_v11_color_imagegen.sh > /dev/null 2>&1 &
+nohup bash scripts/sweeps_laptop/legacy/61_v11_color_imagegen.sh > /dev/null 2>&1 &
 echo "[v11-chain] color imagegen pid=$!"
 
 # 2b. Run Stage 2 soft-degradation pilot
 echo "[v11-chain] launching Stage 2 soft degradation pilot at $(date)"
-bash scripts/sweeps_laptop/61_v11_soft_degradation_pilot.sh
+bash scripts/sweeps_laptop/legacy/61_v11_soft_degradation_pilot.sh
 
 # 3. Analyze anchor
 echo "[v11-chain] analyzing Stage 2 results at $(date)"
@@ -58,6 +58,6 @@ echo "[v11-chain] ANCHOR_ARGS: ${ANCHOR_ARGS}"
 # 4. Stage 3: full axis sweep at anchor
 echo "[v11-chain] launching Stage 3 axis sweep at $(date)"
 export ANCHOR_TAG ANCHOR_ARGS
-bash scripts/sweeps_laptop/62_v11_axis_full.sh
+bash scripts/sweeps_laptop/legacy/62_v11_axis_full.sh
 
 echo "[v11-chain] done at $(date)"

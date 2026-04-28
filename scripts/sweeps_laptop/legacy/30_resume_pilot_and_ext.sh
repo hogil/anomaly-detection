@@ -9,8 +9,8 @@ mkdir -p "$(dirname "$LOGF")"
 
 {
   echo "[resume] start $(date)"
-  bash scripts/sweeps_laptop/30_basecase_pilot_s42.sh
+  bash scripts/sweeps_laptop/legacy/30_basecase_pilot_s42.sh
   echo "[resume] pilot done at $(date)"
-  bash scripts/sweeps_laptop/30_basecase_seeds_1234.sh
+  bash scripts/sweeps_laptop/legacy/30_basecase_seeds_1234.sh
   echo "[resume] seeds 1..4 done at $(date)"
 } >> "$LOGF" 2>&1

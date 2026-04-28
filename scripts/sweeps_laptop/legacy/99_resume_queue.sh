@@ -15,7 +15,7 @@ done
 echo "[resume v3] wd=0.05 ext done at $(date)"
 
 # Part 2: remaining axis ablation (gc, lr, fg, abw, ema)
-bash scripts/sweeps_laptop/40_axis_ablation.sh
+bash scripts/sweeps_laptop/legacy/40_axis_ablation.sh
 echo "[resume v3] axis ablation done at $(date)"
 
 # Part 3: Model Soup retry
@@ -26,5 +26,5 @@ done
 echo "[resume v3] model soup done at $(date)"
 
 # Part 4: Stage 14 color ablation (15 runs) — images must be pre-generated
-bash scripts/sweeps_laptop/50_color_ablation.sh
+bash scripts/sweeps_laptop/legacy/50_color_ablation.sh
 echo "[resume v3] all done at $(date)"

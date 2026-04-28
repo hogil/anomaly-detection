@@ -17,4 +17,4 @@ done
 while ps -ef 2>/dev/null | grep -q "[t]rain.py"; do sleep 30; done
 
 echo "[hunt-kickoff] launching hunting rescue sweep at $(date)"
-exec bash scripts/sweeps_laptop/35_hunting_rescue_sweep.sh
+exec bash scripts/sweeps_laptop/legacy/35_hunting_rescue_sweep.sh

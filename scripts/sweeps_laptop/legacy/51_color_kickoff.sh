@@ -22,6 +22,6 @@ done
 echo "[color-kickoff] train.py idle, launching color sweep at $(date)"
 
 # 3. Run color sweep
-bash scripts/sweeps_laptop/50_color_ablation.sh
+bash scripts/sweeps_laptop/legacy/50_color_ablation.sh
 
 echo "[color-kickoff] done at $(date)"

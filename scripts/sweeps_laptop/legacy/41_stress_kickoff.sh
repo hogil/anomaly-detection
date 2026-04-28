@@ -19,6 +19,6 @@ while ps -ef 2>/dev/null | grep -q "[t]rain.py"; do
 done
 echo "[stress-kickoff] train.py idle, launching stress sweep at $(date)"
 
-bash scripts/sweeps_laptop/41_lr_sched_stress.sh
+bash scripts/sweeps_laptop/legacy/41_lr_sched_stress.sh
 
 echo "[stress-kickoff] done at $(date)"

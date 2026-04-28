@@ -3,6 +3,6 @@
 set -euo pipefail
 
 D="$(cd "$(dirname "$0")" && pwd)"
-source "$D/_paper_common.sh"
+source "$D/_common.sh"
 
 run_paper_stage "all" "$@"

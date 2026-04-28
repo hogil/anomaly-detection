@@ -13,4 +13,4 @@ while true; do
 done
 while ps -ef 2>/dev/null | grep -q "[t]rain.py"; do sleep 30; done
 echo "[tie-kickoff-v2] launching tie-save sweep at $(date)"
-exec bash scripts/sweeps_laptop/33_tie_save_sweep.sh
+exec bash scripts/sweeps_laptop/legacy/33_tie_save_sweep.sh

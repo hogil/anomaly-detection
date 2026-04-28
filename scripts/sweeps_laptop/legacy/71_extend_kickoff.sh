@@ -15,7 +15,7 @@ done
 while ps -ef 2>/dev/null | grep -q "[t]rain.py"; do sleep 30; done
 
 echo "[ext-kickoff] 100 bc done, running seeds 5/6/7 extension at $(date)"
-bash scripts/sweeps_laptop/70_extend_seeds567.sh
+bash scripts/sweeps_laptop/legacy/70_extend_seeds567.sh
 
 # After seed extension, run Model Soup on gc=0.5 sw=1raw (8 seeds)
 echo "[ext-kickoff] running Model Soup at $(date)"

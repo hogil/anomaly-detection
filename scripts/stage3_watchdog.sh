@@ -78,7 +78,7 @@ while true; do
 
     if [ "$restart_count" -le "$MAX_RESTARTS" ]; then
       export ANCHOR_TAG ANCHOR_ARGS
-      nohup bash -c "export ANCHOR_TAG='$ANCHOR_TAG' ANCHOR_ARGS='$ANCHOR_ARGS'; bash scripts/sweeps_laptop/62_v11_axis_full.sh" \
+      nohup bash -c "export ANCHOR_TAG='$ANCHOR_TAG' ANCHOR_ARGS='$ANCHOR_ARGS'; bash scripts/sweeps_laptop/legacy/62_v11_axis_full.sh" \
         >> validations/v11_axis_full.log 2>&1 &
       alert "Chain relaunched (pid=$!). Will skip $n_done completed runs."
       sleep 30  # give it time to start

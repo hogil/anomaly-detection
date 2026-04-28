@@ -39,7 +39,7 @@ ANCHOR_ARGS=$(python -c "import json; print(json.load(open('validations/stress_a
 if [ -z "$ANCHOR_TAG" ] || [ "$ANCHOR_TAG" = "None" ]; then
   echo "[deg-kickoff] anchor_tag empty — vd080 pilot produced no degraded ref"
   echo "[deg-kickoff] launching hard-dataset fallback at $(date)"
-  nohup bash scripts/sweeps_laptop/43_hard_dataset_pilot.sh > /dev/null 2>&1 &
+  nohup bash scripts/sweeps_laptop/legacy/43_hard_dataset_pilot.sh > /dev/null 2>&1 &
   echo "[deg-kickoff] 43_hard_dataset_pilot launched (pid=$!). Stopping deg kickoff."
   exit 0
 fi
@@ -48,6 +48,6 @@ echo "[deg-kickoff] anchor=${ANCHOR_TAG}  args='${ANCHOR_ARGS}'"
 echo "[deg-kickoff] launching 42_degraded_axis.sh at $(date)"
 
 export ANCHOR_TAG ANCHOR_ARGS
-bash scripts/sweeps_laptop/42_degraded_axis.sh
+bash scripts/sweeps_laptop/legacy/42_degraded_axis.sh
 
 echo "[deg-kickoff] done at $(date)"

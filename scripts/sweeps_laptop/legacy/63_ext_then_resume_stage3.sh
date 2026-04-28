@@ -7,7 +7,7 @@ exec >> validations/v11_extension.log 2>&1
 echo "[ext-chain] started at $(date)"
 
 # 1. Run extension pilot
-bash scripts/sweeps_laptop/63_warm0_extension.sh
+bash scripts/sweeps_laptop/legacy/63_warm0_extension.sh
 echo "[ext-chain] extension pilot complete at $(date)"
 
 # 2. Analyze — target widened to [6, 15] to accept current warm0 (7.0) and
@@ -25,6 +25,6 @@ cat validations/v11_anchor_ext.json 2>/dev/null || echo "(no output)"
 echo "[ext-chain] resuming Stage 3 at warm0 anchor at $(date)"
 export ANCHOR_TAG=warm0
 export ANCHOR_ARGS="--warmup_epochs 0"
-bash scripts/sweeps_laptop/62_v11_axis_full.sh
+bash scripts/sweeps_laptop/legacy/62_v11_axis_full.sh
 
 echo "[ext-chain] done at $(date)"

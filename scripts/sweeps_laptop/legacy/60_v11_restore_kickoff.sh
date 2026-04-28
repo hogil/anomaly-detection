@@ -24,6 +24,6 @@ echo "[v11-kickoff] v11 image dir verified"
 
 # Run baseline
 echo "[v11-kickoff] launching v11 baseline at $(date)"
-bash scripts/sweeps_laptop/60_v11_restore_baseline.sh
+bash scripts/sweeps_laptop/legacy/60_v11_restore_baseline.sh
 
 echo "[v11-kickoff] done at $(date)"

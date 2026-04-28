@@ -41,10 +41,12 @@
 
 ## 5. Sweep launchers
 
-- `sweeps_laptop/`
 - `sweeps_server/`
+  - current paper server launchers
+- `sweeps_laptop/legacy/`
+  - archived laptop exploration launchers
 
-이 둘은 실험 실행용 launch collection입니다. 메인 로직은 아니고 orchestration layer입니다.
+현재 서버 실험은 `sweeps_server/`를 진입점으로 봅니다. `legacy/` 아래 스크립트는 과거 재현 기록입니다.
 
 ## 6. Historical one-off scripts
 

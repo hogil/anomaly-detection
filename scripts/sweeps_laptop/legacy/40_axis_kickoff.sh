@@ -11,4 +11,4 @@ while true; do
 done
 while ps -ef 2>/dev/null | grep -q "[t]rain.py"; do sleep 30; done
 echo "[axis-kickoff] launching axis ablation at $(date)"
-exec bash scripts/sweeps_laptop/40_axis_ablation.sh
+exec bash scripts/sweeps_laptop/legacy/40_axis_ablation.sh

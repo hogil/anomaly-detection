@@ -20,7 +20,7 @@ wait_idle() {
 
 wait_idle
 echo "[chain] stage 1 — seeds 1..4 extension at $(date)"
-bash scripts/sweeps_laptop/30_basecase_seeds_1234.sh
+bash scripts/sweeps_laptop/legacy/30_basecase_seeds_1234.sh
 
 wait_idle
 echo "[chain] stage 2 — vstress sw ablation at $(date)"
@@ -28,4 +28,4 @@ if [ ! -d images_vstress/train/normal ] || [ "$(ls images_vstress/train/normal/*
   echo "[chain] vstress images not ready, skipping stage 2"
   exit 0
 fi
-exec bash scripts/sweeps_laptop/31_vstress_sw_sweep.sh
+exec bash scripts/sweeps_laptop/legacy/31_vstress_sw_sweep.sh

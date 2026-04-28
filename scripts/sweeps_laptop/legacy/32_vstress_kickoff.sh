@@ -30,4 +30,4 @@ if [ ! -d images_vstress/train/normal ] || \
 fi
 
 echo "[vstress-kickoff] launching vstress sweep at $(date)"
-exec bash scripts/sweeps_laptop/31_vstress_sw_sweep.sh
+exec bash scripts/sweeps_laptop/legacy/31_vstress_sw_sweep.sh

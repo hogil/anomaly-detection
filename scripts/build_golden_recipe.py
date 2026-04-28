@@ -3,7 +3,7 @@
 For each axis (wd, gc, lr, fg, abw, dp, ema), pick the level that minimizes
 test FN+FP mean across seeds. Emit:
   - configs/train/golden.yaml (override winning.yaml with picked levels)
-  - scripts/sweeps_laptop/43_golden_recipe.sh (10 seeds × golden vs 10 × baseline)
+  - scripts/sweeps_laptop/legacy/43_golden_recipe.sh (10 seeds × golden vs 10 × baseline)
   - validations/golden_recipe_selection.txt (per-axis winner with evidence)
 """
 import json
@@ -16,7 +16,7 @@ from statistics import mean, stdev
 ROOT = Path(__file__).resolve().parent.parent
 LOGS = ROOT / "logs"
 OUT_YAML = ROOT / "configs" / "train" / "golden.yaml"
-OUT_SH   = ROOT / "scripts" / "sweeps_laptop" / "43_golden_recipe.sh"
+OUT_SH   = ROOT / "scripts" / "sweeps_laptop" / "legacy" / "43_golden_recipe.sh"
 OUT_TXT  = ROOT / "validations" / "golden_recipe_selection.txt"
 
 # Map axis tag → yaml key override

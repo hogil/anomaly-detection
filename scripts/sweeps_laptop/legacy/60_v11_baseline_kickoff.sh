@@ -19,6 +19,6 @@ done
 echo "[v11-baseline-kickoff] images_v11 complete at $(date)"
 
 echo "[v11-baseline-kickoff] launching Stage 1 baseline"
-bash scripts/sweeps_laptop/60_v11_restore_baseline.sh
+bash scripts/sweeps_laptop/legacy/60_v11_restore_baseline.sh
 
 echo "[v11-baseline-kickoff] done at $(date)"

@@ -135,9 +135,9 @@ FAMILY_BASELINES: dict[str, tuple[str, float | str]] = {
     "per_class": ("0 / off", 0.0),
     "lr": ("2e-5 / 2e-4", 2e-5),
     "warmup": ("5", 5.0),
-    "gc": ("1", 1.0),
+    "gc": ("0 / off", 0.0),
     "weight_decay": ("0.01", 0.01),
-    "smoothing": ("3-median", 3.1),
+    "smoothing": ("1-raw", 1.0),
     "label_smoothing": ("0.00", 0.00),
     "stochastic_depth": ("0.00", 0.00),
     "focal_gamma": ("0.0", 0.0),
@@ -154,7 +154,7 @@ COLOR_DESCRIPTIONS = {
     "c03": "trend red `#E43320`, fleet alpha `0.15`",
 }
 
-OPERATING_BASELINE = "fresh0412_v11_refcheck_gcsmooth_n700"
+OPERATING_BASELINE = "fresh0412_v11_refcheck_raw_n700"
 HISTORICAL_BASELINE = "fresh0412_v11_n700_existing"
 
 
@@ -232,6 +232,8 @@ def parse_candidate(candidate: str) -> tuple[str, str, float] | None:
     if not base.startswith("fresh0412_v11_"):
         return None
     suffix = base.removeprefix("fresh0412_v11_")
+    if suffix.startswith("rawbase_"):
+        suffix = suffix.removeprefix("rawbase_")
 
     if re.fullmatch(r"n\d+", suffix):
         value = float(suffix[1:])
@@ -335,6 +337,15 @@ def add_record(records: dict[str, dict[str, ConditionRecord]], record: Condition
 
 
 def baseline_metrics() -> tuple[float, float, float]:
+    for name in ("server_paper_refcheck_raw_summary.json", "paper_refcheck_raw_summary.json"):
+        payload = load_json(VALIDATIONS / name)
+        row = payload.get("aggregates", {}).get("by_candidate", {}).get(OPERATING_BASELINE)
+        if row and row.get("f1_mean") is not None:
+            return (
+                float(row.get("f1_mean", 0.0)),
+                float(row.get("fn_mean", 0.0)),
+                float(row.get("fp_mean", 0.0)),
+            )
     data = load_json(VALIDATIONS / "baseline_delta_latest.json")
     base = data.get("baseline", {})
     return (
@@ -658,7 +669,7 @@ def evidence_limits(records: dict[str, dict[str, ConditionRecord]]) -> list[str]
                 three_seed += 1
 
     return [
-        f"운영 baseline은 `{OPERATING_BASELINE}`입니다. 5-seed matched control 기준 `F1=0.9955`, `FN=4.4`, `FP=2.4`이며 target band hit은 `0/5`입니다. FP가 전 seed에서 낮아 기준선이 너무 깨끗하다는 한계를 명시해야 합니다.",
+        f"운영 baseline은 `{OPERATING_BASELINE}`입니다. 서버 기준은 `grad_clip=0.0`, `smooth_window=1` raw이며, 5-seed refcheck summary를 strict delta 기준으로 사용합니다.",
         f"`{HISTORICAL_BASELINE}`은 historical selected ref로 보존하되, strict one-factor 표와 delta 계산의 현재 기준은 `{OPERATING_BASELINE}`입니다.",
         "`label_smoothing=0.0`은 baseline train config에 명시된 no-smoothing 상태입니다. 단, `label_smoothing>0`에서는 loss 구현 경로가 `CrossEntropyLoss(label_smoothing=...)`로 바뀌므로 최종 claim에는 이 구현 차이를 한계로 적어야 합니다.",
         "현재 표는 baseline-fixed one-factor evidence만 섞어 보여줍니다. alternate-parent stress, bad-case rescue, logical/per-member 실험은 별도 표로 분리해야 합니다.",

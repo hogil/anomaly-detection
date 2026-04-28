@@ -159,6 +159,8 @@ def candidate_name(run):
 
 
 def infer_axis(candidate):
+    if candidate.startswith("fresh0412_v11_rawbase_"):
+        candidate = "fresh0412_v11_" + candidate.removeprefix("fresh0412_v11_rawbase_")
     if re.search(r"_gc(?:\d|$)", candidate):
         return "gc"
     if re.search(r"_n\d+$", candidate):
@@ -178,6 +180,32 @@ def infer_axis(candidate):
     if "_tie_" in candidate:
         return "allow_tie_save"
     return "other"
+
+
+RAW_REFERENCE = "fresh0412_v11_refcheck_raw_n700"
+payload["selected_reference"] = RAW_REFERENCE
+payload["server_baseline"] = {
+    "candidate": RAW_REFERENCE,
+    "grad_clip": 0.0,
+    "smooth_window": 1,
+    "smooth_method": "median",
+}
+
+
+def rewrite_for_raw_server_baseline(run):
+    old_candidate = candidate_name(run)
+    if old_candidate.startswith("fresh0412_v11_rawbase_") or "_refcheck_raw_" in old_candidate:
+        return old_candidate
+    if not old_candidate.startswith("fresh0412_v11_"):
+        return old_candidate
+    new_candidate = "fresh0412_v11_rawbase_" + old_candidate.removeprefix("fresh0412_v11_")
+    run["candidate"] = new_candidate
+    old_tag = str(run.get("tag", ""))
+    if old_tag.startswith(old_candidate):
+        run["tag"] = new_candidate + old_tag[len(old_candidate):]
+    elif old_tag.startswith("fresh0412_v11_"):
+        run["tag"] = "fresh0412_v11_rawbase_" + old_tag.removeprefix("fresh0412_v11_")
+    return new_candidate
 
 
 def trim_runs(runs):
@@ -208,7 +236,14 @@ elif start_after_axis or start_after_candidate:
     raise SystemExit(f"queue has no explicit runs list to trim: {src}")
 
 for run in payload.get("runs", []):
+    candidate = rewrite_for_raw_server_baseline(run)
+    axis = infer_axis(candidate)
     args = run.setdefault("args", {})
+    if axis != "gc":
+        args["--grad_clip"] = 0.0
+    if axis != "smoothing":
+        args["--smooth_window"] = 1
+        args["--smooth_method"] = "median"
     args["--config"] = config
     args["--num_workers"] = int(num_workers)
     args["--prefetch_factor"] = int(prefetch_factor)
@@ -279,13 +314,13 @@ main() {
 
   if [[ "$SKIP_REFCHECK" -eq 0 ]]; then
     prepare_queue \
-      validations/paper_refcheck_gcsmooth_queue.json \
-      validations/server_paper_refcheck_gcsmooth_queue.json
+      validations/paper_refcheck_raw_queue.json \
+      validations/server_paper_refcheck_raw_queue.json
     run_controller \
-      validations/server_paper_refcheck_gcsmooth_queue.json \
-      validations/server_paper_refcheck_gcsmooth_summary.json \
-      validations/server_paper_refcheck_gcsmooth_summary.md \
-      "refcheck_gcsmooth"
+      validations/server_paper_refcheck_raw_queue.json \
+      validations/server_paper_refcheck_raw_summary.json \
+      validations/server_paper_refcheck_raw_summary.md \
+      "refcheck_raw"
   fi
 
   if [[ "$SKIP_ROUND1" -eq 0 ]]; then

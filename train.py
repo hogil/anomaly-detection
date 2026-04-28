@@ -85,6 +85,32 @@ def build_train_sampler(train_df: pd.DataFrame, mode: str, sampler_name: str, se
     return sampler, {"label_name": label_name, "counts": counts}
 
 
+def sample_stratified_rows(df: pd.DataFrame, max_samples: int, seed: int) -> pd.DataFrame:
+    """Small smoke-test sampler that keeps classes represented in each split."""
+    if max_samples <= 0 or len(df) <= max_samples:
+        return df.reset_index(drop=True)
+    groups = [(name, group) for name, group in df.groupby("class", sort=True)]
+    if not groups:
+        return df.sample(n=max_samples, random_state=seed).reset_index(drop=True)
+
+    per_class = max(1, max_samples // len(groups))
+    remainder = max(0, max_samples - per_class * len(groups))
+    sampled_parts = []
+    for idx, (_, group) in enumerate(groups):
+        n = min(len(group), per_class + (1 if idx < remainder else 0))
+        sampled_parts.append(group.sample(n=n, random_state=seed + idx))
+
+    sampled = pd.concat(sampled_parts)
+    if len(sampled) < max_samples:
+        remaining = df.drop(index=sampled.index)
+        if len(remaining) > 0:
+            sampled = pd.concat([
+                sampled,
+                remaining.sample(n=min(max_samples - len(sampled), len(remaining)), random_state=seed + 997),
+            ])
+    return sampled.sample(frac=1.0, random_state=seed + 1997).reset_index(drop=True)
+
+
 # =============================================================================
 # EMA of weights (Mean Teacher / ConvNeXt-V2 스타일)
 # =============================================================================
@@ -815,6 +841,8 @@ def main():
                         help="EMA of weights decay. 0=disabled (default). 짧은 학습 (<5000 step) 에선 EMA 가 수렴 못해서 raw 보다 나쁨. 긴 학습에서만 0.999 권장.")
     parser.add_argument("--max_per_class", type=int, default=td("max_per_class", 0),
                         help="학습 데이터 클래스당 최대 수 (0=전체)")
+    parser.add_argument("--max_samples_per_split", type=int, default=td("max_samples_per_split", 0),
+                        help="Smoke-test only: stratified cap for train/val/test rows per split (0=disabled).")
     parser.add_argument("--normal_ratio", type=int, default=td("normal_ratio", 0),
                         help="Binary mode: normal 학습 샘플 수 (0=전체, abnormal은 고정)")
     parser.add_argument("--scenarios_csv", type=str, default=None,
@@ -977,6 +1005,7 @@ def main():
         "min_epochs": args.min_epochs,
         "precision": args.precision,
         "compile": args.compile,
+        "max_samples_per_split": args.max_samples_per_split,
         "num_workers": args.num_workers,
         "prefetch_factor": args.prefetch_factor,
     }
@@ -991,6 +1020,12 @@ def main():
     train_df = sc_df[sc_df["split"] == "train"]
     val_df = sc_df[sc_df["split"] == "val"]
     test_df = sc_df[sc_df["split"] == "test"]
+
+    if args.max_samples_per_split > 0:
+        train_df = sample_stratified_rows(train_df, args.max_samples_per_split, args.seed)
+        val_df = sample_stratified_rows(val_df, args.max_samples_per_split, args.seed + 10_000)
+        test_df = sample_stratified_rows(test_df, args.max_samples_per_split, args.seed + 20_000)
+        print(f"  Smoke sample cap: {args.max_samples_per_split} rows per split")
 
     # 클래스당 최대 수 제한
     if args.max_per_class > 0:
@@ -1180,8 +1215,9 @@ def main():
         optimizer, start_factor=0.05, total_iters=args.warmup_epochs
     )
     if args.scheduler == "cosine":
+        cosine_t_max = max(1, args.epochs - args.warmup_epochs)
         main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=args.epochs - args.warmup_epochs, eta_min=1e-6
+            optimizer, T_max=cosine_t_max, eta_min=1e-6
         )
     elif args.scheduler == "step":
         main_scheduler = torch.optim.lr_scheduler.StepLR(

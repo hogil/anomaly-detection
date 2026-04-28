@@ -26,3 +26,5 @@ bash scripts/sweeps_server/05_post.sh --candidate-prefix fresh0412_v11
 ```
 
 Defaults are inherited from `run_paper_server_all.sh`: data/image generation workers `24`, training DataLoader workers `24`, and prefetch factor `4`.
+
+The active server baseline is raw: `grad_clip=0.0`, `smooth_window=1`, `smooth_method=median`. Prepared server queues rewrite run tags with `fresh0412_v11_rawbase_...` so old GC/smoothed logs are not reused.

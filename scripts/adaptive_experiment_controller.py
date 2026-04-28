@@ -55,6 +55,17 @@ DEFAULT_SUMMARY = ROOT / "validations" / "adaptive_controller_summary.json"
 DEFAULT_MARKDOWN = ROOT / "validations" / "adaptive_controller_summary.md"
 
 
+def configure_output_encoding() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(errors="replace")
+        except Exception:
+            pass
+
+
 def load_queue(path: Path) -> list[dict[str, Any]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if isinstance(payload, list):
@@ -496,6 +507,7 @@ def write_markdown(path: Path, summary: dict[str, Any]) -> None:
 
 
 def main() -> int:
+    configure_output_encoding()
     parser = argparse.ArgumentParser(description="Sequential adaptive train.py controller")
     parser.add_argument("--queue", required=True, type=Path, help="JSON queue file")
     parser.add_argument("--summary", type=Path, default=DEFAULT_SUMMARY)

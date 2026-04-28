@@ -25,12 +25,12 @@ BASE_ARGS = {
     "--num_workers": 0,
     "--ema_decay": 0.0,
     "--normal_ratio": 700,
-    "--smooth_window": 3,
+    "--smooth_window": 1,
     "--smooth_method": "median",
     "--lr_backbone": "2e-5",
     "--lr_head": "2e-4",
     "--warmup_epochs": 5,
-    "--grad_clip": 1.0,
+    "--grad_clip": 0.0,
     "--weight_decay": 0.01,
 }
 
@@ -60,6 +60,8 @@ def aggregate_candidates(summary: dict) -> dict[str, dict]:
         candidate = run.get("candidate")
         if not candidate:
             continue
+        if candidate.startswith("fresh0412_v11_rawbase_"):
+            candidate = "fresh0412_v11_" + candidate.removeprefix("fresh0412_v11_rawbase_")
         out.setdefault(candidate, {"complete": 0, "rows": []})
         if run.get("status") == "complete":
             out[candidate]["complete"] += 1
@@ -101,7 +103,7 @@ def build_specs() -> list[AxisSpec]:
         AxisSpec(
             name="gc",
             pool=[0.0, 0.1, 0.25, 0.35, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 5.0],
-            baseline=1.0,
+            baseline=0.0,
             candidate_for_value={
                 0.0: "fresh0412_v11_gc00_n700",
                 0.1: "fresh0412_v11_gc01_n700",
@@ -306,7 +308,7 @@ def main() -> int:
 
     payload = {
         "created_at": "2026-04-26T15:40:00",
-        "selected_reference": "fresh0412_v11_n700_existing",
+        "selected_reference": "fresh0412_v11_refcheck_raw_n700",
         "selected_config": SELECTED_CONFIG,
         "note": "Round-2 strict refinements chosen from round-1 completed results. Policy remains baseline fixed and one-factor only.",
         "runs": queue_runs,

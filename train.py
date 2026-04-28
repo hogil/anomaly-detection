@@ -1483,12 +1483,9 @@ def main():
                 title="Confusion Matrix (argmax)",
             )
 
-            # Normal threshold 다중 평가
+            # Normal threshold 평가: paper run은 selected NT 하나만 기록한다.
             selected_nt = float(args.normal_threshold)
-            nt_thresholds = [0.5, 0.9, 0.99, 0.999, 0.9999]
-            if not any(abs(nt - selected_nt) < 1e-12 for nt in nt_thresholds):
-                nt_thresholds.append(selected_nt)
-                nt_thresholds = sorted(nt_thresholds)
+            nt_thresholds = [selected_nt]
             nt_results = {}
             selected_nt_result = None
 
@@ -1656,12 +1653,9 @@ def main():
         save_predictions(test_ds, test_preds_a, test_labels_a, classes,
                          predictions_dir, correct_cap=100)
 
-        # NT sweep on averaged
+        # NT 평가 on averaged: selected NT 하나만 기록한다.
         selected_nt = float(args.normal_threshold)
-        avg_nt_values = [0.5, 0.6, 0.7, 0.8, 0.9]
-        if not any(abs(nt - selected_nt) < 1e-12 for nt in avg_nt_values):
-            avg_nt_values.append(selected_nt)
-            avg_nt_values = sorted(avg_nt_values)
+        avg_nt_values = [selected_nt]
         nt_results_a = {}
         selected_nt_result_a = None
         for nt in avg_nt_values:

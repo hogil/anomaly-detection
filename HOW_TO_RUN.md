@@ -84,3 +84,11 @@ validations/log_history_report_rawbase_grad_p99_curves.png
 ```bash
 bash scripts/sweeps_server/00_all.sh
 ```
+
+## 8. FP/FN이 치우칠 때
+
+FP가 너무 많으면 정상 이미지를 anomaly로 많이 잡는 상태입니다. 먼저 `normal_ratio`나 `max_per_class`를 올려 normal 쪽 근거를 늘리고, `abnormal_weight`를 낮추거나 `focal_gamma`를 낮춰 anomaly 쪽 압박을 줄입니다. `label_smoothing`이 크면 결정 경계가 흐려질 수 있으니 낮은 값도 같이 봅니다.
+
+FN이 너무 많으면 불량을 normal로 놓치는 상태입니다. `abnormal_weight`를 올리고, `focal_gamma`나 `label_smoothing` 주변값을 봅니다. `stochastic_depth`는 과적합을 줄여 FN/FP 균형이 좋아지는지 확인하는 축이고, `EMA`는 seed별 진동을 줄이는지 확인하는 축입니다.
+
+한 번에 여러 값을 섞지 말고 한 축만 바꿔서 봅니다. 서버 main sweep은 각 주요 축을 5조건 기준으로 비교합니다.

@@ -32,6 +32,8 @@ The active server baseline is raw: `grad_clip=0.0`, `smooth_window=1`, `smooth_m
 
 Round1 queue preparation removes tags already marked `complete` or `skipped` in `validations/server_paper_rawbase_strict_single_factor_summary.json` by default. The current resume keeps `normal_ratio`, `per_class`, `lr`, `warmup`, `gc`, `label_smoothing`, `stochastic_depth`, `focal_gamma`, `abnormal_weight`, `ema`, `color`, and `allow_tie_save`. Use `--round1-keep-completed` only when intentionally rebuilding the full prepared queue.
 
+Main regularization/loss axes use 5 candidate conditions each: `label_smoothing`, `stochastic_depth`, `focal_gamma`, `abnormal_weight`, and `ema`.
+
 For local/Windows chaining without bash, use:
 
 ```powershell

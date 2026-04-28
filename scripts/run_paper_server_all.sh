@@ -158,9 +158,14 @@ def candidate_name(run):
     return re.sub(r"_s\d+$", "", str(run.get("tag", "")))
 
 
-def infer_axis(candidate):
+def normalize_candidate(candidate):
     if candidate.startswith("fresh0412_v11_rawbase_"):
-        candidate = "fresh0412_v11_" + candidate.removeprefix("fresh0412_v11_rawbase_")
+        return "fresh0412_v11_" + candidate.removeprefix("fresh0412_v11_rawbase_")
+    return candidate
+
+
+def infer_axis(candidate):
+    candidate = normalize_candidate(candidate)
     if re.search(r"_gc(?:\d|$)", candidate):
         return "gc"
     if re.search(r"_n\d+$", candidate):
@@ -183,6 +188,7 @@ def infer_axis(candidate):
 
 
 RAW_REFERENCE = "fresh0412_v11_refcheck_raw_n700"
+RAW_DUPLICATE_GC00 = "fresh0412_v11_rawbase_gc00_n700"
 payload["selected_reference"] = RAW_REFERENCE
 payload["server_baseline"] = {
     "candidate": RAW_REFERENCE,
@@ -206,6 +212,10 @@ def rewrite_for_raw_server_baseline(run):
     elif old_tag.startswith("fresh0412_v11_"):
         run["tag"] = "fresh0412_v11_rawbase_" + old_tag.removeprefix("fresh0412_v11_")
     return new_candidate
+
+
+def is_duplicate_raw_gc00(candidate):
+    return candidate == RAW_DUPLICATE_GC00 or normalize_candidate(candidate) == "fresh0412_v11_gc00_n700"
 
 
 def trim_runs(runs):
@@ -235,8 +245,13 @@ if isinstance(payload.get("runs"), list):
 elif start_after_axis or start_after_candidate:
     raise SystemExit(f"queue has no explicit runs list to trim: {src}")
 
+prepared_runs = []
+skipped_duplicate_controls = []
 for run in payload.get("runs", []):
     candidate = rewrite_for_raw_server_baseline(run)
+    if is_duplicate_raw_gc00(candidate):
+        skipped_duplicate_controls.append(candidate)
+        continue
     axis = infer_axis(candidate)
     args = run.setdefault("args", {})
     if axis != "gc":
@@ -247,6 +262,12 @@ for run in payload.get("runs", []):
     args["--config"] = config
     args["--num_workers"] = int(num_workers)
     args["--prefetch_factor"] = int(prefetch_factor)
+    prepared_runs.append(run)
+
+payload["runs"] = prepared_runs
+if skipped_duplicate_controls:
+    payload["server_skipped_duplicate_controls"] = sorted(set(skipped_duplicate_controls))
+    print("[queue] skipped duplicate raw controls: " + ", ".join(payload["server_skipped_duplicate_controls"]))
 
 Path(dst).parent.mkdir(parents=True, exist_ok=True)
 Path(dst).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

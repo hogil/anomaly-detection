@@ -11,6 +11,7 @@ from typing import Any
 
 
 RAW_REFERENCE = "fresh0412_v11_refcheck_raw_n700"
+RAW_DUPLICATE_GC00 = "fresh0412_v11_rawbase_gc00_n700"
 
 
 def candidate_name(run: dict[str, Any]) -> str:
@@ -64,6 +65,10 @@ def rewrite_for_raw_server_baseline(run: dict[str, Any]) -> str:
     elif old_tag.startswith("fresh0412_v11_"):
         run["tag"] = "fresh0412_v11_rawbase_" + old_tag.removeprefix("fresh0412_v11_")
     return new_candidate
+
+
+def is_duplicate_raw_gc00(candidate: str) -> bool:
+    return candidate == RAW_DUPLICATE_GC00 or normalize_candidate(candidate) == "fresh0412_v11_gc00_n700"
 
 
 def trim_runs(
@@ -125,8 +130,13 @@ def prepare_queue(args: argparse.Namespace) -> dict[str, Any]:
             args.start_after_candidate,
         )
 
+    prepared_runs: list[dict[str, Any]] = []
+    skipped_duplicate_controls: list[str] = []
     for run in payload.get("runs", []):
         candidate = rewrite_for_raw_server_baseline(run)
+        if is_duplicate_raw_gc00(candidate):
+            skipped_duplicate_controls.append(candidate)
+            continue
         axis = infer_axis(candidate)
         run_args = run.setdefault("args", {})
         if not isinstance(run_args, dict):
@@ -139,6 +149,15 @@ def prepare_queue(args: argparse.Namespace) -> dict[str, Any]:
         run_args["--config"] = args.config
         run_args["--num_workers"] = args.num_workers
         run_args["--prefetch_factor"] = args.prefetch_factor
+        prepared_runs.append(run)
+
+    payload["runs"] = prepared_runs
+    if skipped_duplicate_controls:
+        payload["server_skipped_duplicate_controls"] = sorted(set(skipped_duplicate_controls))
+        print(
+            "[queue] skipped duplicate raw controls: "
+            + ", ".join(payload["server_skipped_duplicate_controls"])
+        )
 
     return payload
 

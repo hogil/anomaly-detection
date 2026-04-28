@@ -1,6 +1,6 @@
 # 실험 요약
 
-_자동 갱신 시각: `2026-04-28T15:37:11+09:00`._
+_자동 갱신 시각: `2026-04-28T15:58:03+09:00`._
 
 ## 현재 진행 상태
 
@@ -11,6 +11,7 @@ _자동 갱신 시각: `2026-04-28T15:37:11+09:00`._
 - 학습 완료 후 다음 조건으로 즉시 넘어가는 handoff는 smoke run으로 검증했습니다. `max_samples_per_split=10`, `epochs=3`의 2-run queue가 `queue_exhausted`까지 완료됐고, 첫 run의 `=== EXIT 0 ... ===` 직후 두 번째 `=== RUN ... ===`가 시작됐습니다.
 - NT 평가는 selected threshold만 남겼습니다. 현재 reporting default는 `NT=0.9`이고, smoke run에서 `confusion_matrix_nt.png` 생성까지 확인했습니다.
 - raw refcheck 완료 후 rawbase round1을 자동 실행하는 watcher를 설치했습니다: watcher PID `668`, log `validations/paper_rawbase_round1_watcher.log`. watcher는 `validations/server_paper_refcheck_raw_summary.json`이 `queue_exhausted`와 5 complete runs를 만족하면 `validations/server_paper_rawbase_strict_single_factor_queue.json`를 만들고 round1 controller를 시작합니다.
+- rawbase round1 준비 단계에서 `gc00` duplicate control은 제외합니다. raw refcheck가 이미 `grad_clip=0.0`을 5 seeds로 돌리므로, round1 GC 축은 `0.1` 이상 값만 추가 실행합니다.
 - controller/all.sh 로그에서는 tqdm progress bar가 자동 비활성화됩니다. pipe/tee 환경에서 carriage-return bar가 여러 줄로 쌓이는 문제를 피하고, 직접 interactive 실행할 때만 bar가 유지됩니다.
 
 ## Team Agent 운영 계획

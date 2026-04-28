@@ -1,6 +1,6 @@
 # 실험 요약
 
-_자동 갱신 시각: `2026-04-28T15:22:24+09:00`._
+_자동 갱신 시각: `2026-04-28T15:32:44+09:00`._
 
 ## 현재 진행 상태
 
@@ -8,11 +8,14 @@ _자동 갱신 시각: `2026-04-28T15:22:24+09:00`._
 - 업데이트 시점에 raw server baseline refcheck가 실행 중입니다: `fresh0412_v11_refcheck_raw_n700_s42`, controller PID `8360`, train PID `30708`, live log `validations/paper_refcheck_raw_live.log`.
 - 재개된 queue는 `validations/paper_refcheck_raw_queue.json`이며 기준 설정은 `grad_clip=0.0`, `smooth_window=1`, `smooth_method=median`, `label_smoothing=0.0`입니다.
 - 학습 완료 후 다음 조건으로 즉시 넘어가는 handoff는 smoke run으로 검증했습니다. `max_samples_per_split=10`, `epochs=3`의 2-run queue가 `queue_exhausted`까지 완료됐고, 첫 run의 `=== EXIT 0 ... ===` 직후 두 번째 `=== RUN ... ===`가 시작됐습니다.
+- NT 평가는 selected threshold만 남겼습니다. 현재 reporting default는 `NT=0.9`이고, smoke run에서 `confusion_matrix_nt.png` 생성까지 확인했습니다.
+- raw refcheck 완료 후 rawbase round1을 자동 실행하는 watcher를 설치했습니다: watcher PID `668`, log `validations/paper_rawbase_round1_watcher.log`. watcher는 `validations/server_paper_refcheck_raw_summary.json`이 `queue_exhausted`와 5 complete runs를 만족하면 `validations/server_paper_rawbase_strict_single_factor_queue.json`를 만들고 round1 controller를 시작합니다.
+- controller/all.sh 로그에서는 tqdm progress bar가 자동 비활성화됩니다. pipe/tee 환경에서 carriage-return bar가 여러 줄로 쌓이는 문제를 피하고, 직접 interactive 실행할 때만 bar가 유지됩니다.
 
 ## Team Agent 운영 계획
 
 - 1단계: raw baseline refcheck 5 seeds 완료 후 `validations/server_paper_refcheck_raw_summary.md`를 기준선 표로 채택합니다.
-- 2단계: raw baseline이 끝나면 `scripts/sweeps_server/02_round1.sh --skip-weights --skip-dataset`로 rawbase strict round1을 실행합니다. 이 준비 과정은 tag를 `fresh0412_v11_rawbase_...`로 바꿔 기존 gcsmooth 로그 재사용을 피합니다.
+- 2단계: raw baseline이 끝나면 watcher가 rawbase strict round1을 자동 실행합니다. 수동 재개가 필요하면 `bash scripts/sweeps_server/02_round1.sh --skip-weights --skip-dataset`와 동일한 정책을 쓰되, Windows 로컬에서는 `python scripts/watch_refcheck_then_round1.py` 또는 direct controller 실행을 사용합니다. 준비 과정은 tag를 `fresh0412_v11_rawbase_...`로 바꿔 기존 gcsmooth 로그 재사용을 피합니다.
 - 3단계: raw round1 결과로 round2를 새로 선택합니다. 기존 `paper_strict_single_factor_round2_*` 산출물은 gcsmooth 기준이므로 raw baseline claim에는 직접 재사용하지 않습니다.
 - 4단계: raw 기준 결과를 본 뒤 기존 유망축인 `label_smoothing`, `abnormal_weight`, `stochastic_depth`, `ema`, `normal_ratio`를 다시 우선순위화합니다. 특히 raw baseline에서는 `gc=0`이 기준 자체라 GC 축 해석을 새로 해야 합니다.
 

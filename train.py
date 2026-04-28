@@ -18,6 +18,7 @@ import argparse
 import gc
 import json
 import os
+import sys
 import time
 from datetime import datetime
 import yaml
@@ -38,6 +39,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 from src.models.focal_loss import FocalLoss
+
+TQDM_DISABLE = False
 
 
 # =============================================================================
@@ -329,7 +332,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
     grad_norms_pre_clip = []  # per-step pre-clip grad norm (spike 분석용)
 
     pbar = tqdm(loader, desc=f"Epoch {epoch}/{total_epochs} [Train]",
-                leave=False, ncols=100)
+                leave=False, ncols=100, disable=TQDM_DISABLE)
 
     def grad_norm_with_optional_clip():
         if grad_clip is not None and grad_clip > 0:
@@ -517,7 +520,7 @@ def evaluate(model, loader, criterion, device, classes, desc="Eval",
     eval_dtype = amp_dtype if amp_dtype is not None else torch.float16
     use_amp_eval = device.type == "cuda"
 
-    pbar = tqdm(loader, desc=desc, leave=False, ncols=100)
+    pbar = tqdm(loader, desc=desc, leave=False, ncols=100, disable=TQDM_DISABLE)
     for batch in pbar:
         images, labels = batch[0], batch[1]
         images, labels = images.to(device), labels.to(device)
@@ -785,7 +788,7 @@ def _load_train_config(path: str | None) -> dict:
 
 def main():
     # ---- Step 1: --train_config 를 sys.argv 에서 직접 추출 (yaml default 적용용) ----
-    import sys
+    global TQDM_DISABLE
     tc_path = None
     _argv = sys.argv[1:]
     if "--train_config" in _argv:
@@ -878,6 +881,8 @@ def main():
                         help="[deprecated] post-hoc weight 평균 (0=비활성)")
     parser.add_argument("--no_fast_exit", action="store_true", default=td("no_fast_exit", False),
                         help="Disable hard success exit. Default uses os._exit(0) after all files/logs are flushed so queue controllers can start the next run immediately.")
+    parser.add_argument("--no_progress", action="store_true", default=td("no_progress", False),
+                        help="Disable tqdm progress bars. Non-interactive controller/log runs disable them automatically.")
     parser.add_argument("--smooth_window", type=int, default=td("smooth_window", 3),
                         help="best 기준 val_f1을 최근 N epoch 통계로 smooth (0=비활성)")
     parser.add_argument("--smooth_method", type=str, default=td("smooth_method", "median"),
@@ -897,6 +902,7 @@ def main():
     parser.add_argument("--prefetch_factor", type=int, default=td("prefetch_factor", 4),
                         help="DataLoader prefetch_factor (서버: 8~16)")
     args = parser.parse_args()
+    TQDM_DISABLE = bool(args.no_progress or not sys.stderr.isatty())
 
     with open(args.config, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
@@ -1005,6 +1011,7 @@ def main():
         "min_epochs": args.min_epochs,
         "precision": args.precision,
         "compile": args.compile,
+        "progress_bar": not TQDM_DISABLE,
         "max_samples_per_split": args.max_samples_per_split,
         "num_workers": args.num_workers,
         "prefetch_factor": args.prefetch_factor,

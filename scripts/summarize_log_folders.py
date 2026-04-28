@@ -14,13 +14,6 @@ from statistics import mean, pstdev
 from typing import Any
 
 os.environ.setdefault("MPLBACKEND", "Agg")
-try:
-    import matplotlib.pyplot as plt
-except Exception as exc:  # pragma: no cover - environment-dependent fallback
-    plt = None
-    PLOT_IMPORT_ERROR = exc
-else:
-    PLOT_IMPORT_ERROR = None
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -286,8 +279,6 @@ def write_text_report(
 
 
 def plot_f1(summary: list[dict[str, Any]], out_path: Path, top_k: int) -> None:
-    if plt is None:
-        return
     rows = [r for r in summary if r["f1_mean"] is not None][:top_k]
     if not rows:
         return
@@ -311,8 +302,6 @@ def plot_f1(summary: list[dict[str, Any]], out_path: Path, top_k: int) -> None:
 
 
 def plot_timeline(rows: list[RunRecord], out_path: Path) -> None:
-    if plt is None:
-        return
     complete = [r for r in rows if r.complete and r.f1 is not None]
     if not complete:
         return
@@ -332,8 +321,6 @@ def plot_timeline(rows: list[RunRecord], out_path: Path) -> None:
 
 
 def plot_errors(summary: list[dict[str, Any]], out_path: Path, top_k: int) -> None:
-    if plt is None:
-        return
     rows = [r for r in summary if r["fn_mean"] is not None and r["fp_mean"] is not None][:top_k]
     if not rows:
         return
@@ -401,12 +388,16 @@ def main() -> None:
     write_csv(out_prefix.with_name(out_prefix.name + "_summary.csv"), summary, summary_fields)
     write_csv(out_prefix.with_name(out_prefix.name + "_runs.csv"), run_dicts, run_fields)
 
-    if not args.no_plots and plt is None:
-        print(f"[log-summary] plot skipped: matplotlib.pyplot import failed: {PLOT_IMPORT_ERROR}")
-    elif not args.no_plots:
-        plot_f1(summary, out_prefix.with_name(out_prefix.name + "_f1.png"), args.top_k)
-        plot_timeline(rows, out_prefix.with_name(out_prefix.name + "_timeline.png"))
-        plot_errors(summary, out_prefix.with_name(out_prefix.name + "_errors.png"), args.top_k)
+    if not args.no_plots:
+        try:
+            import matplotlib.pyplot as plt  # noqa: F401
+        except Exception as exc:  # pragma: no cover - environment-dependent fallback
+            print(f"[log-summary] plot skipped: matplotlib.pyplot import failed: {exc}")
+        else:
+            globals()["plt"] = plt
+            plot_f1(summary, out_prefix.with_name(out_prefix.name + "_f1.png"), args.top_k)
+            plot_timeline(rows, out_prefix.with_name(out_prefix.name + "_timeline.png"))
+            plot_errors(summary, out_prefix.with_name(out_prefix.name + "_errors.png"), args.top_k)
 
     print(f"[log-summary] parsed {len(rows)} runs, {len(summary)} candidates")
     print(f"[log-summary] wrote {out_prefix.with_suffix('.txt')}")

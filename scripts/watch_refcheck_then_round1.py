@@ -15,6 +15,7 @@ from typing import Any, TextIO
 
 
 ROOT = Path(__file__).resolve().parents[1]
+NEEDED_ROUND1_AXES = "stochastic_depth,focal_gamma,abnormal_weight,ema,color,allow_tie_save"
 
 
 def now() -> str:
@@ -221,7 +222,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--completion-exit-grace", type=float, default=15.0)
     parser.add_argument("--start-after-axis", default="")
     parser.add_argument("--start-after-candidate", default="")
-    parser.add_argument("--include-axes", default="")
+    parser.add_argument("--include-axes", default=NEEDED_ROUND1_AXES)
     parser.add_argument("--keep-completed-in-queue", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--max-launched", type=int, default=0)

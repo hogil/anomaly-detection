@@ -219,7 +219,7 @@ def build_status(args: argparse.Namespace) -> list[str]:
     lines = [
         "",
         "- 이 블록은 `scripts/update_live_summary_doc.py`가 controller artifact에서 갱신합니다.",
-        "- 서버 rawbase queue 정책: GC는 5개 조건만 유지합니다: `gc01`, `gc025`, `gc05`, `gc15`, `gc50`; sample-skip은 main sweep과 분리합니다.",
+        "- 서버 rawbase queue 정책: 현재 needed-only resume에서는 GC와 warmup을 제외하고 `stochastic_depth`, `focal_gamma`, `abnormal_weight`, `ema`, `color`, `allow_tie_save`만 실행합니다. sample-skip은 main sweep과 분리합니다.",
     ]
     if raw_agg:
         lines.append(

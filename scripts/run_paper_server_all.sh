@@ -33,6 +33,9 @@ Runs the paper experiment pipeline in one command:
   weights check/download -> dataset/image generation if needed -> refcheck ->
   strict one-factor round1 -> select/run round2 -> instability/trend/report.
 
+For the current server needed-only resume, use:
+  bash scripts/sweeps_server/00_all.sh
+
 Options:
   --python PATH           Python executable (default: python or $PYTHON)
   --config PATH           Dataset config used on this server (default: dataset.yaml)
@@ -44,7 +47,7 @@ Options:
   --force                 Re-run completed tags
   --max-launched N        Stop controller after launching N new runs (debug/resume)
   --round1-after-gc       Start strict round1 after the GC block
-  --round1-include-gc     Include the 5-condition GC block (default)
+  --round1-include-gc     Include the 5-condition GC block when running full round1
   --round1-start-after-candidate STR
                           Start strict round1 after this candidate's last queued seed
   --round1-include-axes CSV

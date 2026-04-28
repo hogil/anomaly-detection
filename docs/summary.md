@@ -1,13 +1,13 @@
 # 실험 요약
 
-_자동 갱신 시각: `2026-04-29T05:53:42+09:00`._
+_자동 갱신 시각: `2026-04-29T06:03:42+09:00`._
 
 ## 실험 방식
 
 - 같은 baseline에서 한 번에 하나의 축만 바꾸는 strict one-factor 실험입니다.
 - 기본 seed는 `42, 1, 2, 3, 4`이고, 성능은 `F1`, `FN`, `FP`, 완료 seed 수로 봅니다.
 - 서버 rawbase 기준선은 `fresh0412_v11_refcheck_raw_n700`입니다. rawbase main sweep은 `grad_clip=0.0`, `smooth_window=1`, `label_smoothing=0.0`, `NT=0.9`로 맞춥니다.
-- GC는 rawbase main sweep에서 `gc01`, `gc025`, `gc05`, `gc15`, `gc50` 5조건만 비교합니다. sample-skip은 main sweep에 섞지 않고 별도 1-run으로만 봅니다.
+- GC는 기존 dense sweep과 rawbase 일부 결과로 충분하므로 현재 server needed-only queue에서는 제외합니다. sample-skip은 main sweep에 섞지 않고 별도 1-run으로만 봅니다.
 
 ## 성능 요약
 
@@ -57,7 +57,7 @@ _자동 갱신 시각: `2026-04-29T05:53:42+09:00`._
 | scope | 남은 내용 | runs |
 | --- | --- | ---: |
 | current rawbase queue | `stochastic_depth` 잔여 14 seeds, `focal_gamma` 3조건, `abnormal_weight` 5조건, `ema` 2조건, `color` 2조건, `allow_tie_save` 1조건 | 79 |
-| server needed-only resume | current rawbase 잔여 + `gc025` 잔여 2 seeds + `gc05/gc15/gc50`; `warmup` 후순위 제외 | 96 |
+| server needed-only resume | current rawbase 잔여만 실행; GC와 `warmup` 후순위 제외 | 79 |
 | round2 | rawbase round1 완료 후 결과 기준으로 새 선정 | pending |
 
 ## 플롯 목록

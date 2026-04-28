@@ -42,16 +42,35 @@ def parse_run_name(path: Path) -> tuple[str, int | None]:
     return name[: match.start()], seed
 
 
-def binary_counts(best_info: dict[str, Any]) -> tuple[int | None, int | None]:
-    metrics = best_info.get("test_metrics") or {}
+def binary_counts(metrics: dict[str, Any]) -> tuple[int | None, int | None]:
     normal = metrics.get("normal") or {}
     abnormal = metrics.get("abnormal") or {}
+    try:
+        if "fn" in normal and "fn" in abnormal:
+            # Report anomaly-view counts: FN = missed abnormal, FP = normal flagged as abnormal.
+            return int(round(float(abnormal["fn"]))), int(round(float(normal["fn"])))
+    except (TypeError, ValueError):
+        pass
     try:
         fp = int(round(float(normal.get("support", normal.get("count"))) * (1.0 - float(normal["recall"]))))
         fn = int(round(float(abnormal.get("support", abnormal.get("count"))) * (1.0 - float(abnormal["recall"]))))
         return fn, fp
     except (KeyError, TypeError, ValueError):
         return None, None
+
+
+def report_metrics(best_info: dict[str, Any]) -> tuple[float | None, int | None, int | None, str]:
+    selected_nt = best_info.get("selected_normal_threshold_result")
+    if isinstance(selected_nt, dict):
+        f1 = finite_float(selected_nt.get("f1"))
+        metrics = selected_nt.get("metrics") or {}
+        if isinstance(metrics, dict):
+            fn, fp = binary_counts(metrics)
+            return f1, fn, fp, "selected_nt"
+
+    metrics = best_info.get("test_metrics") or {}
+    fn, fp = binary_counts(metrics) if isinstance(metrics, dict) else (None, None)
+    return finite_float(best_info.get("test_f1")), fn, fp, "best_info"
 
 
 def collect_run(run_dir: Path) -> dict[str, Any] | None:
@@ -74,7 +93,7 @@ def collect_run(run_dir: Path) -> dict[str, Any] | None:
     grad_max = [finite_float(row.get("grad_norm_max")) for row in history]
     grad_max = [v for v in grad_max if v is not None]
 
-    fn, fp = binary_counts(best_info)
+    report_f1, fn, fp, metric_source = report_metrics(best_info)
     return {
         "candidate": candidate,
         "seed": seed,
@@ -82,6 +101,7 @@ def collect_run(run_dir: Path) -> dict[str, Any] | None:
         "epochs": len(history),
         "best_epoch": best_info.get("epoch", best_info.get("best_epoch")),
         "best_info_f1": finite_float(best_info.get("test_f1")),
+        "report_f1": report_f1,
         "best_val_f1": max(val_f1) if val_f1 else None,
         "best_test_f1": max(test_f1) if test_f1 else finite_float(best_info.get("test_f1")),
         "final_val_f1": val_f1[-1] if val_f1 else None,
@@ -93,6 +113,7 @@ def collect_run(run_dir: Path) -> dict[str, Any] | None:
         "loss_skipped_batches": sum(int(row.get("loss_skipped_batches", 0) or 0) for row in history),
         "fn": fn,
         "fp": fp,
+        "metric_source": metric_source,
         "history": history,
     }
 
@@ -111,7 +132,7 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     out = []
     for candidate, items in groups.items():
-        values = [x["best_test_f1"] for x in items if x["best_test_f1"] is not None]
+        values = [x["report_f1"] for x in items if x["report_f1"] is not None]
         fns = [x["fn"] for x in items if x["fn"] is not None]
         fps = [x["fp"] for x in items if x["fp"] is not None]
         grad = [x["max_grad_p99"] for x in items if x["max_grad_p99"] is not None]
@@ -139,19 +160,39 @@ def write_csv(path: Path, rows: list[dict[str, Any]], fields: list[str]) -> None
             writer.writerow({field: row.get(field) for field in fields})
 
 
-def write_markdown(path: Path, run_rows: list[dict[str, Any]], agg_rows: list[dict[str, Any]], top_k: int) -> None:
+def plot_path(prefix: Path, suffix: str) -> str:
+    return prefix.with_name(prefix.name + suffix).name
+
+
+def write_markdown(path: Path, prefix: Path, run_rows: list[dict[str, Any]], agg_rows: list[dict[str, Any]], top_k: int, no_plots: bool) -> None:
     lines = [
-        "# Log History Report",
+        "# Server Log Summary",
         "",
         f"- Runs parsed: `{len(run_rows)}`",
         f"- Candidates: `{len(agg_rows)}`",
-        "- Source: `logs/*/history.json` plus `best_info.json` when present.",
+        "- Source: `logs/*/history.json` plus `best_info.json`.",
+        "- Metric: `selected_normal_threshold_result` when present, otherwise `best_info.test_f1`.",
         "",
+    ]
+    if not no_plots:
+        lines.extend([
+            "## Live Plots",
+            "",
+            f"![candidate F1]({plot_path(prefix, '_candidate_f1.png')})",
+            "",
+            f"![FN FP]({plot_path(prefix, '_fn_fp.png')})",
+            "",
+            f"![val F1 curves]({plot_path(prefix, '_val_f1_curves.png')})",
+            "",
+            f"![grad p99 curves]({plot_path(prefix, '_grad_p99_curves.png')})",
+            "",
+        ])
+    lines.extend([
         "## Candidate Summary",
         "",
-        "| candidate | runs | seeds | best_test_f1 mean | std | FN mean | FP mean | max grad p99 mean | nonfinite loss samples | skipped batches |",
+        "| candidate | runs | seeds | F1 mean | std | FN mean | FP mean | max grad p99 mean | nonfinite loss samples | skipped batches |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-    ]
+    ])
     for row in agg_rows[:top_k]:
         lines.append(
             "| {candidate} | {runs} | {seeds} | {f1_mean} | {f1_std} | {fn_mean} | {fp_mean} | {grad} | {bad} | {skip} |".format(
@@ -172,21 +213,22 @@ def write_markdown(path: Path, run_rows: list[dict[str, Any]], agg_rows: list[di
         "",
         "## Per-Run Summary",
         "",
-        "| candidate | seed | epochs | best test F1 | final val F1 | final test F1 | max val loss | max grad p99 | nonfinite loss samples | run dir |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+        "| candidate | seed | epochs | F1 | FN | FP | metric source | final val F1 | max val loss | max grad p99 | run dir |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | --- |",
     ])
     for row in sorted(run_rows, key=lambda x: (x["candidate"], x["seed"] if x["seed"] is not None else 9999))[:top_k * 5]:
         lines.append(
-            "| {candidate} | {seed} | {epochs} | {best_test} | {final_val} | {final_test} | {val_loss} | {grad} | {bad} | `{run_dir}` |".format(
+            "| {candidate} | {seed} | {epochs} | {f1} | {fn} | {fp} | {metric_source} | {final_val} | {val_loss} | {grad} | `{run_dir}` |".format(
                 candidate=row["candidate"],
                 seed="" if row["seed"] is None else row["seed"],
                 epochs=row["epochs"],
-                best_test=fmt(row["best_test_f1"]),
+                f1=fmt(row["report_f1"]),
+                fn="" if row["fn"] is None else row["fn"],
+                fp="" if row["fp"] is None else row["fp"],
+                metric_source=row["metric_source"],
                 final_val=fmt(row["final_val_f1"]),
-                final_test=fmt(row["final_test_f1"]),
                 val_loss=fmt(row["max_val_loss"]),
                 grad=fmt(row["max_grad_p99"], 2),
-                bad=row["loss_nonfinite_samples"],
                 run_dir=row["run_dir"],
             )
         )
@@ -215,7 +257,21 @@ def plot_reports(prefix: Path, run_rows: list[dict[str, Any]], agg_rows: list[di
         fig.savefig(prefix.with_name(prefix.name + "_candidate_f1.png"), dpi=160)
         plt.close(fig)
 
-    selected = sorted(run_rows, key=lambda x: (x["best_test_f1"] is None, -(x["best_test_f1"] or 0)))[:top_k]
+        fn_values = [row["fn_mean"] or 0.0 for row in top]
+        fp_values = [row["fp_mean"] or 0.0 for row in top]
+        fig, ax = plt.subplots(figsize=(max(10, len(labels) * 0.55), 5))
+        xs = list(range(len(labels)))
+        ax.bar([x - 0.2 for x in xs], fn_values, width=0.4, label="FN mean")
+        ax.bar([x + 0.2 for x in xs], fp_values, width=0.4, label="FP mean")
+        ax.set_ylabel("mean count")
+        ax.set_xticks(xs)
+        ax.set_xticklabels(labels, rotation=70, ha="right", fontsize=8)
+        ax.legend()
+        fig.tight_layout()
+        fig.savefig(prefix.with_name(prefix.name + "_fn_fp.png"), dpi=160)
+        plt.close(fig)
+
+    selected = sorted(run_rows, key=lambda x: (x["report_f1"] is None, -(x["report_f1"] or 0)))[:top_k]
     if selected:
         fig, ax = plt.subplots(figsize=(10, 5))
         for row in selected:
@@ -272,9 +328,9 @@ def main() -> int:
 
     agg_rows = aggregate(rows)
     run_fields = [
-        "candidate", "seed", "epochs", "best_epoch", "best_info_f1", "best_val_f1", "best_test_f1",
+        "candidate", "seed", "epochs", "best_epoch", "best_info_f1", "report_f1", "best_val_f1", "best_test_f1",
         "final_val_f1", "final_test_f1", "max_val_loss", "max_grad_p99", "max_grad_norm",
-        "loss_nonfinite_samples", "loss_skipped_batches", "fn", "fp", "run_dir",
+        "loss_nonfinite_samples", "loss_skipped_batches", "fn", "fp", "metric_source", "run_dir",
     ]
     agg_fields = [
         "candidate", "runs", "seeds", "f1_mean", "f1_std", "fn_mean", "fp_mean",
@@ -282,7 +338,7 @@ def main() -> int:
     ]
     write_csv(args.out_prefix.with_name(args.out_prefix.name + "_runs.csv"), rows, run_fields)
     write_csv(args.out_prefix.with_name(args.out_prefix.name + "_candidates.csv"), agg_rows, agg_fields)
-    write_markdown(args.out_prefix.with_suffix(".md"), rows, agg_rows, args.top_k)
+    write_markdown(args.out_prefix.with_suffix(".md"), args.out_prefix, rows, agg_rows, args.top_k, args.no_plots)
     if not args.no_plots:
         plot_reports(args.out_prefix, rows, agg_rows, args.top_k)
     print(f"[history-report] runs={len(rows)} candidates={len(agg_rows)} out={args.out_prefix}")

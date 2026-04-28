@@ -309,10 +309,6 @@ PY
       --markdown-out validations/server_paper_rawbase_strict_single_factor_summary.md \
       --report-out validations/server_paper_rawbase_strict_single_factor_report.md \
       --plots-dir validations/server_paper_rawbase_strict_single_factor_plots
-    run_cmd "$PYTHON" scripts/publish_strict_report.py \
-      --source-report validations/server_paper_rawbase_strict_single_factor_report.md \
-      --source-round2 validations/server_paper_rawbase_strict_single_factor_round2_summary.md \
-      --source-plots validations/server_paper_rawbase_strict_single_factor_plots
   fi
 
   write_state "complete" "done" "server paper pipeline completed"

@@ -884,7 +884,7 @@ def write_markdown(
     generated_at = datetime.now().isoformat(timespec="seconds")
     main_complete = int(strict_summary.get("aggregates", {}).get("complete", 0))
     round2_complete = int(round2_summary.get("aggregates", {}).get("complete", 0))
-    round2_queue = load_json(VALIDATIONS / "paper_strict_single_factor_round2_queue.json")
+    round2_queue = load_json(VALIDATIONS / "server_paper_rawbase_strict_single_factor_round2_queue.prepared.json")
     round2_total = len(round2_queue.get("runs", []))
 
     lines = [
@@ -1035,8 +1035,8 @@ def build_records(strict_summary_path: Path, round2_summary_path: Path, round2_q
 def main() -> int:
     ap = argparse.ArgumentParser(description="Generate markdown and plots for strict one-factor experiments.")
     ap.add_argument("--strict-summary", default=str(VALIDATIONS / "paper_strict_single_factor_summary.json"))
-    ap.add_argument("--round2-summary", default=str(VALIDATIONS / "paper_strict_single_factor_round2_summary.json"))
-    ap.add_argument("--round2-queue", default=str(VALIDATIONS / "paper_strict_single_factor_round2_queue.json"))
+    ap.add_argument("--round2-summary", default=str(VALIDATIONS / "server_paper_rawbase_strict_single_factor_round2_summary.json"))
+    ap.add_argument("--round2-queue", default=str(VALIDATIONS / "server_paper_rawbase_strict_single_factor_round2_queue.prepared.json"))
     ap.add_argument("--state", default=str(VALIDATIONS / "paper_strict_single_factor_state.json"))
     ap.add_argument("--markdown-out", default=str(VALIDATIONS / "paper_strict_single_factor_summary.md"))
     ap.add_argument("--report-out", default=str(VALIDATIONS / "paper_strict_single_factor_report.md"))

@@ -12,6 +12,13 @@ from typing import Any
 
 RAW_REFERENCE = "fresh0412_v11_refcheck_raw_n700"
 RAW_DUPLICATE_GC00 = "fresh0412_v11_rawbase_gc00_n700"
+DEFAULT_GC_CANDIDATES = (
+    "fresh0412_v11_gc01_n700",
+    "fresh0412_v11_gc025_n700",
+    "fresh0412_v11_gc05_n700",
+    "fresh0412_v11_gc15_n700",
+    "fresh0412_v11_gc50_n700",
+)
 
 
 def candidate_name(run: dict[str, Any]) -> str:
@@ -52,7 +59,11 @@ def infer_axis(candidate: str) -> str:
 
 def rewrite_for_raw_server_baseline(run: dict[str, Any]) -> str:
     old_candidate = candidate_name(run)
-    if old_candidate.startswith("fresh0412_v11_rawbase_") or "_refcheck_raw_" in old_candidate:
+    if (
+        old_candidate.startswith("fresh0412_v11_rawbase_")
+        or "_refcheck_raw_" in old_candidate
+        or "_lossfilter_raw_" in old_candidate
+    ):
         return old_candidate
     if not old_candidate.startswith("fresh0412_v11_"):
         return old_candidate
@@ -69,6 +80,18 @@ def rewrite_for_raw_server_baseline(run: dict[str, Any]) -> str:
 
 def is_duplicate_raw_gc00(candidate: str) -> bool:
     return candidate == RAW_DUPLICATE_GC00 or normalize_candidate(candidate) == "fresh0412_v11_gc00_n700"
+
+
+def parse_gc_candidates(raw: str) -> set[str]:
+    out: set[str] = set()
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if item.startswith("gc"):
+            item = f"fresh0412_v11_{item}_n700"
+        out.add(normalize_candidate(item))
+    return out
 
 
 def trim_runs(
@@ -116,6 +139,8 @@ def prepare_queue(args: argparse.Namespace) -> dict[str, Any]:
         payload["server_start_after_axis"] = args.start_after_axis
     if args.start_after_candidate:
         payload["server_start_after_candidate"] = args.start_after_candidate
+    allowed_gc_candidates = parse_gc_candidates(args.gc_candidates)
+    payload["server_gc_candidates"] = sorted(allowed_gc_candidates)
 
     runs = payload.get("runs", [])
     if not isinstance(runs, list):
@@ -132,12 +157,16 @@ def prepare_queue(args: argparse.Namespace) -> dict[str, Any]:
 
     prepared_runs: list[dict[str, Any]] = []
     skipped_duplicate_controls: list[str] = []
+    skipped_gc_candidates: list[str] = []
     for run in payload.get("runs", []):
         candidate = rewrite_for_raw_server_baseline(run)
         if is_duplicate_raw_gc00(candidate):
             skipped_duplicate_controls.append(candidate)
             continue
         axis = infer_axis(candidate)
+        if axis == "gc" and normalize_candidate(candidate) not in allowed_gc_candidates:
+            skipped_gc_candidates.append(candidate)
+            continue
         run_args = run.setdefault("args", {})
         if not isinstance(run_args, dict):
             raise SystemExit(f"run args must be a JSON object: {run.get('tag')}")
@@ -158,6 +187,12 @@ def prepare_queue(args: argparse.Namespace) -> dict[str, Any]:
             "[queue] skipped duplicate raw controls: "
             + ", ".join(payload["server_skipped_duplicate_controls"])
         )
+    if skipped_gc_candidates:
+        payload["server_skipped_gc_candidates"] = sorted(set(skipped_gc_candidates))
+        print(
+            "[queue] skipped extra GC candidates: "
+            + ", ".join(payload["server_skipped_gc_candidates"])
+        )
 
     return payload
 
@@ -172,6 +207,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start-after-axis", default="")
     parser.add_argument("--start-after-candidate", default="")
     parser.add_argument("--raw-reference", default=RAW_REFERENCE)
+    parser.add_argument(
+        "--gc-candidates",
+        default=",".join(DEFAULT_GC_CANDIDATES),
+        help="Comma-separated GC candidates to keep. Tokens like gc01 are accepted. Default keeps 5 GC conditions.",
+    )
     return parser.parse_args()
 
 

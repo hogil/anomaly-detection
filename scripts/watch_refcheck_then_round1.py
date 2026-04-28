@@ -208,7 +208,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--poll-seconds", type=float, default=30.0)
     parser.add_argument("--timeout-seconds", type=float, default=0.0)
     parser.add_argument("--completion-exit-grace", type=float, default=15.0)
-    parser.add_argument("--start-after-axis", default="gc")
+    parser.add_argument("--start-after-axis", default="")
     parser.add_argument("--start-after-candidate", default="")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--max-launched", type=int, default=0)

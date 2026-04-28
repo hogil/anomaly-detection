@@ -19,7 +19,7 @@ SKIP_ROUND2=0
 SKIP_POST=0
 FORCE=0
 MAX_LAUNCHED=0
-ROUND1_START_AFTER_AXIS="gc"
+ROUND1_START_AFTER_AXIS=""
 ROUND1_START_AFTER_CANDIDATE=""
 
 usage() {
@@ -41,8 +41,8 @@ Options:
   --min-f1 FLOAT          Minimum F1 for strong-run trend analysis (default: 0.99)
   --force                 Re-run completed tags
   --max-launched N        Stop controller after launching N new runs (debug/resume)
-  --round1-after-gc       Start strict round1 after the GC block (default)
-  --round1-include-gc     Include the GC block again
+  --round1-after-gc       Start strict round1 after the GC block
+  --round1-include-gc     Include the 5-condition GC block (default)
   --round1-start-after-candidate STR
                           Start strict round1 after this candidate's last queued seed
   --skip-weights          Do not run download.py when weights are missing
@@ -136,145 +136,21 @@ prepare_queue() {
   local dst="$2"
   local start_after_axis="${3:-}"
   local start_after_candidate="${4:-}"
-  "$PYTHON" - "$src" "$dst" "$CONFIG" "$NUM_WORKERS" "$PREFETCH_FACTOR" "$start_after_axis" "$start_after_candidate" <<'PY'
-import json
-import re
-import sys
-from pathlib import Path
-
-src, dst, config, num_workers, prefetch_factor, start_after_axis, start_after_candidate = sys.argv[1:]
-payload = json.loads(Path(src).read_text(encoding="utf-8"))
-payload["server_rewritten_from"] = src
-payload["server_config"] = config
-payload["server_num_workers"] = int(num_workers)
-if start_after_axis:
-    payload["server_start_after_axis"] = start_after_axis
-if start_after_candidate:
-    payload["server_start_after_candidate"] = start_after_candidate
-
-
-def candidate_name(run):
-    candidate = run.get("candidate")
-    if candidate:
-        return str(candidate)
-    return re.sub(r"_s\d+$", "", str(run.get("tag", "")))
-
-
-def normalize_candidate(candidate):
-    if candidate.startswith("fresh0412_v11_rawbase_"):
-        return "fresh0412_v11_" + candidate.removeprefix("fresh0412_v11_rawbase_")
-    return candidate
-
-
-def infer_axis(candidate):
-    candidate = normalize_candidate(candidate)
-    if re.search(r"_gc(?:\d|$)", candidate):
-        return "gc"
-    if re.search(r"_n\d+$", candidate):
-        return "normal_ratio"
-    if "_regls" in candidate:
-        return "label_smoothing"
-    if "_regdp" in candidate:
-        return "stochastic_depth"
-    if "_fg" in candidate:
-        return "focal_gamma"
-    if "_aw" in candidate:
-        return "abnormal_weight"
-    if "_ema" in candidate:
-        return "ema"
-    if "_color_" in candidate:
-        return "color"
-    if "_tie_" in candidate:
-        return "allow_tie_save"
-    return "other"
-
-
-RAW_REFERENCE = "fresh0412_v11_refcheck_raw_n700"
-RAW_DUPLICATE_GC00 = "fresh0412_v11_rawbase_gc00_n700"
-payload["selected_reference"] = RAW_REFERENCE
-payload["server_baseline"] = {
-    "candidate": RAW_REFERENCE,
-    "grad_clip": 0.0,
-    "smooth_window": 1,
-    "smooth_method": "median",
-}
-
-
-def rewrite_for_raw_server_baseline(run):
-    old_candidate = candidate_name(run)
-    if old_candidate.startswith("fresh0412_v11_rawbase_") or "_refcheck_raw_" in old_candidate:
-        return old_candidate
-    if not old_candidate.startswith("fresh0412_v11_"):
-        return old_candidate
-    new_candidate = "fresh0412_v11_rawbase_" + old_candidate.removeprefix("fresh0412_v11_")
-    run["candidate"] = new_candidate
-    old_tag = str(run.get("tag", ""))
-    if old_tag.startswith(old_candidate):
-        run["tag"] = new_candidate + old_tag[len(old_candidate):]
-    elif old_tag.startswith("fresh0412_v11_"):
-        run["tag"] = "fresh0412_v11_rawbase_" + old_tag.removeprefix("fresh0412_v11_")
-    return new_candidate
-
-
-def is_duplicate_raw_gc00(candidate):
-    return candidate == RAW_DUPLICATE_GC00 or normalize_candidate(candidate) == "fresh0412_v11_gc00_n700"
-
-
-def trim_runs(runs):
-    if not start_after_axis and not start_after_candidate:
-        return runs
-    last_idx = -1
-    for idx, run in enumerate(runs):
-        candidate = candidate_name(run)
-        if start_after_candidate and candidate == start_after_candidate:
-            last_idx = idx
-        if start_after_axis and infer_axis(candidate) == start_after_axis:
-            last_idx = idx
-    if last_idx < 0:
-        target = start_after_candidate or f"axis:{start_after_axis}"
-        raise SystemExit(f"start-after target not found in queue {src}: {target}")
-    kept = runs[last_idx + 1:]
-    if not kept:
-        target = start_after_candidate or f"axis:{start_after_axis}"
-        raise SystemExit(f"queue has no runs after start-after target: {target}")
-    print(f"[queue] trimmed {len(runs) - len(kept)} runs before start-after target; kept {len(kept)}")
-    return kept
-
-
-if isinstance(payload.get("runs"), list):
-    if start_after_axis or start_after_candidate:
-        payload["runs"] = trim_runs(payload["runs"])
-elif start_after_axis or start_after_candidate:
-    raise SystemExit(f"queue has no explicit runs list to trim: {src}")
-
-prepared_runs = []
-skipped_duplicate_controls = []
-for run in payload.get("runs", []):
-    candidate = rewrite_for_raw_server_baseline(run)
-    if is_duplicate_raw_gc00(candidate):
-        skipped_duplicate_controls.append(candidate)
-        continue
-    axis = infer_axis(candidate)
-    args = run.setdefault("args", {})
-    if axis != "gc":
-        args["--grad_clip"] = 0.0
-    if axis != "smoothing":
-        args["--smooth_window"] = 1
-        args["--smooth_method"] = "median"
-    args["--config"] = config
-    args["--num_workers"] = int(num_workers)
-    args["--prefetch_factor"] = int(prefetch_factor)
-    prepared_runs.append(run)
-
-payload["runs"] = prepared_runs
-if skipped_duplicate_controls:
-    payload["server_skipped_duplicate_controls"] = sorted(set(skipped_duplicate_controls))
-    print("[queue] skipped duplicate raw controls: " + ", ".join(payload["server_skipped_duplicate_controls"]))
-
-Path(dst).parent.mkdir(parents=True, exist_ok=True)
-Path(dst).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-print(dst)
-PY
+  local args=(
+    scripts/prepare_server_queue.py
+    --src "$src"
+    --dst "$dst"
+    --config "$CONFIG"
+    --num-workers "$NUM_WORKERS"
+    --prefetch-factor "$PREFETCH_FACTOR"
+  )
+  if [[ -n "$start_after_axis" ]]; then
+    args+=(--start-after-axis "$start_after_axis")
+  fi
+  if [[ -n "$start_after_candidate" ]]; then
+    args+=(--start-after-candidate "$start_after_candidate")
+  fi
+  run_cmd "$PYTHON" "${args[@]}"
 }
 
 run_controller() {

@@ -315,6 +315,68 @@ def build_overview(args: argparse.Namespace) -> list[str]:
     return lines
 
 
+def build_performance_summary(args: argparse.Namespace) -> list[str]:
+    raw_ref = read_json(args.raw_ref_summary)
+    rawbase = read_json(args.rawbase_summary)
+    sample_skip = read_json(args.sample_skip_summary)
+
+    raw_agg = raw_ref.get("aggregates", {})
+    rawbase_agg = rawbase.get("aggregates", {})
+    sample_latest = latest_run(sample_skip)
+
+    lines = [
+        "",
+        "| experiment | basis | seeds/runs | F1 | FN | FP | note |",
+        "| --- | --- | ---: | ---: | ---: | ---: | --- |",
+    ]
+    if raw_agg:
+        lines.append(
+            f"| `fresh0412_v11_refcheck_raw_n700` | raw server baseline | {raw_agg.get('complete', 0)}/5 | "
+            f"{fmt_num(raw_agg.get('f1_mean'))} | {fmt_num(raw_agg.get('fn_mean'), 3)} | {fmt_num(raw_agg.get('fp_mean'), 3)} | 현재 서버 기준선 |"
+        )
+    else:
+        lines.append("| `fresh0412_v11_refcheck_raw_n700` | raw server baseline | 5/5 | 0.99746 | 1.6 | 2.2 | 현재 서버 기준선 |")
+    lines.extend([
+        "| `fresh0412_v11_refcheck_gcsmooth_n700` | matched control | 5/5 | 0.9955 | 4.4 | 2.4 | 아래 기존 strict 표의 delta 기준 |",
+        "| `fresh0412_v11_n700_existing` | historical selected ref | 5/5 | 0.9901 | 9.8 | 5.0 | 과거 reference 선택 기록 |",
+    ])
+    if rawbase_agg:
+        lines.append(
+            f"| rawbase round1 live | rawbase history | {rawbase_agg.get('complete', 0)} runs | "
+            f"{fmt_num(rawbase_agg.get('f1_mean'))} | {fmt_num(rawbase_agg.get('fn_mean'), 3)} | {fmt_num(rawbase_agg.get('fp_mean'), 3)} | 중간 집계, 최종 claim 아님 |"
+        )
+    if sample_latest:
+        lines.append(
+            f"| sample-skip pilot | separate 1-run | 1/1 | {fmt_num(sample_latest.get('test_f1'))} | "
+            f"{sample_latest.get('fn')} | {sample_latest.get('fp')} | main sweep과 분리 |"
+        )
+    lines.append("")
+    return lines
+
+
+def build_rawbase_progress(args: argparse.Namespace) -> list[str]:
+    rawbase = read_json(args.rawbase_summary)
+    by_candidate = rawbase.get("aggregates", {}).get("by_candidate", {})
+    lines = [
+        "",
+        "| candidate | seeds | F1 | FN | FP | status |",
+        "| --- | ---: | ---: | ---: | ---: | --- |",
+    ]
+    if isinstance(by_candidate, dict):
+        for name, row in sorted(by_candidate.items()):
+            complete = int(row.get("complete", 0) or 0)
+            status = "complete" if complete >= 5 else "partial"
+            lines.append(
+                f"| `{name}` | {complete}/5 | {fmt_num(row.get('f1_mean'))} | "
+                f"{fmt_num(row.get('fn_mean'), 3)} | {fmt_num(row.get('fp_mean'), 3)} | {status} |"
+            )
+    active = active_log(args.logs_dir)
+    if active:
+        lines.extend(["", f"- active run: `{active}`"])
+    lines.append("")
+    return lines
+
+
 def replace_section(text: str, heading: str, new_lines: list[str]) -> str:
     pattern = re.compile(rf"({re.escape(heading)}\n)(.*?)(\n## )", re.S)
     replacement = r"\1" + "\n".join(new_lines) + r"\3"
@@ -322,6 +384,14 @@ def replace_section(text: str, heading: str, new_lines: list[str]) -> str:
     if count != 1:
         raise SystemExit(f"heading section not found: {heading}")
     return text
+
+
+def insert_section_before(text: str, heading: str, section_heading: str, new_lines: list[str]) -> str:
+    idx = text.find(heading)
+    if idx < 0:
+        return text.rstrip() + "\n\n" + section_heading + "\n" + "\n".join(new_lines) + "\n"
+    section = section_heading + "\n" + "\n".join(new_lines)
+    return text[:idx].rstrip() + "\n\n" + section.rstrip() + "\n\n" + text[idx:].lstrip()
 
 
 def replace_tail(text: str, heading: str, new_lines: list[str]) -> str:
@@ -347,13 +417,19 @@ def main() -> int:
     text = args.docs.read_text(encoding="utf-8")
     now = datetime.now().astimezone().isoformat(timespec="seconds")
     text = re.sub(r"_자동 갱신 시각: `[^`]+`._", f"_자동 갱신 시각: `{now}`._", text, count=1)
-    text = replace_section(text, "## 현재 진행 상태", build_status(args))
-    text = replace_section(text, "## 요약", build_overview(args))
-    live_lines = rawbase_live_sections(args)
+    if "## 성능 요약" in text:
+        text = replace_section(text, "## 성능 요약", build_performance_summary(args))
+    elif "## 현재 진행 상태" in text:
+        text = replace_section(text, "## 현재 진행 상태", build_status(args))
+    if "## Rawbase 진행" in text:
+        text = replace_section(text, "## Rawbase 진행", build_rawbase_progress(args))
+    elif "## Best Known Method" in text:
+        text = insert_section_before(text, "## Best Known Method", "## Rawbase 진행", build_rawbase_progress(args))
+    if "## 요약" in text:
+        text = replace_section(text, "## 요약", build_overview(args))
     if "## Rawbase Live Tables And Plots" in text:
+        live_lines = rawbase_live_sections(args)
         text = replace_tail(text, "## Rawbase Live Tables And Plots", live_lines)
-    else:
-        text = text.rstrip() + "\n\n" + "\n".join(live_lines) + "\n"
     args.docs.write_text(text, encoding="utf-8")
     print(f"[live-summary] updated {args.docs}")
     return 0

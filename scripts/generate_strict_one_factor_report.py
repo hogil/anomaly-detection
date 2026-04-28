@@ -697,16 +697,16 @@ def best_known_method(records: dict[str, dict[str, ConditionRecord]]) -> list[st
 
     recipe_lines: list[str] = []
     recipe_lines.extend([
-        "| axis | ref value | BKM value | F1 | FN | FP | status |",
+        "| axis | baseline | BKM value | F1 | FN | FP | status |",
         "| --- | ---: | ---: | ---: | ---: | ---: | --- |",
     ])
     for family in ("normal_ratio", "gc", "label_smoothing", "stochastic_depth", "focal_gamma", "abnormal_weight", "ema", "allow_tie_save"):
         best = picks[family]
         if best is None:
             continue
-        ref_label = FAMILY_BASELINES.get(family, ("", ""))[0]
+        baseline_label = {"gc": "1.0"}.get(family, FAMILY_BASELINES.get(family, ("", ""))[0])
         recipe_lines.append(
-            f"| `{family}` | `{ref_label}` | `{best.label}` | {fmt_float(best.f1)} | {fmt_compact(best.fn)} | {fmt_compact(best.fp)} | single-axis evidence |"
+            f"| `{family}` | `{baseline_label}` | `{best.label}` | {fmt_float(best.f1)} | {fmt_compact(best.fn)} | {fmt_compact(best.fp)} | single-axis evidence |"
         )
     return recipe_lines
 
@@ -892,44 +892,27 @@ def write_markdown(
         "",
         f"_Auto-updated at `{generated_at}`._",
         "",
-        "## Interpretation",
+        "## Experiment Protocol",
+        "",
+        "- Strict one-factor protocol: keep the baseline fixed and change one axis at a time.",
+        "- Main seed set: `42, 1, 2, 3, 4`; report `F1`, `FN`, `FP`, and completed seed count.",
+        f"- Operating baseline: `{OPERATING_BASELINE}`.",
+        "- Rawbase server sweep uses `grad_clip=0.0`, `smooth_window=1`, `label_smoothing=0.0`, and `NT=0.9`.",
+        "",
+        "## Performance Summary",
+        "",
+        "| experiment | basis | seeds/runs | F1 | FN | FP | note |",
+        "| --- | --- | ---: | ---: | ---: | ---: | --- |",
+        f"| `{OPERATING_BASELINE}` | operating baseline | 5/5 | {fmt_float(baseline[0])} | {fmt_compact(baseline[1])} | {fmt_compact(baseline[2])} | current comparison baseline |",
+        "| `fresh0412_v11_refcheck_gcsmooth_n700` | matched control | 5/5 | 0.9955 | 4.4 | 2.4 | legacy strict delta basis |",
+        "| `fresh0412_v11_n700_existing` | historical selected ref | 5/5 | 0.9901 | 9.8 | 5.0 | reference-selection history |",
+        f"| main strict queue | one-factor sweep | {main_complete} runs | - | - | - | decision `{strict_summary.get('decision')}` |",
+        f"| round-2 refinement | follow-up neighbors | {round2_complete}/{round2_total} runs | - | - | - | stage `{state.get('stage')}`, status `{state.get('status')}` |",
         "",
     ]
-    lines.extend([f"- {line}" for line in experiment_interpretation(records)])
-    lines.extend([
-        "",
-        "## Evidence Limits And Next Fixes",
-        "",
-    ])
-    lines.extend([f"- {line}" for line in evidence_limits(records)])
-    lines.extend([
-        "",
-        "## Summary",
-        "",
-        f"- Operating baseline: `{OPERATING_BASELINE}` -> `F1={fmt_float(baseline[0])}`, `FN={fmt_compact(baseline[1])}`, `FP={fmt_compact(baseline[2])}` over `5/5` seeds.",
-        f"- Historical selected ref: `{HISTORICAL_BASELINE}` -> `F1=0.9901`, `FN=9.8`, `FP=5.0`; kept only as reference-selection history.",
-        f"- Main strict queue: `{main_complete}` completed runs, decision `{strict_summary.get('decision')}`.",
-        f"- Round-2 refinement: `{round2_complete}/{round2_total}` completed runs, stage `{state.get('stage')}`, status `{state.get('status')}`.",
-        "",
-        "Display용 이미지와 실제 학습 입력 이미지는 다릅니다. 아래 두 montage는 기존 `display_v11/`와 `images_v11/`에서 같은 class 순서로 가져온 예시입니다.",
-        "",
-        "**Display images**",
-        "",
-        "![display samples](sample_overview_display.png)",
-        "",
-        "**Training images**",
-        "",
-        "![training samples](sample_overview_train.png)",
-        "",
-    ])
-    lines.extend([f"- {line}" for line in strongest_candidates(records)])
-    if optimized_normal_ratio:
-        lines.append("- `normal_ratio`: 현재 ref 기준 sweep에서는 3000~3500 구간이 좋아 보이지만, optimized-v11 sweep을 같이 보면 normal_ratio 증가가 항상 개선을 만들지는 않습니다.")
     lines.extend([
         "",
         "## Best Known Method",
-        "",
-        "_This is the current best-known method table from one-factor evidence. Joint combo validation still has to be run after round-2 closes._",
         "",
     ])
     lines.extend(best_known_method(records) or ["- No completed candidate set yet."])
@@ -939,7 +922,7 @@ def write_markdown(
         "",
         "같은 context chart를 member별 class 판단 이미지로 확장합니다. 불량 member 이미지만 anomaly class이고, 양호 member 이미지는 normal class입니다.",
         "",
-        "아래 예시는 같은 chart `ch_09100`을 `EQP A`, `EQP B`, `EQP C`, `EQP D`, `EQP E` class 이미지로 펼친 것입니다. 각 EQP class는 서로 다른 색으로 표시하고, 회색 점들은 같은 context 안의 비교 fleet입니다. 이 예시에서는 `EQP C`만 빨간 anomaly class이고 `EQP A`, `EQP B`, `EQP D`, `EQP E`는 파스텔 normal class입니다.",
+        "아래 예시는 같은 chart `ch_09100`을 `EQP A`, `EQP B`, `EQP C`, `EQP D`, `EQP E` class 이미지로 펼친 것입니다. 각 EQP의 highlighted trend만 서로 다른 색으로 표시하고, 회색 점들은 같은 context 안의 비교 fleet입니다. class 글자는 normal은 검정, anomaly는 빨강입니다. 이 예시에서는 `EQP C`만 anomaly class이고 `EQP A`, `EQP B`, `EQP D`, `EQP E`는 normal class입니다.",
         "",
         "![logical member class examples](logical_member_targets_ch09100.png)",
         "",

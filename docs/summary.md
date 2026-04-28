@@ -1,6 +1,6 @@
 # 실험 요약
 
-_자동 갱신 시각: `2026-04-28T20:37:13+09:00`._
+_자동 갱신 시각: `2026-04-28T20:41:57+09:00`._
 
 ## 현재 진행 상태
 
@@ -22,7 +22,8 @@ _자동 갱신 시각: `2026-04-28T20:37:13+09:00`._
 - 1단계: raw baseline refcheck 5 seeds는 완료됐고, `validations/server_paper_refcheck_raw_summary.json`을 raw 기준선으로 채택합니다.
 - 2단계: rawbase strict round1은 GC 5조건 제한을 적용한 뒤 진행합니다. `bash scripts/sweeps_server/00_all.sh`, `02_round1.sh`, Windows watcher 모두 같은 queue preparation 정책을 씁니다.
 - 3단계: raw round1 결과로 round2를 새로 선택합니다. 기존 `paper_strict_single_factor_round2_*` 산출물은 gcsmooth 기준이므로 raw baseline claim에는 직접 재사용하지 않습니다.
-- 4단계: sample-skip은 main sweep에 섞지 않고 별도 1-run으로만 비교합니다. 우선순위는 5조건 GC, `normal_ratio`, `label_smoothing`, `abnormal_weight`, `stochastic_depth`, `ema`입니다.
+- 4단계: sample-skip은 main sweep에 섞지 않고 별도 1-run으로만 비교합니다. 우선순위는 5조건 GC, `normal_ratio`, `warmup`, `label_smoothing`, `abnormal_weight`, `stochastic_depth`, `ema`입니다.
+- warmup은 기존 `3/5/8`만으로 유의미한 축 모양을 주장하기 약하므로, follow-up `warmup=0`과 `warmup=10`을 5 seeds씩 추가합니다.
 
 ## 결과 해석
 

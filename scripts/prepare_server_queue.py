@@ -38,6 +38,8 @@ def infer_axis(candidate: str) -> str:
     candidate = normalize_candidate(candidate)
     if re.search(r"_gc(?:\d|$)", candidate):
         return "gc"
+    if "_lrwarm" in candidate:
+        return "warmup"
     if re.search(r"_n\d+$", candidate):
         return "normal_ratio"
     if "_regls" in candidate:

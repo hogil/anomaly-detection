@@ -19,7 +19,7 @@ SKIP_ROUND2=0
 SKIP_POST=0
 FORCE=0
 MAX_LAUNCHED=0
-ROUND1_START_AFTER_AXIS=""
+ROUND1_START_AFTER_AXIS="gc"
 ROUND1_START_AFTER_CANDIDATE=""
 
 usage() {
@@ -41,7 +41,8 @@ Options:
   --min-f1 FLOAT          Minimum F1 for strong-run trend analysis (default: 0.99)
   --force                 Re-run completed tags
   --max-launched N        Stop controller after launching N new runs (debug/resume)
-  --round1-after-gc       Start strict round1 after the GC block
+  --round1-after-gc       Start strict round1 after the GC block (default)
+  --round1-include-gc     Include the GC block again
   --round1-start-after-candidate STR
                           Start strict round1 after this candidate's last queued seed
   --skip-weights          Do not run download.py when weights are missing
@@ -66,6 +67,7 @@ while [[ $# -gt 0 ]]; do
     --force) FORCE=1; shift ;;
     --max-launched) MAX_LAUNCHED="$2"; shift 2 ;;
     --round1-after-gc) ROUND1_START_AFTER_AXIS="gc"; shift ;;
+    --round1-include-gc) ROUND1_START_AFTER_AXIS=""; shift ;;
     --round1-start-after-candidate) ROUND1_START_AFTER_CANDIDATE="$2"; shift 2 ;;
     --skip-weights) SKIP_WEIGHTS=1; shift ;;
     --skip-dataset) SKIP_DATASET=1; shift ;;
@@ -347,39 +349,39 @@ main() {
   if [[ "$SKIP_ROUND1" -eq 0 ]]; then
     prepare_queue \
       validations/paper_strict_single_factor_queue.json \
-      validations/server_paper_strict_single_factor_queue.json \
+      validations/server_paper_rawbase_strict_single_factor_queue.json \
       "$ROUND1_START_AFTER_AXIS" \
       "$ROUND1_START_AFTER_CANDIDATE"
     run_controller \
-      validations/server_paper_strict_single_factor_queue.json \
-      validations/server_paper_strict_single_factor_summary.json \
-      validations/server_paper_strict_single_factor_summary.md \
+      validations/server_paper_rawbase_strict_single_factor_queue.json \
+      validations/server_paper_rawbase_strict_single_factor_summary.json \
+      validations/server_paper_rawbase_strict_single_factor_summary.md \
       "strict_round1"
   fi
 
   if [[ "$SKIP_ROUND2" -eq 0 ]]; then
     write_state "running" "select_round2" "selecting round2 from server round1 summary"
     run_cmd "$PYTHON" scripts/select_strict_single_factor_refinements.py \
-      --summary validations/server_paper_strict_single_factor_summary.json \
-      --out-queue validations/server_paper_strict_single_factor_round2_queue.json \
-      --decision-md validations/server_paper_strict_single_factor_round2_decision.md
+      --summary validations/server_paper_rawbase_strict_single_factor_summary.json \
+      --out-queue validations/server_paper_rawbase_strict_single_factor_round2_queue.json \
+      --decision-md validations/server_paper_rawbase_strict_single_factor_round2_decision.md
 
-    if [[ -f validations/server_paper_strict_single_factor_round2_queue.json ]]; then
+    if [[ -f validations/server_paper_rawbase_strict_single_factor_round2_queue.json ]]; then
       ROUND2_COUNT="$("$PYTHON" - <<'PY'
 import json
 from pathlib import Path
-p = Path("validations/server_paper_strict_single_factor_round2_queue.json")
+p = Path("validations/server_paper_rawbase_strict_single_factor_round2_queue.json")
 print(len(json.loads(p.read_text(encoding="utf-8")).get("runs", [])))
 PY
 )"
       if [[ "$ROUND2_COUNT" -gt 0 ]]; then
         prepare_queue \
-          validations/server_paper_strict_single_factor_round2_queue.json \
-          validations/server_paper_strict_single_factor_round2_queue.prepared.json
+          validations/server_paper_rawbase_strict_single_factor_round2_queue.json \
+          validations/server_paper_rawbase_strict_single_factor_round2_queue.prepared.json
         run_controller \
-          validations/server_paper_strict_single_factor_round2_queue.prepared.json \
-          validations/server_paper_strict_single_factor_round2_summary.json \
-          validations/server_paper_strict_single_factor_round2_summary.md \
+          validations/server_paper_rawbase_strict_single_factor_round2_queue.prepared.json \
+          validations/server_paper_rawbase_strict_single_factor_round2_summary.json \
+          validations/server_paper_rawbase_strict_single_factor_round2_summary.md \
           "strict_round2"
       else
         echo "[skip] round2 queue is empty"
@@ -397,17 +399,17 @@ PY
       --out-prefix validations/prediction_trend_latest \
       --report-label "$CANDIDATE_PREFIX"
     run_cmd "$PYTHON" scripts/generate_strict_one_factor_report.py \
-      --strict-summary validations/server_paper_strict_single_factor_summary.json \
-      --round2-summary validations/server_paper_strict_single_factor_round2_summary.json \
-      --round2-queue validations/server_paper_strict_single_factor_round2_queue.prepared.json \
+      --strict-summary validations/server_paper_rawbase_strict_single_factor_summary.json \
+      --round2-summary validations/server_paper_rawbase_strict_single_factor_round2_summary.json \
+      --round2-queue validations/server_paper_rawbase_strict_single_factor_round2_queue.prepared.json \
       --state validations/paper_server_all_state.json \
-      --markdown-out validations/server_paper_strict_single_factor_summary.md \
-      --report-out validations/server_paper_strict_single_factor_report.md \
-      --plots-dir validations/server_paper_strict_single_factor_plots
+      --markdown-out validations/server_paper_rawbase_strict_single_factor_summary.md \
+      --report-out validations/server_paper_rawbase_strict_single_factor_report.md \
+      --plots-dir validations/server_paper_rawbase_strict_single_factor_plots
     run_cmd "$PYTHON" scripts/publish_strict_report.py \
-      --source-report validations/server_paper_strict_single_factor_report.md \
-      --source-round2 validations/server_paper_strict_single_factor_round2_summary.md \
-      --source-plots validations/server_paper_strict_single_factor_plots
+      --source-report validations/server_paper_rawbase_strict_single_factor_report.md \
+      --source-round2 validations/server_paper_rawbase_strict_single_factor_round2_summary.md \
+      --source-plots validations/server_paper_rawbase_strict_single_factor_plots
   fi
 
   write_state "complete" "done" "server paper pipeline completed"

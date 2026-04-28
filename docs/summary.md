@@ -1,6 +1,6 @@
 # 실험 요약
 
-_자동 갱신 시각: `2026-04-28T19:28:48+09:00`._
+_자동 갱신 시각: `2026-04-28T19:36:43+09:00`._
 
 ## 현재 진행 상태
 
@@ -20,7 +20,7 @@ _자동 갱신 시각: `2026-04-28T19:28:48+09:00`._
 ## Team Agent 운영 계획
 
 - 1단계: raw baseline refcheck 5 seeds는 완료됐고, `validations/server_paper_refcheck_raw_summary.json`을 raw 기준선으로 채택합니다.
-- 2단계: rawbase strict round1은 GC block을 건너뛰고 `normal_ratio`부터 진행합니다. 수동 재개가 필요하면 `bash scripts/sweeps_server/02_round1.sh --skip-weights --skip-dataset --round1-after-gc` 정책을 씁니다.
+- 2단계: rawbase strict round1은 GC block을 건너뛰고 `normal_ratio`부터 진행합니다. `bash scripts/sweeps_server/00_all.sh`, `02_round1.sh`, Windows watcher 모두 after-GC가 기본값입니다.
 - 3단계: raw round1 결과로 round2를 새로 선택합니다. 기존 `paper_strict_single_factor_round2_*` 산출물은 gcsmooth 기준이므로 raw baseline claim에는 직접 재사용하지 않습니다.
 - 4단계: GC는 이미 아래 표에서 5-seed 계산이 끝난 축으로 보고 추가 main-queue 반복에서 제외합니다. 우선순위는 `normal_ratio`, `label_smoothing`, `abnormal_weight`, `stochastic_depth`, `ema`입니다.
 
@@ -38,7 +38,7 @@ _자동 갱신 시각: `2026-04-28T19:28:48+09:00`._
 - `fresh0412_v11_n700_existing`은 historical selected ref로 보존합니다. raw strict one-factor 표와 delta 계산 기준은 `fresh0412_v11_refcheck_raw_n700`로 재생성해야 합니다.
 - `label_smoothing=0.0`은 baseline train config에 명시된 no-smoothing 상태입니다. 단, `label_smoothing>0`에서는 loss 구현 경로가 `CrossEntropyLoss(label_smoothing=...)`로 바뀌므로 최종 claim에는 이 구현 차이를 한계로 적어야 합니다.
 - 현재 표는 baseline-fixed one-factor evidence만 섞어 보여줍니다. alternate-parent stress, bad-case rescue, logical/per-member 실험은 별도 표로 분리해야 합니다.
-- 아직 claim 성숙 전인 조건이 남아 있습니다: queued `6`개, 부분완료 `0`개, 5-seed 미만 완료 `15`개.
+- rawbase after-GC queue는 현재 `normal_ratio=3000`부터 진행 중입니다. 중단 전 rawbase GC 일부는 보조 기록으로만 남기고, claim 성숙도 카운트는 rawbase round1 완료 후 재계산합니다.
 - `stochastic_depth`는 학습 때 일부 residual/drop-path branch를 확률적으로 끄는 regularization입니다. 추론 때는 전체 경로를 쓰며, 모델이 한 경로에 과적합하지 않게 만들어 seed 안정성과 FN/FP 균형이 좋아지는지 보는 축입니다.
 - 최종 논문화 전에는 각 축마다 per-seed/worst-seed, history의 val_loss/F1 진동, prediction trend의 반복 FP/FN chart_id, label-or-annotation suspect를 붙여야 합니다.
 

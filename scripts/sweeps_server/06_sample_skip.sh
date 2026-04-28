@@ -66,6 +66,7 @@ cmd=(
   --stop-mode never
   --candidate-min-runs-before-skip 0
   --completion-exit-grace 15
+  --update-live-summary
 )
 if [[ "$FORCE" -eq 1 ]]; then
   cmd+=(--force)

@@ -145,6 +145,7 @@ def launch_round1(args: argparse.Namespace, handle: TextIO) -> int:
         "0",
         "--completion-exit-grace",
         str(args.completion_exit_grace),
+        "--update-live-summary",
     ]
     if args.force:
         controller_cmd.append("--force")
@@ -179,6 +180,7 @@ def launch_optional_pre_round1(args: argparse.Namespace, handle: TextIO) -> int:
         "never",
         "--candidate-min-runs-before-skip",
         "0",
+        "--update-live-summary",
         "--completion-exit-grace",
         str(args.completion_exit_grace),
     ]

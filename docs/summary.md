@@ -1,20 +1,21 @@
 # 실험 요약
 
-_자동 갱신 시각: `2026-04-28T20:23:15+09:00`._
+_자동 갱신 시각: `2026-04-28T20:37:13+09:00`._
 
 ## 현재 진행 상태
 
-- Team agent 점검 결과, GC 축은 서버 rawbase queue에서 5개 조건으로 제한합니다: `gc01`, `gc025`, `gc05`, `gc15`, `gc50`.
-- raw server baseline refcheck는 `5/5` 완료됐습니다: `fresh0412_v11_refcheck_raw_n700` -> `F1=0.99746`, `FN=1.6`, `FP=2.2`.
-- raw refcheck per-seed 완료값은 `s42 F1=0.9980/FN=0/FP=3`, `s1 F1=0.9980/FN=1/FP=2`, `s2 F1=0.9940/FN=7/FP=2`, `s3 F1=0.9993/FN=0/FP=1`, `s4 F1=0.9980/FN=0/FP=3`입니다.
-- 서버용 rawbase queue 생성은 `validations/server_paper_rawbase_strict_single_factor_queue.json`를 사용하며 기준 설정은 `grad_clip=0.0`, `smooth_window=1`, `smooth_method=median`, `label_smoothing=0.0`입니다.
-- 학습 완료 후 다음 조건으로 즉시 넘어가는 handoff는 smoke run으로 검증했습니다. `max_samples_per_split=10`, `epochs=3`의 2-run queue가 `queue_exhausted`까지 완료됐고, 첫 run의 `=== EXIT 0 ... ===` 직후 두 번째 `=== RUN ... ===`가 시작됐습니다.
-- NT 평가는 selected threshold만 남겼습니다. 현재 reporting default는 `NT=0.9`이고, smoke run에서 `confusion_matrix_nt.png` 생성까지 확인했습니다.
-- sample-level nonfinite loss filter는 main sweep과 분리된 별도 1-run sample-skip queue로 실행합니다: `bash scripts/sweeps_server/06_sample_skip.sh`.
-- rawbase round1에서 GC는 5개 조건만 남깁니다. 기존 dense GC 결과와 중단 전 추가로 수집된 rawbase GC 일부는 보조 기록으로 보고, main sweep에는 축별 조건 수를 제한합니다.
-- 로그 폴더 이력 기반 표/plot 생성 스크립트를 추가했습니다: `python scripts/generate_log_history_report.py --logs-dir logs --out-prefix validations/log_history_report_refcheck_raw --contains refcheck_raw`. 출력은 markdown, candidate/run CSV, candidate F1 plot, val F1 curve, grad p99 curve입니다.
-- `TestEpoch` 평가는 best update 여부와 별개로 수행될 수 있으므로, 이제 tie/no-improvement epoch에서도 평가가 수행되면 `TestEpoch[...] f1=... FN=... FP=...` 한 줄이 출력됩니다.
-- controller/all.sh 로그에서는 tqdm progress bar가 자동 비활성화됩니다. pipe/tee 환경에서 carriage-return bar가 여러 줄로 쌓이는 문제를 피하고, 직접 interactive 실행할 때만 bar가 유지됩니다.
+- 이 블록은 `scripts/update_live_summary_doc.py`가 controller artifact에서 갱신합니다.
+- 서버 rawbase queue 정책: GC는 5개 조건만 유지합니다: `gc01`, `gc025`, `gc05`, `gc15`, `gc50`; sample-skip은 main sweep과 분리합니다.
+- raw baseline refcheck: `5/5`, F1 `0.9975`, FN `1.6`, FP `2.2`.
+- rawbase round1 aggregate: `12` complete runs, F1 `0.9988`, FN `0.561`, FP `2.139`, decision `continue`.
+- rawbase 현재 완료 후보:
+  - `fresh0412_v11_rawbase_n3000`: `3/5`, F1 `0.9989`, FN `0.333`, FP `1.667`
+  - `fresh0412_v11_rawbase_gc025_n700`: `4/5`, F1 `0.9989`, FN `0.75`, FP `1.75`
+  - `fresh0412_v11_rawbase_gc01_n700`: `5/5`, F1 `0.9985`, FN `0.6`, FP `3`
+- latest completed rawbase run: `260428_201738_fresh0412_v11_rawbase_n3000_s2_F0.9980_R0.9980` -> F1 `0.998`, FN `0`, FP `3`, epoch `11`.
+- sample-skip result: `fresh0412_v11_lossfilter_raw_n700_s42` -> F1 `0.9973`, FN `2`, FP `2`.
+- NT 평가는 selected threshold만 남겼고 reporting default는 `NT=0.9`입니다.
+- controller/all.sh 로그에서는 tqdm progress bar가 자동 비활성화됩니다.
 
 ## Team Agent 운영 계획
 
@@ -43,44 +44,27 @@ _자동 갱신 시각: `2026-04-28T20:23:15+09:00`._
 
 ## 요약
 
-- Active server baseline candidate: `fresh0412_v11_refcheck_raw_n700` -> refcheck complete, `F1=0.99746`, `FN=1.6`, `FP=2.2` over `5/5` seeds.
+- Active raw baseline: `fresh0412_v11_refcheck_raw_n700` -> `5/5`, F1 `0.9975`, FN `1.6`, FP `2.2`.
 - Server queue policy: rawbase round1 keeps only 5 GC conditions and runs sample-skip separately via `scripts/sweeps_server/06_sample_skip.sh`.
+- Live rawbase artifact: `12` complete runs, decision `continue`, F1 `0.9988`, FN `0.561`, FP `2.139`.
 - Last completed matched control: `fresh0412_v11_refcheck_gcsmooth_n700` -> `F1=0.9955`, `FN=4.4`, `FP=2.4` over `5/5` seeds.
 - Historical selected ref: `fresh0412_v11_n700_existing` -> `F1=0.9901`, `FN=9.8`, `FP=5.0`; kept only as reference-selection history.
-- 메인 strict queue: `158` 완료 run, decision `queue_exhausted`.
-- Round-2 refinement: 기존 `13/40` 완료 run은 gcsmooth 기준 stage로 보존하되, raw claim용 round2는 rawbase round1 결과 뒤 새로 선정합니다.
+- 기존 gcsmooth round2 결과는 보존하되, raw claim용 round2는 rawbase round1 결과 뒤 새로 선정합니다.
 
-Display용 이미지와 실제 학습 입력 이미지는 다릅니다. 아래 두 montage는 기존 `display_v11/`와 `images_v11/`에서 같은 class 순서로 가져온 예시입니다.
+## Best Known Method
 
-**Display images**
+_현재 one-factor evidence 기준 best-known method입니다. round-2 종료 후 joint combo validation이 필요합니다._
 
-![display samples](sample_overview_display.png)
-
-**Training images**
-
-![training samples](sample_overview_train.png)
-
-- `label_smoothing` 현재 완료된 조건 중 최선은 `0.15` with `F1=0.9977`, `FN=0.8`, `FP=2.6`.
-- `abnormal_weight` 현재 완료된 조건 중 최선은 `1.5` with `F1=0.9979`, `FN=1.2`, `FP=2`.
-- `stochastic_depth` 현재 완료된 조건 중 최선은 `0.1` with `F1=0.9975`, `FN=1.2`, `FP=2.6`.
-- `GC` 넓은 양호 구간이 유지되고 있으며 완료 조건 중 현재 총 오류가 가장 낮은 쪽은 대략 `1.25` with `F1=0.9975`, `FN=1`, `FP=2.8`. 미완료 값은 본 표에서 제외했습니다.
-- `color`는 현재 유효한 비교가 baseline vs c01뿐입니다: `c01 0.9971 / FN 0.6 / FP 3.8`. c02/c03는 생성 이미지가 의도와 달라 재생성이 필요합니다.
-- `normal_ratio`: 현재 ref 기준 sweep에서는 3000~3500 구간이 좋아 보이지만, optimized-v11 sweep을 같이 보면 normal_ratio 증가가 항상 개선을 만들지는 않습니다.
-
-## 임시 황금 레시피
-
-_아직 one-factor evidence 단계입니다. round-2 종료 후 joint combo validation이 필요합니다._
-
-| axis | selected value | F1 | FN | FP | status |
-| --- | ---: | ---: | ---: | ---: | --- |
-| `normal_ratio` | `3300` | 0.9973 | 2.4 | 1.6 | provisional |
-| `gc` | `1.25` | 0.9975 | 1 | 2.8 | provisional |
-| `label_smoothing` | `0.15` | 0.9977 | 0.8 | 2.6 | provisional |
-| `stochastic_depth` | `0.1` | 0.9975 | 1.2 | 2.6 | provisional |
-| `focal_gamma` | `0.5` | 0.9969 | 2.8 | 1.8 | provisional |
-| `abnormal_weight` | `1.5` | 0.9979 | 1.2 | 2 | provisional |
-| `ema` | `0.99` | 0.9972 | 1 | 3.2 | provisional |
-| `allow_tie_save` | `on` | 0.9974 | 2.2 | 1.8 | provisional |
+| axis | ref value | BKM value | F1 | FN | FP | status |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `normal_ratio` | `700` | `3300` | 0.9973 | 2.4 | 1.6 | single-axis evidence |
+| `gc` | `0 / off` | `1.25` | 0.9975 | 1 | 2.8 | single-axis evidence |
+| `label_smoothing` | `0.00` | `0.15` | 0.9977 | 0.8 | 2.6 | single-axis evidence |
+| `stochastic_depth` | `0.00` | `0.1` | 0.9975 | 1.2 | 2.6 | single-axis evidence |
+| `focal_gamma` | `0.0` | `0.5` | 0.9969 | 2.8 | 1.8 | single-axis evidence |
+| `abnormal_weight` | `1.0` | `1.5` | 0.9979 | 1.2 | 2 | single-axis evidence |
+| `ema` | `0.0 / off` | `0.99` | 0.9972 | 1 | 3.2 | single-axis evidence |
+| `allow_tie_save` | `off` | `on` | 0.9974 | 2.2 | 1.8 | single-axis evidence |
 
 ## Logical Member Attribution Example
 
@@ -99,222 +83,48 @@ _아직 one-factor evidence 단계입니다. round-2 종료 후 joint combo vali
 - `abnormal_weight = 1.2`: `0/5` 완료
 - `ema = 0.995`: `0/5` 완료
 
-## 플롯 목록
+## Rawbase Live Tables And Plots
 
-- `normal_ratio`: [normal_ratio.png](plots/normal_ratio.png)
-- `per_class`: [per_class.png](plots/per_class.png)
-- `lr`: [lr.png](plots/lr.png)
-- `lr` learning-rate schedule: [lr_lr_schedule.png](plots/lr_lr_schedule.png)
-- `warmup`: [warmup.png](plots/warmup.png)
-- `warmup` learning-rate schedule: [warmup_lr_schedule.png](plots/warmup_lr_schedule.png)
-- `gc`: [gc.png](plots/gc.png)
-- `weight_decay`: [weight_decay.png](plots/weight_decay.png)
-- `smoothing`: [smoothing.png](plots/smoothing.png)
-- `label_smoothing`: [label_smoothing.png](plots/label_smoothing.png)
-- `stochastic_depth`: [stochastic_depth.png](plots/stochastic_depth.png)
-- `focal_gamma`: [focal_gamma.png](plots/focal_gamma.png)
-- `abnormal_weight`: [abnormal_weight.png](plots/abnormal_weight.png)
-- `ema`: [ema.png](plots/ema.png)
-- `color`: [color.png](plots/color.png)
-- `allow_tie_save`: [allow_tie_save.png](plots/allow_tie_save.png)
+이 아래 표와 plot은 active raw baseline `fresh0412_v11_refcheck_raw_n700`을 ref/baseline으로 둡니다. 예전 gcsmooth 기준 상세 축 표는 current performance 표에서 제거했습니다.
 
-## normal_ratio
+### Live Plots
 
-![normal_ratio](plots/normal_ratio.png)
+- `candidate F1`: [rawbase_live_candidate_f1.png](plots/rawbase_live_candidate_f1.png)
+- `val F1 curves`: [rawbase_live_val_f1_curves.png](plots/rawbase_live_val_f1_curves.png)
+- `grad p99 curves`: [rawbase_live_grad_p99_curves.png](plots/rawbase_live_grad_p99_curves.png)
 
-| condition | seeds | F1 | ΔF1 | FN | ΔFN | FP | ΔFP | status |
+![candidate F1](plots/rawbase_live_candidate_f1.png)
+
+![val F1 curves](plots/rawbase_live_val_f1_curves.png)
+
+![grad p99 curves](plots/rawbase_live_grad_p99_curves.png)
+
+### Candidate Table
+
+| candidate | seeds | F1 | dF1 vs raw ref | FN | dFN vs raw ref | FP | dFP vs raw ref | source |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| 700 | 5/5 | 0.9955 | 0 | 4.4 | 0 | 2.4 | 0 | 기준 |
-| 1400 | 5/5 | 0.9899 | -0.0056 | 12 | +7.6 | 3.2 | +0.8 | 완료 |
-| 2100 | 5/5 | 0.9916 | -0.0039 | 10 | +5.6 | 2.6 | +0.2 | 완료 |
-| 2800 | 5/5 | 0.9923 | -0.0032 | 9.8 | +5.4 | 1.8 | -0.6 | 완료 |
-| 3000 | 5/5 | 0.9968 | +0.0013 | 3.2 | -1.2 | 1.6 | -0.8 | 완료 |
-| 3150 | 5/5 | 0.9939 | -0.0016 | 7.2 | +2.8 | 2 | -0.4 | 완료 |
-| 3300 | 5/5 | 0.9973 | +0.0019 | 2.4 | -2 | 1.6 | -0.8 | 완료 |
-| 3500 | 5/5 | 0.9960 | +0.0005 | 4.2 | -0.2 | 1.8 | -0.6 | 완료 |
+| `fresh0412_v11_refcheck_raw_n700` | 5/5 | 0.9975 | 0 | 1.6 | 0 | 2.2 | 0 | raw ref |
+| `fresh0412_v11_rawbase_n3000` | 3/5 | 0.9989 | +0.0014 | 0.333 | -1.267 | 1.667 | -0.533 | rawbase history |
+| `fresh0412_v11_rawbase_gc025_n700` | 4/5 | 0.9989 | +0.0014 | 0.75 | -0.85 | 1.75 | -0.45 | rawbase history |
+| `fresh0412_v11_rawbase_gc01_n700` | 5/5 | 0.9985 | +0.0011 | 0.6 | -1 | 3 | +0.8 | rawbase history |
 
-### optimized-v11 normal_ratio comparison
+### Recent Runs
 
-이미 성능이 최적화된 v11 조건에서는 normal_ratio를 키워도 단조 개선되지 않습니다. 이 표는 normal 수 증가 효과가 데이터/학습 상태에 의존하며, 무조건적인 scale-up claim은 안 된다는 근거입니다.
+| tag | seed | F1 | FN | FP | epoch | run dir |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `260428_201738_fresh0412_v11_rawbase_n3000_s2_F0.9980_R0.9980` | 2 | 0.998 | 0 | 3 | 11 | `logs\260428_201738_fresh0412_v11_rawbase_n3000_s2_F0.9980_R0.9980` |
+| `260428_195221_fresh0412_v11_rawbase_n3000_s1_F0.9987_R0.9987` | 1 | 0.9987 | 1 | 1 | 17 | `logs\260428_195221_fresh0412_v11_rawbase_n3000_s1_F0.9987_R0.9987` |
+| `260428_192619_fresh0412_v11_rawbase_n3000_s42_F0.9993_R0.9993` | 42 | 0.9993 | 0 | 1 | 13 | `logs\260428_192619_fresh0412_v11_rawbase_n3000_s42_F0.9993_R0.9993` |
+| `260428_191448_fresh0412_v11_rawbase_gc025_n700_s3_F0.9980_R0.9980` | 3 | 0.998 | 2 | 1 | 10 | `logs\260428_191448_fresh0412_v11_rawbase_gc025_n700_s3_F0.9980_R0.9980` |
+| `260428_185929_fresh0412_v11_rawbase_gc025_n700_s2_F0.9973_R0.9973` | 2 | 0.9973 | 1 | 3 | 10 | `logs\260428_185929_fresh0412_v11_rawbase_gc025_n700_s2_F0.9973_R0.9973` |
+| `260428_184106_fresh0412_v11_rawbase_gc025_n700_s1_F0.9993_R0.9993` | 1 | 0.9993 | 0 | 1 | 20 | `logs\260428_184106_fresh0412_v11_rawbase_gc025_n700_s1_F0.9993_R0.9993` |
+| `260428_182613_fresh0412_v11_rawbase_gc025_n700_s42_F0.9987_R0.9987` | 42 | 0.9987 | 0 | 2 | 12 | `logs\260428_182613_fresh0412_v11_rawbase_gc025_n700_s42_F0.9987_R0.9987` |
+| `260428_180912_fresh0412_v11_rawbase_gc01_n700_s4_F0.9987_R0.9987` | 4 | 0.9987 | 1 | 1 | 14 | `logs\260428_180912_fresh0412_v11_rawbase_gc01_n700_s4_F0.9987_R0.9987` |
+| `260428_175221_fresh0412_v11_rawbase_gc01_n700_s3_F0.9960_R0.9960` | 3 | 0.996 | 2 | 4 | 14 | `logs\260428_175221_fresh0412_v11_rawbase_gc01_n700_s3_F0.9960_R0.9960` |
+| `260428_173449_fresh0412_v11_rawbase_gc01_n700_s2_F0.9967_R0.9967` | 2 | 0.9967 | 0 | 5 | 16 | `logs\260428_173449_fresh0412_v11_rawbase_gc01_n700_s2_F0.9967_R0.9967` |
+| `260428_171807_fresh0412_v11_rawbase_gc01_n700_s1_F0.9980_R0.9980` | 1 | 0.998 | 0 | 3 | 14 | `logs\260428_171807_fresh0412_v11_rawbase_gc01_n700_s1_F0.9980_R0.9980` |
+| `260428_170005_fresh0412_v11_rawbase_gc01_n700_s42_F0.9987_R0.9987` | 42 | 0.9987 | 0 | 2 | 18 | `logs\260428_170005_fresh0412_v11_rawbase_gc01_n700_s42_F0.9987_R0.9987` |
 
-| condition | seeds | F1 | ΔF1 vs opt700 | FN | ΔFN vs opt700 | FP | ΔFP vs opt700 | status |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| 700 | 5/5 | 0.9969 | 0 | 1.2 | 0 | 3.4 | 0 | 기준 |
-| 1400 | 5/5 | 0.9950 | -0.0019 | 6 | +4.8 | 1.4 | -2 | 완료 |
-| 2100 | 5/5 | 0.9945 | -0.0024 | 7 | +5.8 | 1.2 | -2.2 | 완료 |
-| 2800 | 5/5 | 0.9917 | -0.0052 | 11.4 | +10.2 | 1 | -2.4 | 완료 |
-| 3500 | 5/5 | 0.9965 | -0.0004 | 4 | +2.8 | 1.2 | -2.2 | 완료 |
+### Historical Tables
 
-## per_class
-
-![per_class](plots/per_class.png)
-
-| condition | seeds | F1 | ΔF1 | FN | ΔFN | FP | ΔFP | status |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| 0 / off | 5/5 | 0.9955 | 0 | 4.4 | 0 | 2.4 | 0 | 기준 |
-| 100 | 5/5 | 0.9921 | -0.0033 | 5.8 | +1.4 | 6 | +3.6 | 완료 |
-| 200 | 5/5 | 0.9948 | -0.0007 | 5.8 | +1.4 | 2 | -0.4 | 완료 |
-| 300 | 5/5 | 0.9955 | -0 | 3.8 | -0.6 | 3 | +0.6 | 완료 |
-| 400 | 5/5 | 0.9953 | -0.0001 | 4.6 | +0.2 | 2.4 | 0 | 완료 |
-| 500 | 5/5 | 0.9957 | +0.0003 | 4.8 | +0.4 | 1.6 | -0.8 | 완료 |
-| 600 | 5/5 | 0.9960 | +0.0005 | 4 | -0.4 | 2 | -0.4 | 완료 |
-| 700 | 5/5 | 0.9945 | -0.0009 | 6.6 | +2.2 | 1.6 | -0.8 | 완료 |
-| 800 | 5/5 | 0.9968 | +0.0013 | 2.6 | -1.8 | 2.2 | -0.2 | 완료 |
-| 900 | 5/5 | 0.9937 | -0.0017 | 7.4 | +3 | 2 | -0.4 | 완료 |
-| 1000 | 5/5 | 0.9957 | +0.0003 | 4.8 | +0.4 | 1.6 | -0.8 | 완료 |
-
-## LR
-
-![lr](plots/lr.png)
-
-![lr learning-rate schedule](plots/lr_lr_schedule.png)
-
-| condition | seeds | F1 | ΔF1 | FN | ΔFN | FP | ΔFP | status |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| 1e-5 / 1e-4<br>bb/head=1e-5 / 1e-4 | 3/3 | 0.9967 | +0.0012 | 2.333 | -2.067 | 2.667 | +0.267 | 완료 |
-| 2e-5 / 2e-4<br>bb/head=2e-5 / 2e-4 | 5/5 | 0.9955 | 0 | 4.4 | 0 | 2.4 | 0 | 기준 |
-| 3e-5 / 3e-4<br>bb/head=3e-5 / 3e-4 | 3/3 | 0.9969 | +0.0014 | 2.667 | -1.733 | 2 | -0.4 | 완료 |
-| 5e-5 / 5e-4<br>bb/head=5e-5 / 5e-4 | 3/3 | 0.9951 | -0.0004 | 4 | -0.4 | 3.333 | +0.933 | 완료 |
-| 1e-4 / 1e-3<br>bb/head=1e-4 / 1e-3 | 3/3 | 0.7767 | -0.2188 | 250 | +245.6 | 1.667 | -0.733 | 완료 |
-
-## warmup
-
-![warmup](plots/warmup.png)
-
-![warmup learning-rate schedule](plots/warmup_lr_schedule.png)
-
-| condition | seeds | F1 | ΔF1 | FN | ΔFN | FP | ΔFP | status |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| warmup=3<br>lr=2e-5/2e-4 | 3/3 | 0.9964 | +0.001 | 3.333 | -1.067 | 2 | -0.4 | 완료 |
-| warmup=5<br>lr=2e-5/2e-4 | 5/5 | 0.9955 | 0 | 4.4 | 0 | 2.4 | 0 | 기준 |
-| warmup=8<br>lr=2e-5/2e-4 | 3/3 | 0.9940 | -0.0015 | 6.667 | +2.267 | 2.333 | -0.067 | 완료 |
-
-## GC
-
-![gc](plots/gc.png)
-
-| condition | seeds | F1 | ΔF1 | FN | ΔFN | FP | ΔFP | status |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| 0 | 3/3 | 0.3626 | -0.6328 | 478.667 | +474.267 | 253.333 | +250.933 | 완료 |
-| 0.1 | 5/5 | 0.9961 | +0.0007 | 4 | -0.4 | 1.8 | -0.6 | 완료 |
-| 0.25 | 5/5 | 0.9964 | +0.0009 | 2.8 | -1.6 | 2.6 | +0.2 | 완료 |
-| 0.35 | 5/5 | 0.9940 | -0.0015 | 6.6 | +2.2 | 2.4 | 0 | 완료 |
-| 0.5 | 5/5 | 0.9964 | +0.0009 | 4 | -0.4 | 1.4 | -1 | 완료 |
-| 0.75 | 5/5 | 0.9951 | -0.0004 | 5.6 | +1.2 | 1.8 | -0.6 | 완료 |
-| 1 | 5/5 | 0.9955 | 0 | 4.4 | 0 | 2.4 | 0 | 기준 |
-| 1.25 | 5/5 | 0.9975 | +0.002 | 1 | -3.4 | 2.8 | +0.4 | 완료 |
-| 1.5 | 5/5 | 0.9957 | +0.0002 | 4.2 | -0.2 | 2.2 | -0.2 | 완료 |
-| 2 | 5/5 | 0.9965 | +0.0011 | 3 | -1.4 | 2.2 | -0.2 | 완료 |
-| 3 | 5/5 | 0.9959 | +0.0004 | 3.8 | -0.6 | 2.4 | 0 | 완료 |
-| 5 | 5/5 | 0.9967 | +0.0012 | 3 | -1.4 | 2 | -0.4 | 완료 |
-
-## weight_decay
-
-![weight_decay](plots/weight_decay.png)
-
-| condition | seeds | F1 | ΔF1 | FN | ΔFN | FP | ΔFP | status |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| 0 | 3/3 | 0.9976 | +0.0021 | 1.667 | -2.733 | 2 | -0.4 | 완료 |
-| 0.01 | 5/5 | 0.9955 | 0 | 4.4 | 0 | 2.4 | 0 | 기준 |
-| 0.02 | 3/3 | 0.9967 | +0.0012 | 2.667 | -1.733 | 2.333 | -0.067 | 완료 |
-| 0.05 | 3/3 | 0.9960 | +0.0005 | 3.333 | -1.067 | 2.667 | +0.267 | 완료 |
-
-## smoothing
-
-![smoothing](plots/smoothing.png)
-
-| condition | seeds | F1 | ΔF1 | FN | ΔFN | FP | ΔFP | status |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| 1-raw | 3/3 | 0.9953 | -0.0001 | 4.333 | -0.067 | 2.667 | +0.267 | 완료 |
-| 3-mean | 3/3 | 0.9951 | -0.0004 | 5.333 | +0.933 | 2 | -0.4 | 완료 |
-| 3-median | 5/5 | 0.9955 | 0 | 4.4 | 0 | 2.4 | 0 | 기준 |
-| 5-median | 3/3 | 0.9960 | +0.0006 | 3.333 | -1.067 | 2.667 | +0.267 | 완료 |
-
-## label_smoothing
-
-![label_smoothing](plots/label_smoothing.png)
-
-| condition | seeds | F1 | ΔF1 | FN | ΔFN | FP | ΔFP | status |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| 0.00 | 5/5 | 0.9955 | 0 | 4.4 | 0 | 2.4 | 0 | 기준 |
-| 0.02 | 5/5 | 0.9923 | -0.0032 | 4.8 | +0.4 | 6.8 | +4.4 | 완료 |
-| 0.1 | 3/3 | 0.9984 | +0.003 | 1 | -3.4 | 1.333 | -1.067 | 완료 |
-| 0.15 | 5/5 | 0.9977 | +0.0023 | 0.8 | -3.6 | 2.6 | +0.2 | 완료 |
-| 0.2 | 5/5 | 0.9969 | +0.0015 | 2.4 | -2 | 2.2 | -0.2 | 완료 |
-
-## stochastic_depth
-
-![stochastic_depth](plots/stochastic_depth.png)
-
-| condition | seeds | F1 | ΔF1 | FN | ΔFN | FP | ΔFP | status |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| 0.00 | 5/5 | 0.9955 | 0 | 4.4 | 0 | 2.4 | 0 | 기준 |
-| 0.05 | 5/5 | 0.9949 | -0.0005 | 5.6 | +1.2 | 2 | -0.4 | 완료 |
-| 0.1 | 5/5 | 0.9975 | +0.002 | 1.2 | -3.2 | 2.6 | +0.2 | 완료 |
-| 0.2 | 3/3 | 0.9967 | +0.0012 | 3 | -1.4 | 2 | -0.4 | 완료 |
-| 0.3 | 5/5 | 0.9973 | +0.0018 | 1.8 | -2.6 | 2.2 | -0.2 | 완료 |
-
-## focal_gamma
-
-![focal_gamma](plots/focal_gamma.png)
-
-| condition | seeds | F1 | ΔF1 | FN | ΔFN | FP | ΔFP | status |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| 0.0 | 5/5 | 0.9955 | 0 | 4.4 | 0 | 2.4 | 0 | 기준 |
-| 0.5 | 5/5 | 0.9969 | +0.0015 | 2.8 | -1.6 | 1.8 | -0.6 | 완료 |
-| 1.5 | 5/5 | 0.9952 | -0.0003 | 5.6 | +1.2 | 1.6 | -0.8 | 완료 |
-| 2 | 5/5 | 0.9968 | +0.0013 | 3.2 | -1.2 | 1.6 | -0.8 | 완료 |
-
-## abnormal_weight
-
-![abnormal_weight](plots/abnormal_weight.png)
-
-| condition | seeds | F1 | ΔF1 | FN | ΔFN | FP | ΔFP | status |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| 0.5 | 5/5 | 0.9949 | -0.0005 | 4.8 | +0.4 | 2.8 | +0.4 | 완료 |
-| 0.8 | 5/5 | 0.9953 | -0.0002 | 3.8 | -0.6 | 3.2 | +0.8 | 완료 |
-| 1.0 | 5/5 | 0.9955 | 0 | 4.4 | 0 | 2.4 | 0 | 기준 |
-| 1.5 | 5/5 | 0.9979 | +0.0024 | 1.2 | -3.2 | 2 | -0.4 | 완료 |
-| 2 | 5/5 | 0.9967 | +0.0012 | 3.4 | -1 | 1.6 | -0.8 | 완료 |
-| 3 | 5/5 | 0.9939 | -0.0016 | 7.8 | +3.4 | 1.4 | -1 | 완료 |
-
-## EMA
-
-![ema](plots/ema.png)
-
-| condition | seeds | F1 | ΔF1 | FN | ΔFN | FP | ΔFP | status |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| 0.0 / off | 5/5 | 0.9955 | 0 | 4.4 | 0 | 2.4 | 0 | 기준 |
-| 0.99 | 5/5 | 0.9972 | +0.0017 | 1 | -3.4 | 3.2 | +0.8 | 완료 |
-| 0.999 | 5/5 | 0.9967 | +0.0012 | 2.4 | -2 | 2.6 | +0.2 | 완료 |
-
-## color
-
-![color](plots/color.png)
-
-조건 설명:
-
-- `baseline`: trend blue `#4878CF`, fleet alpha `0.4`
-- `c01`: trend red `#E43320`, fleet alpha `0.4`
-- `c02`: trend blue `#4878CF`, fleet alpha `0.15`
-- `c03`: trend red `#E43320`, fleet alpha `0.15`
-
-조건별 대표 sample:
-
-| baseline | c01 | c02 | c03 |
-| --- | --- | --- | --- |
-| ![baseline](color_samples/baseline_ch_09100.png) | ![c01](color_samples/c01_ch_09100.png) | ![c02](color_samples/c02_ch_09100.png) | ![c03](color_samples/c03_ch_09100.png) |
-
-| condition | seeds | F1 | ΔF1 | FN | ΔFN | FP | ΔFP | status |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| baseline | 5/5 | 0.9955 | 0 | 4.4 | 0 | 2.4 | 0 | 기준 |
-| c01 | 5/5 | 0.9971 | +0.0016 | 0.6 | -3.8 | 3.8 | +1.4 | 완료 |
-
-## allow_tie_save
-
-![allow_tie_save](plots/allow_tie_save.png)
-
-| condition | seeds | F1 | ΔF1 | FN | ΔFN | FP | ΔFP | status |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| off | 5/5 | 0.9955 | 0 | 4.4 | 0 | 2.4 | 0 | 기준 |
-| on | 5/5 | 0.9974 | +0.0019 | 2.2 | -2.2 | 1.8 | -0.6 | 완료 |
+예전 `docs/plots/*.png`와 dense one-factor 표는 gcsmooth matched control 기준이므로 current raw performance 표로 쓰지 않습니다. 필요하면 historical appendix로 별도 분리합니다.

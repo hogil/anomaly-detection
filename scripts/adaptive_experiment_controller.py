@@ -53,6 +53,7 @@ ROOT = Path(__file__).resolve().parents[1]
 LOGS_DIR = ROOT / "logs"
 DEFAULT_SUMMARY = ROOT / "validations" / "adaptive_controller_summary.json"
 DEFAULT_MARKDOWN = ROOT / "validations" / "adaptive_controller_summary.md"
+DEFAULT_LIVE_SUMMARY_SCRIPT = ROOT / "scripts" / "update_live_summary_doc.py"
 
 
 def configure_output_encoding() -> None:
@@ -506,6 +507,17 @@ def write_markdown(path: Path, summary: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
+def update_live_summary_doc(enabled: bool) -> None:
+    if not enabled:
+        return
+    if not DEFAULT_LIVE_SUMMARY_SCRIPT.exists():
+        return
+    try:
+        subprocess.run([sys.executable, str(DEFAULT_LIVE_SUMMARY_SCRIPT)], cwd=ROOT, check=False)
+    except Exception as exc:
+        print(f"[controller] live summary update failed: {exc}", flush=True)
+
+
 def main() -> int:
     configure_output_encoding()
     parser = argparse.ArgumentParser(description="Sequential adaptive train.py controller")
@@ -535,6 +547,7 @@ def main() -> int:
         default=30.0,
         help="Seconds to wait after train.py prints completion before terminating a lingering successful process. Negative disables.",
     )
+    parser.add_argument("--update-live-summary", action="store_true", help="Refresh docs/summary.md after controller artifact updates.")
     args = parser.parse_args()
 
     runs = load_queue(args.queue)
@@ -578,6 +591,7 @@ def main() -> int:
             summary["decision"] = "continue"
             save_json(args.summary, summary)
             write_markdown(args.markdown, summary)
+            update_live_summary_doc(args.update_live_summary)
             continue
 
         existing = None if args.force else find_completed_run_dir(run["tag"])
@@ -610,6 +624,7 @@ def main() -> int:
                 summary["decision"] = f"stop:run_failed:{run['tag']}"
                 save_json(args.summary, summary)
                 write_markdown(args.markdown, summary)
+                update_live_summary_doc(args.update_live_summary)
                 return code
             existing = find_completed_run_dir(run["tag"])
             if existing is None:
@@ -620,6 +635,7 @@ def main() -> int:
         summary["decision"] = "continue"
         save_json(args.summary, summary)
         write_markdown(args.markdown, summary)
+        update_live_summary_doc(args.update_live_summary)
         if args.max_launched > 0 and launched >= args.max_launched:
             break
 
@@ -628,6 +644,7 @@ def main() -> int:
     update_aggregates(summary)
     save_json(args.summary, summary)
     write_markdown(args.markdown, summary)
+    update_live_summary_doc(args.update_live_summary)
     print(json.dumps({"decision": summary["decision"], "aggregates": summary.get("aggregates", {})}, indent=2))
     return 0
 

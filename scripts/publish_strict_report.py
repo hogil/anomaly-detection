@@ -37,9 +37,9 @@ def rewrite_report_text(text: str) -> str:
         "## Summary": "## 요약",
         "## Interpretation": "## 결과 해석",
         "## Evidence Limits And Next Fixes": "## 한계와 수정 필요 사항",
-        "## Provisional Golden Recipe": "## 임시 황금 레시피",
-        "_This is one-factor evidence only. Joint combo validation still has to be run after round-2 closes._":
-            "_아직 one-factor evidence 단계입니다. round-2 종료 후 joint combo validation이 필요합니다._",
+        "## Best Known Method": "## Best Known Method",
+        "_This is the current best-known method table from one-factor evidence. Joint combo validation still has to be run after round-2 closes._":
+            "_현재 one-factor evidence 기준 best-known method입니다. round-2 종료 후 joint combo validation이 필요합니다._",
         "## Pending Round-2 Checks": "## 남은 Round-2 확인 항목",
         "## Plot Index": "## 플롯 목록",
         "Frozen ref:": "고정 기준 ref:",

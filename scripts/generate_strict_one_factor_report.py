@@ -679,7 +679,7 @@ def evidence_limits(records: dict[str, dict[str, ConditionRecord]]) -> list[str]
     ]
 
 
-def provisional_golden_recipe(records: dict[str, dict[str, ConditionRecord]]) -> list[str]:
+def best_known_method(records: dict[str, dict[str, ConditionRecord]]) -> list[str]:
     picks = {
         "normal_ratio": None,
         "gc": None,
@@ -697,14 +697,17 @@ def provisional_golden_recipe(records: dict[str, dict[str, ConditionRecord]]) ->
 
     recipe_lines: list[str] = []
     recipe_lines.extend([
-        "| axis | selected value | F1 | FN | FP | status |",
-        "| --- | ---: | ---: | ---: | ---: | --- |",
+        "| axis | ref value | BKM value | F1 | FN | FP | status |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | --- |",
     ])
     for family in ("normal_ratio", "gc", "label_smoothing", "stochastic_depth", "focal_gamma", "abnormal_weight", "ema", "allow_tie_save"):
         best = picks[family]
         if best is None:
             continue
-        recipe_lines.append(f"| `{family}` | `{best.label}` | {fmt_float(best.f1)} | {fmt_compact(best.fn)} | {fmt_compact(best.fp)} | provisional |")
+        ref_label = FAMILY_BASELINES.get(family, ("", ""))[0]
+        recipe_lines.append(
+            f"| `{family}` | `{ref_label}` | `{best.label}` | {fmt_float(best.f1)} | {fmt_compact(best.fn)} | {fmt_compact(best.fp)} | single-axis evidence |"
+        )
     return recipe_lines
 
 
@@ -924,12 +927,12 @@ def write_markdown(
         lines.append("- `normal_ratio`: 현재 ref 기준 sweep에서는 3000~3500 구간이 좋아 보이지만, optimized-v11 sweep을 같이 보면 normal_ratio 증가가 항상 개선을 만들지는 않습니다.")
     lines.extend([
         "",
-        "## Provisional Golden Recipe",
+        "## Best Known Method",
         "",
-        "_This is one-factor evidence only. Joint combo validation still has to be run after round-2 closes._",
+        "_This is the current best-known method table from one-factor evidence. Joint combo validation still has to be run after round-2 closes._",
         "",
     ])
-    lines.extend(provisional_golden_recipe(records) or ["- No completed candidate set yet."])
+    lines.extend(best_known_method(records) or ["- No completed candidate set yet."])
     lines.extend([
         "",
         "## Logical Member Attribution Example",

@@ -112,6 +112,23 @@ Path(path).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encodin
 PY
 }
 
+config_path() {
+  local key="$1"
+  "$PYTHON" - "$CONFIG" "$key" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+config_path, dotted_key = sys.argv[1:]
+payload = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+value = payload
+for part in dotted_key.split("."):
+    value = value[part]
+print(value)
+PY
+}
+
 prepare_queue() {
   local src="$1"
   local dst="$2"
@@ -232,6 +249,11 @@ main() {
   echo "== paper server run started: $(date -Is) =="
   echo "config=$CONFIG workers=$WORKERS num_workers=$NUM_WORKERS prefetch=$PREFETCH_FACTOR"
 
+  DATA_DIR="$(config_path output.data_dir)"
+  IMAGE_DIR="$(config_path output.image_dir)"
+  DISPLAY_DIR="$(config_path output.display_dir)"
+  echo "dataset=$DATA_DIR images=$IMAGE_DIR display=$DISPLAY_DIR"
+
   write_state "running" "start" "server paper pipeline started"
 
   if [[ "$SKIP_WEIGHTS" -eq 0 && ! -f weights/convnextv2_tiny.fcmae_ft_in22k_in1k.pth ]]; then
@@ -240,11 +262,15 @@ main() {
   fi
 
   if [[ "$SKIP_DATASET" -eq 0 ]]; then
-    if [[ ! -f data/scenarios.csv || ! -f data/timeseries.csv || ! -d images ]]; then
+    if [[ ! -f "$DATA_DIR/scenarios.csv" || ! -f "$DATA_DIR/timeseries.csv" || ! -d "$IMAGE_DIR" ]]; then
       write_state "running" "dataset" "generating dataset and images"
       run_cmd "$PYTHON" generate_data.py --config "$CONFIG" --workers "$WORKERS"
       run_cmd "$PYTHON" generate_images.py --config "$CONFIG" --workers "$WORKERS"
-      run_cmd "$PYTHON" scripts/validate_dataset.py --config "$CONFIG"
+      run_cmd "$PYTHON" scripts/validate_dataset.py \
+        --config "$CONFIG" \
+        --scenarios "$DATA_DIR/scenarios.csv" \
+        --timeseries "$DATA_DIR/timeseries.csv" \
+        --display-dir "$DISPLAY_DIR"
     else
       echo "[skip] dataset/images already exist"
     fi

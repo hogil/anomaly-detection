@@ -25,9 +25,21 @@ class ScenarioMeta:
 def parse_args():
     parser = argparse.ArgumentParser(description="Validate generated anomaly dataset.")
     parser.add_argument("--config", default="dataset.yaml", help="Dataset config YAML")
-    parser.add_argument("--scenarios", default="data/scenarios.csv", help="Scenario CSV")
-    parser.add_argument("--timeseries", default="data/timeseries.csv", help="Timeseries CSV")
-    parser.add_argument("--display-dir", default="display", help="Rendered display image root")
+    parser.add_argument(
+        "--scenarios",
+        default=None,
+        help="Scenario CSV. Default: <config output.data_dir>/scenarios.csv",
+    )
+    parser.add_argument(
+        "--timeseries",
+        default=None,
+        help="Timeseries CSV. Default: <config output.data_dir>/timeseries.csv",
+    )
+    parser.add_argument(
+        "--display-dir",
+        default=None,
+        help="Rendered display image root. Default: <config output.display_dir>",
+    )
     parser.add_argument(
         "--output-dir",
         default=None,
@@ -444,10 +456,6 @@ def save_outputs(rows: list[dict], output_dir: Path):
 def main():
     args = parse_args()
     config_path = Path(args.config)
-    scenarios_path = Path(args.scenarios)
-    timeseries_path = Path(args.timeseries)
-    display_dir = Path(args.display_dir)
-
     if args.output_dir:
         output_dir = Path(args.output_dir)
     else:
@@ -455,6 +463,12 @@ def main():
         output_dir = Path("validations") / f"dataset_{ts}"
 
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    output_cfg = config.get("output", {})
+    data_dir = Path(output_cfg.get("data_dir", "data"))
+    scenarios_path = Path(args.scenarios) if args.scenarios else data_dir / "scenarios.csv"
+    timeseries_path = Path(args.timeseries) if args.timeseries else data_dir / "timeseries.csv"
+    display_dir = Path(args.display_dir) if args.display_dir else Path(output_cfg.get("display_dir", "display"))
+
     enforcement_cfg = config["defect"]["enforcement"]
     drift_visual_floor = float(
         config.get("defect", {}).get("drift", {}).get(

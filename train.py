@@ -563,12 +563,13 @@ def print_class_table(metrics, title=""):
 
 
 def resolve_scenarios_csv(data_dir: Path, raw_path: str | None) -> Path:
-    """Resolve scenarios.csv, including the common 'scenarious.csv' typo."""
+    """Resolve scenarios.csv, including common scenario-file typos."""
     path = Path(raw_path) if raw_path else (data_dir / "scenarios.csv")
     if path.exists():
         return path
 
-    if path.name.lower() == "scenarious.csv":
+    typo_names = {"scenarious.csv", "senarios.csv"}
+    if path.name.lower() in typo_names:
         corrected = path.with_name("scenarios.csv")
         if corrected.exists():
             print(f"  [warn] scenarios path typo corrected: {path} -> {corrected}")
@@ -578,7 +579,7 @@ def resolve_scenarios_csv(data_dir: Path, raw_path: str | None) -> Path:
     hint = f" Available scenario files in {data_dir}: {available}" if available else ""
     raise FileNotFoundError(
         f"Scenarios CSV not found: {path}. Expected `{data_dir / 'scenarios.csv'}`."
-        f" If you passed `scenarious.csv`, use `scenarios.csv`.{hint}"
+        f" If you passed `scenarious.csv` or `senarios.csv`, use `scenarios.csv`.{hint}"
     )
 
 

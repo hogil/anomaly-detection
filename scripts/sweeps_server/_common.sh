@@ -26,7 +26,7 @@ SERVER_BASE=(
   --precision bf16
   --compile
   --batch_size 256
-  --num_workers 16
+  --num_workers 24
   --prefetch_factor 8
 )
 

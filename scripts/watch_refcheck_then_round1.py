@@ -121,6 +121,12 @@ def launch_round1(args: argparse.Namespace, handle: TextIO) -> int:
         prepare_cmd.extend(["--start-after-axis", args.start_after_axis])
     if args.start_after_candidate:
         prepare_cmd.extend(["--start-after-candidate", args.start_after_candidate])
+    if (
+        args.skip_completed_summary
+        and not args.keep_completed_in_queue
+        and not args.force
+    ):
+        prepare_cmd.extend(["--skip-completed-summary", str(args.skip_completed_summary)])
 
     code = run_logged(prepare_cmd, handle)
     if code != 0:
@@ -195,6 +201,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prepared-queue", type=Path, default=ROOT / "validations/server_paper_rawbase_strict_single_factor_queue.json")
     parser.add_argument("--round1-summary", type=Path, default=ROOT / "validations/server_paper_rawbase_strict_single_factor_summary.json")
     parser.add_argument("--round1-markdown", type=Path, default=ROOT / "validations/server_paper_rawbase_strict_single_factor_summary.md")
+    parser.add_argument("--skip-completed-summary", type=Path, default=ROOT / "validations/server_paper_rawbase_strict_single_factor_summary.json")
     parser.add_argument("--watch-log", type=Path, default=ROOT / "validations/paper_rawbase_round1_watcher.log")
     parser.add_argument("--round1-log", type=Path, default=ROOT / "validations/paper_rawbase_round1_live.log")
     parser.add_argument("--pre-round1-queue", type=Path, default=None)
@@ -212,6 +219,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--completion-exit-grace", type=float, default=15.0)
     parser.add_argument("--start-after-axis", default="")
     parser.add_argument("--start-after-candidate", default="")
+    parser.add_argument("--keep-completed-in-queue", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--max-launched", type=int, default=0)
     return parser.parse_args()

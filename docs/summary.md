@@ -1,6 +1,6 @@
 # 실험 요약
 
-_자동 갱신 시각: `2026-04-29T05:26:44+09:00`._
+_자동 갱신 시각: `2026-04-29T05:44:12+09:00`._
 
 ## 실험 방식
 
@@ -16,7 +16,7 @@ _자동 갱신 시각: `2026-04-29T05:26:44+09:00`._
 | `fresh0412_v11_refcheck_raw_n700` | raw server baseline | 5/5 | 0.9975 | 1.6 | 2.2 | 현재 서버 기준선 |
 | `fresh0412_v11_refcheck_gcsmooth_n700` | matched control | 5/5 | 0.9955 | 4.4 | 2.4 | 아래 기존 strict 표의 delta 기준 |
 | `fresh0412_v11_n700_existing` | historical selected ref | 5/5 | 0.9901 | 9.8 | 5.0 | 과거 reference 선택 기록 |
-| rawbase round1 live | rawbase history | 37 runs | 0.9981 | 0.595 | 2.216 | 중간 집계, 최종 claim 아님 |
+| rawbase round1 live | rawbase history | 38 runs | 0.9981 | 0.632 | 2.158 | 중간 집계, 최종 claim 아님 |
 | sample-skip pilot | separate 1-run | 1/1 | 0.9973 | 2 | 2 | main sweep과 분리 |
 
 ## Best Known Method
@@ -42,14 +42,13 @@ _자동 갱신 시각: `2026-04-29T05:26:44+09:00`._
 
 즉 family 전체 이상 감지가 아니라, highlight 된 member 단위로 label을 부여하는 학습 예시입니다.
 
-## 남은 Round-2 확인 항목
+## 남은 실험
 
-- `label_smoothing = 0.125`: `0/5` 완료
-- `label_smoothing = 0.175`: `0/5` 완료
-- `stochastic_depth = 0.15`: `0/5` 완료
-- `focal_gamma = 1`: `0/5` 완료
-- `abnormal_weight = 1.2`: `0/5` 완료
-- `ema = 0.995`: `0/5` 완료
+| scope | 남은 내용 | runs |
+| --- | --- | ---: |
+| current rawbase queue | `stochastic_depth` 3조건, `focal_gamma` 3조건, `abnormal_weight` 5조건, `ema` 2조건, `color` 2조건, `allow_tie_save` 1조건 | 80 |
+| remaining-only resume | `gc025` 잔여 2 seeds, `gc05/gc15/gc50`, `warmup` 2조건 | 27 |
+| round2 | rawbase round1 완료 후 결과 기준으로 새 선정 | pending |
 
 ## 플롯 목록
 

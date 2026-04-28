@@ -21,6 +21,7 @@ FORCE=0
 MAX_LAUNCHED=0
 ROUND1_START_AFTER_AXIS=""
 ROUND1_START_AFTER_CANDIDATE=""
+ROUND1_SKIP_COMPLETED=1
 
 usage() {
   cat <<'EOF'
@@ -45,6 +46,8 @@ Options:
   --round1-include-gc     Include the 5-condition GC block (default)
   --round1-start-after-candidate STR
                           Start strict round1 after this candidate's last queued seed
+  --round1-skip-completed Omit completed/skipped tags from the existing round1 summary (default)
+  --round1-keep-completed Keep completed/skipped tags in the prepared round1 queue
   --skip-weights          Do not run download.py when weights are missing
   --skip-dataset          Do not auto-generate data/images
   --skip-refcheck         Skip previous-state reference rerun
@@ -69,6 +72,8 @@ while [[ $# -gt 0 ]]; do
     --round1-after-gc) ROUND1_START_AFTER_AXIS="gc"; shift ;;
     --round1-include-gc) ROUND1_START_AFTER_AXIS=""; shift ;;
     --round1-start-after-candidate) ROUND1_START_AFTER_CANDIDATE="$2"; shift 2 ;;
+    --round1-skip-completed) ROUND1_SKIP_COMPLETED=1; shift ;;
+    --round1-keep-completed) ROUND1_SKIP_COMPLETED=0; shift ;;
     --skip-weights) SKIP_WEIGHTS=1; shift ;;
     --skip-dataset) SKIP_DATASET=1; shift ;;
     --skip-refcheck) SKIP_REFCHECK=1; shift ;;
@@ -136,6 +141,7 @@ prepare_queue() {
   local dst="$2"
   local start_after_axis="${3:-}"
   local start_after_candidate="${4:-}"
+  local skip_completed_summary="${5:-}"
   local args=(
     scripts/prepare_server_queue.py
     --src "$src"
@@ -149,6 +155,9 @@ prepare_queue() {
   fi
   if [[ -n "$start_after_candidate" ]]; then
     args+=(--start-after-candidate "$start_after_candidate")
+  fi
+  if [[ -n "$skip_completed_summary" ]]; then
+    args+=(--skip-completed-summary "$skip_completed_summary")
   fi
   run_cmd "$PYTHON" "${args[@]}"
 }
@@ -224,11 +233,16 @@ main() {
   fi
 
   if [[ "$SKIP_ROUND1" -eq 0 ]]; then
+    round1_skip_completed_summary=""
+    if [[ "$ROUND1_SKIP_COMPLETED" -eq 1 && "$FORCE" -eq 0 ]]; then
+      round1_skip_completed_summary="validations/server_paper_rawbase_strict_single_factor_summary.json"
+    fi
     prepare_queue \
       validations/paper_strict_single_factor_queue.json \
       validations/server_paper_rawbase_strict_single_factor_queue.json \
       "$ROUND1_START_AFTER_AXIS" \
-      "$ROUND1_START_AFTER_CANDIDATE"
+      "$ROUND1_START_AFTER_CANDIDATE" \
+      "$round1_skip_completed_summary"
     run_controller \
       validations/server_paper_rawbase_strict_single_factor_queue.json \
       validations/server_paper_rawbase_strict_single_factor_summary.json \

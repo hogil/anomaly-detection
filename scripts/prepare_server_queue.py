@@ -40,8 +40,6 @@ def infer_axis(candidate: str) -> str:
         return "gc"
     if "_lrwarm" in candidate:
         return "warmup"
-    if re.search(r"_n\d+$", candidate):
-        return "normal_ratio"
     if "_regls" in candidate:
         return "label_smoothing"
     if "_regdp" in candidate:
@@ -56,6 +54,8 @@ def infer_axis(candidate: str) -> str:
         return "color"
     if "_tie_" in candidate:
         return "allow_tie_save"
+    if re.search(r"_n\d+$", candidate):
+        return "normal_ratio"
     return "other"
 
 
@@ -94,6 +94,23 @@ def parse_gc_candidates(raw: str) -> set[str]:
             item = f"fresh0412_v11_{item}_n700"
         out.add(normalize_candidate(item))
     return out
+
+
+def load_finished_tags(path: Path | None) -> set[str]:
+    if path is None:
+        return set()
+    if not path.exists():
+        print(f"[queue] skip-completed summary not found: {path}")
+        return set()
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    runs = payload.get("runs", {})
+    if not isinstance(runs, dict):
+        return set()
+    return {
+        str(tag)
+        for tag, row in runs.items()
+        if isinstance(row, dict) and row.get("status") in {"complete", "skipped"}
+    }
 
 
 def trim_runs(
@@ -143,6 +160,9 @@ def prepare_queue(args: argparse.Namespace) -> dict[str, Any]:
         payload["server_start_after_candidate"] = args.start_after_candidate
     allowed_gc_candidates = parse_gc_candidates(args.gc_candidates)
     payload["server_gc_candidates"] = sorted(allowed_gc_candidates)
+    finished_tags = load_finished_tags(args.skip_completed_summary)
+    if args.skip_completed_summary is not None:
+        payload["server_skip_completed_summary"] = str(args.skip_completed_summary)
 
     runs = payload.get("runs", [])
     if not isinstance(runs, list):
@@ -182,6 +202,13 @@ def prepare_queue(args: argparse.Namespace) -> dict[str, Any]:
         run_args["--prefetch_factor"] = args.prefetch_factor
         prepared_runs.append(run)
 
+    if finished_tags:
+        before = len(prepared_runs)
+        prepared_runs = [run for run in prepared_runs if str(run.get("tag", "")) not in finished_tags]
+        skipped = before - len(prepared_runs)
+        payload["server_skipped_finished_runs"] = skipped
+        print(f"[queue] skipped completed/skipped runs from summary: {skipped}")
+
     payload["runs"] = prepared_runs
     if skipped_duplicate_controls:
         payload["server_skipped_duplicate_controls"] = sorted(set(skipped_duplicate_controls))
@@ -213,6 +240,12 @@ def parse_args() -> argparse.Namespace:
         "--gc-candidates",
         default=",".join(DEFAULT_GC_CANDIDATES),
         help="Comma-separated GC candidates to keep. Tokens like gc01 are accepted. Default keeps 5 GC conditions.",
+    )
+    parser.add_argument(
+        "--skip-completed-summary",
+        type=Path,
+        default=None,
+        help="Optional controller summary JSON. Runs with status complete/skipped in this summary are omitted from the prepared queue.",
     )
     return parser.parse_args()
 

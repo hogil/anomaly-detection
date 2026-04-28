@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Normal threshold (post-hoc decision threshold): 5 levels x 5 seeds = 25 runs
 # CLAUDE memory: NO extreme NT (test-peeking). Keep in moderate [0.3, 0.7].
-# Note: --normal_threshold changes train.py's default NT test; it ALSO reports
-# the full sweep in best_info.json["normal_threshold_results"], so this group
-# mostly lets us see whether picking a different primary NT changes logging.
+# Note: --normal_threshold changes train.py's selected NT test. Current train.py
+# records only that selected NT in best_info.json["normal_threshold_results"].
 source "$(dirname "$0")/_common.sh"
 
 PAIRS=(

@@ -1766,6 +1766,7 @@ def main():
     print(f"    곡선: {log_dir}/training_curves.png")
     print(f"    예측: {predictions_dir}/ (TN/TP cap 100)")
     print(f"    CM:   {log_dir}/confusion_matrix.png")
+    print(f"    CM_NT{args.normal_threshold:g}: {log_dir}/confusion_matrix_nt.png")
 
 
 if __name__ == "__main__":

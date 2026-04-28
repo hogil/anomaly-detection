@@ -154,6 +154,38 @@ def launch_round1(args: argparse.Namespace, handle: TextIO) -> int:
     return run_logged(controller_cmd, handle, output_path=args.round1_log)
 
 
+def launch_optional_pre_round1(args: argparse.Namespace, handle: TextIO) -> int:
+    if args.pre_round1_queue is None:
+        return 0
+    existing = read_json(args.pre_round1_summary)
+    if existing and existing.get("decision") == "queue_exhausted":
+        log_line(handle, f"pre-round1 queue already complete: {args.pre_round1_summary}")
+        return 0
+
+    controller_cmd = [
+        sys.executable,
+        "scripts/adaptive_experiment_controller.py",
+        "--queue",
+        str(args.pre_round1_queue),
+        "--summary",
+        str(args.pre_round1_summary),
+        "--markdown",
+        str(args.pre_round1_markdown),
+        "--target-min",
+        str(args.target_min),
+        "--target-max",
+        str(args.target_max),
+        "--stop-mode",
+        "never",
+        "--candidate-min-runs-before-skip",
+        "0",
+        "--completion-exit-grace",
+        str(args.completion_exit_grace),
+    ]
+    log_line(handle, f"launching pre-round1 queue: {args.pre_round1_queue}")
+    return run_logged(controller_cmd, handle, output_path=args.pre_round1_log)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ref-summary", type=Path, default=ROOT / "validations/server_paper_refcheck_raw_summary.json")
@@ -163,6 +195,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--round1-markdown", type=Path, default=ROOT / "validations/server_paper_rawbase_strict_single_factor_summary.md")
     parser.add_argument("--watch-log", type=Path, default=ROOT / "validations/paper_rawbase_round1_watcher.log")
     parser.add_argument("--round1-log", type=Path, default=ROOT / "validations/paper_rawbase_round1_live.log")
+    parser.add_argument("--pre-round1-queue", type=Path, default=None)
+    parser.add_argument("--pre-round1-summary", type=Path, default=ROOT / "validations/server_paper_pre_round1_summary.json")
+    parser.add_argument("--pre-round1-markdown", type=Path, default=ROOT / "validations/server_paper_pre_round1_summary.md")
+    parser.add_argument("--pre-round1-log", type=Path, default=ROOT / "validations/paper_pre_round1_live.log")
     parser.add_argument("--config", default="dataset.yaml")
     parser.add_argument("--num-workers", type=int, default=24)
     parser.add_argument("--prefetch-factor", type=int, default=4)
@@ -189,6 +225,10 @@ def main() -> int:
         if existing_round1 and existing_round1.get("decision") == "queue_exhausted":
             log_line(handle, f"round1 already complete: {args.round1_summary}")
             return 0
+        code = launch_optional_pre_round1(args, handle)
+        if code != 0:
+            log_line(handle, f"pre-round1 controller exited with code {code}; round1 not launched")
+            return code
         log_line(handle, "raw refcheck complete; launching rawbase round1")
         code = launch_round1(args, handle)
         log_line(handle, f"round1 controller exited with code {code}")

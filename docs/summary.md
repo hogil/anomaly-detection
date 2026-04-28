@@ -1,17 +1,20 @@
 # 실험 요약
 
-_자동 갱신 시각: `2026-04-28T15:58:03+09:00`._
+_자동 갱신 시각: `2026-04-28T16:14:55+09:00`._
 
 ## 현재 진행 상태
 
 - Team agent 체제로 전환했습니다. Agent A는 완료 artifact와 `docs/summary.md` 반영 근거를 확인했고, Agent B는 raw baseline 기준 재개 명령과 다음 실험 순서를 점검했습니다.
-- 업데이트 시점에 raw server baseline refcheck가 실행 중입니다: controller PID `8360`, watcher PID `668`, live log `validations/paper_refcheck_raw_live.log`.
-- 완료된 raw refcheck seed는 `1/5`입니다. `fresh0412_v11_refcheck_raw_n700_s42`는 `F1=0.9980`, `FN=0`, `FP=3`으로 완료됐고, 직후 `fresh0412_v11_refcheck_raw_n700_s1`가 train PID `12520`으로 시작됐습니다.
+- 업데이트 시점에 raw server baseline refcheck가 실행 중입니다: controller PID `8360`, live log `validations/paper_refcheck_raw_live.log`.
+- 완료된 raw refcheck seed는 `3/5`입니다. 완료값은 `s42 F1=0.9980/FN=0/FP=3`, `s1 F1=0.9980/FN=1/FP=2`, `s2 F1=0.9940/FN=7/FP=2`입니다.
 - 재개된 queue는 `validations/paper_refcheck_raw_queue.json`이며 기준 설정은 `grad_clip=0.0`, `smooth_window=1`, `smooth_method=median`, `label_smoothing=0.0`입니다.
 - 학습 완료 후 다음 조건으로 즉시 넘어가는 handoff는 smoke run으로 검증했습니다. `max_samples_per_split=10`, `epochs=3`의 2-run queue가 `queue_exhausted`까지 완료됐고, 첫 run의 `=== EXIT 0 ... ===` 직후 두 번째 `=== RUN ... ===`가 시작됐습니다.
 - NT 평가는 selected threshold만 남겼습니다. 현재 reporting default는 `NT=0.9`이고, smoke run에서 `confusion_matrix_nt.png` 생성까지 확인했습니다.
-- raw refcheck 완료 후 rawbase round1을 자동 실행하는 watcher를 설치했습니다: watcher PID `668`, log `validations/paper_rawbase_round1_watcher.log`. watcher는 `validations/server_paper_refcheck_raw_summary.json`이 `queue_exhausted`와 5 complete runs를 만족하면 `validations/server_paper_rawbase_strict_single_factor_queue.json`를 만들고 round1 controller를 시작합니다.
+- raw refcheck 완료 후 rawbase round1을 자동 실행하는 watcher를 설치합니다: log `validations/paper_rawbase_round1_watcher.log`. watcher는 `validations/server_paper_refcheck_raw_summary.json`이 `queue_exhausted`와 5 complete runs를 만족하면 sample-level nonfinite loss filter 1-run을 먼저 실행한 뒤 `validations/server_paper_rawbase_strict_single_factor_queue.json`를 만들고 round1 controller를 시작합니다.
 - rawbase round1 준비 단계에서 `gc00` duplicate control은 제외합니다. raw refcheck가 이미 `grad_clip=0.0`을 5 seeds로 돌리므로, round1 GC 축은 `0.1` 이상 값만 추가 실행합니다.
+- raw refcheck 뒤에 sample-level nonfinite loss filter 1-run 실험을 먼저 실행하도록 queue를 추가했습니다: `validations/paper_nonfinite_loss_filter_queue.json`. 이 실험은 raw baseline 조건 그대로 `--filter_nonfinite_loss`만 켭니다.
+- 로그 폴더 이력 기반 표/plot 생성 스크립트를 추가했습니다: `python scripts/generate_log_history_report.py --logs-dir logs --out-prefix validations/log_history_report_refcheck_raw --contains refcheck_raw`. 출력은 markdown, candidate/run CSV, candidate F1 plot, val F1 curve, grad p99 curve입니다.
+- `TestEpoch` 평가는 best update 여부와 별개로 수행될 수 있으므로, 이제 tie/no-improvement epoch에서도 평가가 수행되면 `TestEpoch[...] f1=... FN=... FP=...` 한 줄이 출력됩니다.
 - controller/all.sh 로그에서는 tqdm progress bar가 자동 비활성화됩니다. pipe/tee 환경에서 carriage-return bar가 여러 줄로 쌓이는 문제를 피하고, 직접 interactive 실행할 때만 bar가 유지됩니다.
 
 ## Team Agent 운영 계획

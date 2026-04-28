@@ -36,3 +36,9 @@ python scripts\watch_refcheck_then_round1.py
 ```
 
 It waits for `validations/server_paper_refcheck_raw_summary.json` to finish 5 raw refcheck runs, prepares `validations/server_paper_rawbase_strict_single_factor_queue.json`, and launches rawbase round1. In controller or `tee` logs, `train.py` disables tqdm bars automatically so progress updates do not become one line per refresh.
+
+To build summary-style tables and plots directly from run histories:
+
+```bash
+python scripts/generate_log_history_report.py --logs-dir logs --out-prefix validations/log_history_report --contains fresh0412_v11
+```

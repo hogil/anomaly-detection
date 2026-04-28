@@ -1,0 +1,34 @@
+{
+  "created_at": "2026-04-28T16:00:00",
+  "selected_reference": "fresh0412_v11_refcheck_raw_n700",
+  "note": "One-run experimental safety check: keep raw baseline settings and enable per-sample nonfinite loss filtering.",
+  "runs": [
+    {
+      "tag": "fresh0412_v11_lossfilter_raw_n700_s42",
+      "candidate": "fresh0412_v11_lossfilter_raw_n700",
+      "seed": 42,
+      "args": {
+        "--mode": "binary",
+        "--config": "logs\\260412_044744_fresh0412_v11_n700_s42_F0.9920_R0.9920\\data_config_used.yaml",
+        "--epochs": 20,
+        "--patience": 5,
+        "--batch_size": 32,
+        "--dropout": 0.0,
+        "--precision": "fp16",
+        "--num_workers": 0,
+        "--ema_decay": 0.0,
+        "--normal_ratio": 700,
+        "--smooth_window": 1,
+        "--smooth_method": "median",
+        "--lr_backbone": "2e-5",
+        "--lr_head": "2e-4",
+        "--warmup_epochs": 5,
+        "--grad_clip": 0.0,
+        "--weight_decay": 0.01,
+        "--label_smoothing": 0.0,
+        "--filter_nonfinite_loss": true
+      },
+      "reason": "single-seed safety experiment: drop only samples with NaN/Inf train loss, then compare against raw refcheck seed 42"
+    }
+  ]
+}

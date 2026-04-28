@@ -322,14 +322,46 @@ def mixup_data(x, y, alpha=0.2):
     return mixed_x, y, y[idx], lam
 
 
+def _per_sample_loss(criterion, outputs, labels):
+    if isinstance(criterion, FocalLoss):
+        ce = F.cross_entropy(outputs, labels, reduction="none")
+        pt = torch.exp(-ce)
+        losses = ((1 - pt) ** criterion.gamma) * ce
+        alpha = getattr(criterion, "alpha", None)
+        if alpha is not None:
+            losses = alpha[labels] * losses
+        return losses
+    if isinstance(criterion, nn.CrossEntropyLoss):
+        return F.cross_entropy(
+            outputs,
+            labels,
+            weight=criterion.weight,
+            ignore_index=criterion.ignore_index,
+            reduction="none",
+            label_smoothing=criterion.label_smoothing,
+        )
+    losses = criterion(outputs, labels)
+    if losses.dim() == 0:
+        raise RuntimeError("--filter_nonfinite_loss requires a per-sample loss path for this criterion")
+    return losses
+
+
 def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_epochs,
                     scaler=None, use_mixup=False, ohem_ratio=0.0, amp_dtype=None, ema=None,
-                    grad_clip=1.0):
+                    grad_clip=1.0, filter_nonfinite_loss=False):
     model.train()
     total_loss = 0
+    total_loss_samples = 0
     correct = 0
     total = 0
     grad_norms_pre_clip = []  # per-step pre-clip grad norm (spike 분석용)
+    loss_filter_stats = {
+        "nonfinite_samples": 0,
+        "nonfinite_batches": 0,
+        "skipped_batches": 0,
+        "valid_samples": 0,
+        "total_samples": 0,
+    }
 
     pbar = tqdm(loader, desc=f"Epoch {epoch}/{total_epochs} [Train]",
                 leave=False, ncols=100, disable=TQDM_DISABLE)
@@ -357,6 +389,30 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
         optimizer.zero_grad()
 
         def compute_loss(outputs):
+            if filter_nonfinite_loss:
+                losses_a = _per_sample_loss(criterion, outputs, labels_a)
+                losses_b = _per_sample_loss(criterion, outputs, labels_b)
+                losses = lam * losses_a + (1 - lam) * losses_b
+                if weights is not None and ohem_ratio == 0:
+                    losses = losses * weights
+                finite_mask = torch.isfinite(losses)
+                dropped = int((~finite_mask).sum().item())
+                valid = int(finite_mask.sum().item())
+                loss_filter_stats["total_samples"] += int(losses.numel())
+                loss_filter_stats["valid_samples"] += valid
+                if dropped:
+                    loss_filter_stats["nonfinite_samples"] += dropped
+                    loss_filter_stats["nonfinite_batches"] += 1
+                if valid == 0:
+                    loss_filter_stats["skipped_batches"] += 1
+                    return None, 0
+                valid_losses = losses[finite_mask]
+                if ohem_ratio > 0:
+                    k = max(1, int(len(valid_losses) * ohem_ratio))
+                    valid_losses, _ = valid_losses.topk(k)
+                    valid = int(valid_losses.numel())
+                return valid_losses.mean(), valid
+
             if ohem_ratio > 0:
                 # sample별 loss → top-K
                 import torch.nn.functional as F
@@ -365,15 +421,17 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
                 losses = lam * ce_a + (1 - lam) * ce_b
                 k = max(1, int(len(losses) * ohem_ratio))
                 topk_losses, _ = losses.topk(k)
-                return topk_losses.mean()
+                return topk_losses.mean(), int(topk_losses.numel())
             else:
-                return lam * criterion(outputs, labels_a) + (1 - lam) * criterion(outputs, labels_b)
+                return lam * criterion(outputs, labels_a) + (1 - lam) * criterion(outputs, labels_b), int(images.size(0))
 
         if scaler is not None:
             # fp16 path with GradScaler
             with torch.amp.autocast("cuda", dtype=torch.float16):
                 outputs = model(images)
-                loss = compute_loss(outputs)
+                loss, loss_samples = compute_loss(outputs)
+                if loss is None:
+                    continue
                 if weights is not None and ohem_ratio == 0:
                     loss = (loss * weights).mean() if loss.dim() > 0 else loss
             scaler.scale(loss).backward()
@@ -387,7 +445,9 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
             # bf16 path — scaler 불필요 (range가 fp32와 동일)
             with torch.amp.autocast("cuda", dtype=amp_dtype):
                 outputs = model(images)
-                loss = compute_loss(outputs)
+                loss, loss_samples = compute_loss(outputs)
+                if loss is None:
+                    continue
                 if weights is not None and ohem_ratio == 0:
                     loss = (loss * weights).mean() if loss.dim() > 0 else loss
             loss.backward()
@@ -397,7 +457,9 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
         else:
             # fp32 path
             outputs = model(images)
-            loss = compute_loss(outputs)
+            loss, loss_samples = compute_loss(outputs)
+            if loss is None:
+                continue
             if weights is not None and ohem_ratio == 0:
                 loss = (loss * weights).mean() if loss.dim() > 0 else loss
             loss.backward()
@@ -409,12 +471,13 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
         if ema is not None:
             ema.update(model)
 
-        total_loss += loss.item() * images.size(0)
+        total_loss += loss.item() * loss_samples
+        total_loss_samples += loss_samples
         _, predicted = outputs.max(1)
         correct += predicted.eq(labels_a).sum().item()
         total += labels_a.size(0)
 
-        pbar.set_postfix(loss=f"{total_loss/total:.4f}", acc=f"{correct/total:.3f}")
+        pbar.set_postfix(loss=f"{total_loss/max(total_loss_samples, 1):.4f}", acc=f"{correct/max(total, 1):.3f}")
 
     # per-step grad norm 요약 (NaN/inf 필터링)
     import numpy as _np
@@ -434,7 +497,13 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
     else:
         gn_stats = None
 
-    return total_loss / total, correct / total, gn_stats, grad_norms_pre_clip
+    return (
+        total_loss / max(total_loss_samples, 1),
+        correct / max(total, 1),
+        gn_stats,
+        grad_norms_pre_clip,
+        loss_filter_stats,
+    )
 
 
 def _resolve_run_name(raw_log_dir: str) -> tuple[str, str]:
@@ -883,6 +952,8 @@ def main():
                         help="Disable hard success exit. Default uses os._exit(0) after all files/logs are flushed so queue controllers can start the next run immediately.")
     parser.add_argument("--no_progress", action="store_true", default=td("no_progress", False),
                         help="Disable tqdm progress bars. Non-interactive controller/log runs disable them automatically.")
+    parser.add_argument("--filter_nonfinite_loss", action="store_true", default=td("filter_nonfinite_loss", False),
+                        help="Drop only samples whose per-sample train loss is NaN/Inf before averaging. Experimental safety path.")
     parser.add_argument("--smooth_window", type=int, default=td("smooth_window", 3),
                         help="best 기준 val_f1을 최근 N epoch 통계로 smooth (0=비활성)")
     parser.add_argument("--smooth_method", type=str, default=td("smooth_method", "median"),
@@ -1012,6 +1083,7 @@ def main():
         "precision": args.precision,
         "compile": args.compile,
         "progress_bar": not TQDM_DISABLE,
+        "filter_nonfinite_loss": args.filter_nonfinite_loss,
         "max_samples_per_split": args.max_samples_per_split,
         "num_workers": args.num_workers,
         "prefetch_factor": args.prefetch_factor,
@@ -1311,10 +1383,11 @@ def main():
             print(f"\n  * Backbone unfrozen at epoch {epoch}")
 
         # Train (EMA 업데이트 포함)
-        train_loss, train_acc, grad_stats, grad_norms_per_step = train_one_epoch(
+        train_loss, train_acc, grad_stats, grad_norms_per_step, loss_filter_stats = train_one_epoch(
             model, train_loader, criterion, optimizer, device, epoch, args.epochs,
             scaler=scaler, use_mixup=args.use_mixup, ohem_ratio=args.ohem_ratio,
             amp_dtype=amp_dtype, ema=ema, grad_clip=args.grad_clip,
+            filter_nonfinite_loss=args.filter_nonfinite_loss,
         )
 
         # 평가 모델: EMA 있으면 EMA, 없으면 원본
@@ -1331,6 +1404,7 @@ def main():
         #           (b) --eval_test_every_epoch 플래그,
         #           (c) raw val_f1 가 watermark 를 갱신한 경우 (ep 1부터, VAL_PEAK 기록용)
         ep_test_metrics = None
+        ep_test_cm = None
         is_raw_val_peak = val_f1 > best_raw_val_f1_seen
         force_test_eval = epoch >= early_stop_start
         if args.eval_test_every_epoch or force_test_eval or is_raw_val_peak:
@@ -1339,6 +1413,13 @@ def main():
                 desc=f"Epoch {epoch}/{args.epochs} [TestEpoch]",
                 amp_dtype=amp_dtype,
             )
+            if args.mode == "binary":
+                _ep_bin_preds = np.asarray(ep_test_preds)
+                _ep_bin_labels = np.asarray(ep_test_labels)
+            else:
+                _ep_bin_preds = (np.asarray(ep_test_preds) != 0).astype(int)
+                _ep_bin_labels = (np.asarray(ep_test_labels) != 0).astype(int)
+            ep_test_cm = _compute_binary_confusion(_ep_bin_preds, _ep_bin_labels)
 
         if args.scheduler == "plateau" and epoch > args.warmup_epochs:
             main_scheduler.step(val_recall)
@@ -1368,6 +1449,12 @@ def main():
             epoch_log["grad_norm_std"]  = round(grad_stats["std"], 4)
             epoch_log["grad_n_clipped"] = grad_stats["n_clipped"]
             epoch_log["grad_n_steps"]   = grad_stats["n_steps"]
+        if args.filter_nonfinite_loss:
+            epoch_log["loss_nonfinite_samples"] = loss_filter_stats["nonfinite_samples"]
+            epoch_log["loss_nonfinite_batches"] = loss_filter_stats["nonfinite_batches"]
+            epoch_log["loss_skipped_batches"] = loss_filter_stats["skipped_batches"]
+            epoch_log["loss_valid_samples"] = loss_filter_stats["valid_samples"]
+            epoch_log["loss_total_samples"] = loss_filter_stats["total_samples"]
         if ep_test_metrics is not None:
             ep_log_extras = {
                 "test_f1": round(ep_test_f1, 4),
@@ -1377,6 +1464,13 @@ def main():
                 "val_nor_R": round(val_metrics["normal"]["recall"], 4),
                 "val_abn_R": round(val_metrics["abnormal"]["recall"], 4),
             }
+            if ep_test_cm is not None:
+                ep_log_extras.update({
+                    "test_tn": ep_test_cm["tn"],
+                    "test_fn": ep_test_cm["fn"],
+                    "test_fp": ep_test_cm["fp"],
+                    "test_tp": ep_test_cm["tp"],
+                })
             epoch_log.update(ep_log_extras)
         history.append(epoch_log)
 
@@ -1406,6 +1500,24 @@ def main():
         print(f"  Epoch {epoch}/{args.epochs} ({elapsed:.1f}s)")
         print(f"  Train: loss={train_loss:.4f}  acc={train_acc:.3f}")
         print(f"  Val:   loss={val_loss:.4f}  acc={val_acc:.3f}  recall={val_recall:.3f}  f1={val_f1:.3f}")
+        if ep_test_metrics is not None:
+            test_triggers = []
+            if args.eval_test_every_epoch:
+                test_triggers.append("eval_test_every_epoch")
+            if force_test_eval:
+                test_triggers.append("early_stop_window")
+            if is_raw_val_peak:
+                test_triggers.append("raw_val_peak")
+            trigger_text = ",".join(test_triggers) if test_triggers else "scheduled"
+            fn = ep_test_cm["fn"] if ep_test_cm is not None else "?"
+            fp = ep_test_cm["fp"] if ep_test_cm is not None else "?"
+            print(
+                f"  TestEpoch[{trigger_text}]: "
+                f"f1={ep_test_f1:.4f} recall={ep_test_recall:.4f} "
+                f"normal_R={ep_test_metrics['normal']['recall']:.4f} "
+                f"abn_R={ep_test_metrics['abnormal']['recall']:.4f} "
+                f"FN={fn} FP={fp}"
+            )
 
         # 클래스별 성능 테이블
         print_class_table(val_metrics, title="Val Class Performance")

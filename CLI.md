@@ -11,7 +11,7 @@ python train.py \
     --normal_ratio 700 --seed 1 \
     --lr_backbone 3e-5 --lr_head 3e-4 \
     --min_epochs 10 --patience 20 \
-    --normal_threshold 0.5 \
+    --normal_threshold 0.9 \
     --log_dir logs/v9_lr3_n700_s1_p20
 ```
 
@@ -76,7 +76,7 @@ python train.py \
 | `--max_per_class` | 0 | 클래스당 최대 샘플 (0 = 제한 없음) |
 | `--mode` | binary | `binary` / `multiclass` / `anomaly_type` |
 | `--seed` | 42 | random seed |
-| `--normal_threshold` | 0.5 | inference NT. **test peek 금지 위해 0.5 고정** |
+| `--normal_threshold` | 0.9 | selected inference/reporting NT. per-run test tuning 금지 |
 
 ### 2.5 Model
 
@@ -113,7 +113,7 @@ python train.py \
     --normal_ratio 700 --seed 1 \
     --lr_backbone 3e-5 --lr_head 3e-4 \
     --min_epochs 10 --patience 20 \
-    --normal_threshold 0.5 \
+    --normal_threshold 0.9 \
     --log_dir logs/v9_lr3_n700_s1_p20
 ```
 
@@ -124,7 +124,7 @@ python train.py \
     --normal_ratio 2800 --seed 1 \
     --lr_backbone 3e-5 --lr_head 3e-4 \
     --min_epochs 10 --patience 20 \
-    --normal_threshold 0.5 \
+    --normal_threshold 0.9 \
     --log_dir logs/v9_lr3_n2800_s1_p20
 ```
 
@@ -135,7 +135,7 @@ python train.py \
     --normal_ratio 1400 --seed 1 \
     --lr_backbone 3e-5 --lr_head 3e-4 \
     --min_epochs 10 --avg_last_n 5 \
-    --normal_threshold 0.5 \
+    --normal_threshold 0.9 \
     --log_dir logs/v9_lr3_n1400_s1_avg5
 ```
 
@@ -147,7 +147,7 @@ for s in 1 2 4 42; do
       --normal_ratio 700 --seed $s \
       --lr_backbone 3e-5 --lr_head 3e-4 \
       --min_epochs 10 --patience 20 \
-      --normal_threshold 0.5 \
+      --normal_threshold 0.9 \
       --log_dir logs/v9_lr3_n700_s${s}_p20
 done
 ```
@@ -159,7 +159,7 @@ python train.py \
     --normal_ratio 2800 --seed 1 \
     --lr_backbone 3e-5 --lr_head 3e-4 \
     --min_epochs 10 --patience 20 \
-    --normal_threshold 0.5 \
+    --normal_threshold 0.9 \
     --precision bf16 --compile \
     --batch_size 64 \
     --num_workers 16 --prefetch_factor 16 \
@@ -173,7 +173,7 @@ python train.py \
     --normal_ratio 2800 --seed 1 \
     --lr_backbone 3e-5 --lr_head 3e-4 \
     --min_epochs 10 --patience 20 \
-    --normal_threshold 0.5 \
+    --normal_threshold 0.9 \
     --ema_decay 0.9999 \
     --log_dir logs/v9_lr3_ema9999_n2800_s1
 ```
@@ -187,7 +187,7 @@ python train.py \
     --lr_backbone 2e-5 --lr_head 2e-4 \
     --min_epochs 10 --patience 10 \
     --label_smoothing 0.05 \
-    --normal_threshold 0.5 \
+    --normal_threshold 0.9 \
     --log_dir logs/v9_6cls_s1
 ```
 
@@ -198,7 +198,7 @@ python train.py \
     --normal_ratio 700 --seed 1 \
     --lr_backbone 3e-5 --lr_head 3e-4 \
     --min_epochs 10 --patience 20 \
-    --normal_threshold 0.5 \
+    --normal_threshold 0.9 \
     --eval_test_every_epoch \
     --log_dir logs/v9_lr3_n700_s1_evalall
 ```
@@ -314,8 +314,8 @@ logs/<run_dir>/
 ├── history.json               # epoch 별 train/val 기록
 ├── test_history.json          # best update 시점의 test 평가 누적
 ├── training_curves.png        # loss/f1/lr 곡선
-├── confusion_matrix.png       # NT=0.5 CM
-├── confusion_matrix_nt.png    # NT=default CM
+├── confusion_matrix.png       # argmax CM
+├── confusion_matrix_nt.png    # selected NT CM (default NT=0.9)
 ├── train.py                   # 실험 당시 train.py 스냅샷 (스크립트가 복사)
 └── predictions/
     ├── tn_normal/             # True Negative (cap 100)
@@ -328,7 +328,7 @@ logs/<run_dir>/
 
 ## 6. 주의사항 (절대 규칙)
 
-1. **NT=0.5 고정**: test peek 금지. `--normal_threshold 0.5` 만 사용.
+1. **NT=0.9 고정**: reporting/inference 기준. run마다 test 결과를 보고 threshold를 바꾸지 말 것.
 2. **학습 결과 폴더 삭제 금지**: `logs/<run_dir>/` 은 보존. 새 실험은 새 이름.
 3. **Binary 모드 우선**: abnormal recall 최우선 지표. `--mode binary`.
 4. **GPU 확인**: `python -c "import torch; print(torch.cuda.is_available())"` → `True` 확인.

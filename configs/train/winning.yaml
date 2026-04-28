@@ -71,4 +71,4 @@ avg_last_n: 0                  # deprecated
 eval_test_every_epoch: false   # 매 epoch test 평가 (history 기록)
 
 # ---------- inference / normal threshold ----------
-normal_threshold: 0.5          # 극한값 금지 (test-peeking)
+normal_threshold: 0.9          # selected inference/reporting NT; per-run tuning 금지

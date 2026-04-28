@@ -132,6 +132,7 @@ LR_SCHEDULE_BACKBONE_BASE = 2e-5
 
 FAMILY_BASELINES: dict[str, tuple[str, float | str]] = {
     "normal_ratio": ("700", 700.0),
+    "per_class": ("0 / off", 0.0),
     "lr": ("2e-5 / 2e-4", 2e-5),
     "warmup": ("5", 5.0),
     "gc": ("1", 1.0),

@@ -560,7 +560,7 @@ def _confusion_matrix_np(y_true, y_pred, n_classes):
     return counts.reshape(n_classes, n_classes)
 
 
-def save_confusion_matrix(labels, preds, classes, save_path):
+def save_confusion_matrix(labels, preds, classes, save_path, title="Confusion Matrix (Best Model)"):
     """Confusion matrix 저장"""
     mat = _confusion_matrix_np(labels, preds, len(classes))
     fig, ax = plt.subplots(1, 1, figsize=(8, 6))
@@ -569,7 +569,7 @@ def save_confusion_matrix(labels, preds, classes, save_path):
                 xticklabels=short, yticklabels=short, ax=ax)
     ax.set_xlabel("Predicted", fontsize=10)
     ax.set_ylabel("Actual", fontsize=10)
-    ax.set_title("Confusion Matrix (Best Model)", fontsize=12)
+    ax.set_title(title, fontsize=12)
     plt.tight_layout()
     fig.savefig(save_path, dpi=150)
     plt.close(fig)
@@ -729,8 +729,8 @@ def main():
     parser.add_argument("--grad_clip", type=float, default=td("grad_clip", 1.0),
                         help="Gradient clip max_norm (default 1.0 = winning). 0.5/2.0/5.0 등 시도 가능.")
     parser.add_argument("--patience", type=int, default=td("patience", 5))
-    parser.add_argument("--normal_threshold", type=float, default=td("normal_threshold", 0.5),
-                        help="Inference threshold. 0.5=standard, 0.7=약간 conservative. 극한값(0.999+) 금지 — test-peeking 이고 production 에서 fragile.")
+    parser.add_argument("--normal_threshold", type=float, default=td("normal_threshold", 0.9),
+                        help="Selected inference threshold. 0.9 is the reporting default; extreme values (0.999+) are fragile/test-peeking.")
     parser.add_argument("--model_name", type=str, default=td("model_name", "convnextv2_tiny.fcmae_ft_in22k_in1k"))
     parser.add_argument("--freeze_backbone_epochs", type=int, default=td("freeze_backbone_epochs", 0))
     parser.add_argument("--label_smoothing", type=float, default=td("label_smoothing", 0.0))
@@ -1417,12 +1417,19 @@ def main():
             save_predictions(test_ds, test_preds, test_labels, classes, predictions_dir, correct_cap=100)
 
             # Confusion matrix 저장
-            save_confusion_matrix(test_labels, test_preds, classes, log_dir / "confusion_matrix.png")
+            save_confusion_matrix(
+                test_labels, test_preds, classes, log_dir / "confusion_matrix.png",
+                title="Confusion Matrix (argmax)",
+            )
 
             # Normal threshold 다중 평가
+            selected_nt = float(args.normal_threshold)
             nt_thresholds = [0.5, 0.9, 0.99, 0.999, 0.9999]
+            if not any(abs(nt - selected_nt) < 1e-12 for nt in nt_thresholds):
+                nt_thresholds.append(selected_nt)
+                nt_thresholds = sorted(nt_thresholds)
             nt_results = {}
-            best_nt = args.normal_threshold
+            selected_nt_result = None
 
             print(f"\n  Normal Threshold 평가:")
             for nt in nt_thresholds:
@@ -1430,15 +1437,21 @@ def main():
                     eval_model, test_loader, criterion, device, classes,
                     desc=f"NT={nt}", normal_threshold=nt, amp_dtype=amp_dtype,
                 )
-                nt_results[str(nt)] = {
+                nt_result = {
                     "acc": round(nt_acc, 4), "recall": round(nt_recall, 4),
                     "f1": round(nt_f1, 4), "metrics": nt_metrics_t,
                 }
-                marker = " ★" if nt == best_nt else ""
+                nt_results[f"{nt:g}"] = nt_result
+                is_selected_nt = abs(nt - selected_nt) < 1e-12
+                marker = " ★" if is_selected_nt else ""
                 print(f"    NT={nt}: acc={nt_acc:.3f} recall={nt_recall:.3f} f1={nt_f1:.3f}{marker}")
 
-                if nt == best_nt:
-                    save_confusion_matrix(nt_labels_t, nt_preds_t, classes, log_dir / "confusion_matrix_nt.png")
+                if is_selected_nt:
+                    selected_nt_result = nt_result
+                    save_confusion_matrix(
+                        nt_labels_t, nt_preds_t, classes, log_dir / "confusion_matrix_nt.png",
+                        title=f"Confusion Matrix (NT={nt:g})",
+                    )
 
             # Best 조건 저장
             best_info = {
@@ -1450,6 +1463,8 @@ def main():
                 "test_f1": round(test_f1, 4),
                 "test_acc": round(test_acc, 4),
                 "test_metrics": test_metrics,
+                "selected_normal_threshold": selected_nt,
+                "selected_normal_threshold_result": selected_nt_result,
                 "normal_threshold_results": nt_results,
                 "test_history": test_history,
                 "hparams": hparams,
@@ -1572,26 +1587,38 @@ def main():
         torch.save({k: v.to(device) for k, v in avg_state.items()},
                    str(log_dir / "best_model.pth"))
         # confusion matrix 갱신
-        save_confusion_matrix(test_labels_a, test_preds_a, classes,
-                              log_dir / "confusion_matrix.png")
+        save_confusion_matrix(
+            test_labels_a, test_preds_a, classes, log_dir / "confusion_matrix.png",
+            title="Confusion Matrix (argmax, averaged)",
+        )
         # predictions 갱신
         save_predictions(test_ds, test_preds_a, test_labels_a, classes,
                          predictions_dir, correct_cap=100)
 
         # NT sweep on averaged
+        selected_nt = float(args.normal_threshold)
+        avg_nt_values = [0.5, 0.6, 0.7, 0.8, 0.9]
+        if not any(abs(nt - selected_nt) < 1e-12 for nt in avg_nt_values):
+            avg_nt_values.append(selected_nt)
+            avg_nt_values = sorted(avg_nt_values)
         nt_results_a = {}
-        for nt in [0.5, 0.6, 0.7, 0.8, 0.9]:
+        selected_nt_result_a = None
+        for nt in avg_nt_values:
             _, nt_acc, nt_recall, nt_f1, nt_metrics_t, nt_preds_t, nt_labels_t = evaluate(
                 model, test_loader, criterion, device, classes,
                 desc=f"AvgNT={nt}", normal_threshold=nt, amp_dtype=amp_dtype,
             )
-            nt_results_a[str(nt)] = {
+            nt_result_a = {
                 "acc": round(nt_acc, 4), "recall": round(nt_recall, 4),
                 "f1": round(nt_f1, 4), "metrics": nt_metrics_t,
             }
-            if nt == args.normal_threshold:
-                save_confusion_matrix(nt_labels_t, nt_preds_t, classes,
-                                      log_dir / "confusion_matrix_nt.png")
+            nt_results_a[f"{nt:g}"] = nt_result_a
+            if abs(nt - selected_nt) < 1e-12:
+                selected_nt_result_a = nt_result_a
+                save_confusion_matrix(
+                    nt_labels_t, nt_preds_t, classes, log_dir / "confusion_matrix_nt.png",
+                    title=f"Confusion Matrix (NT={nt:g}, averaged)",
+                )
 
         # best metrics를 averaged로 교체
         best_test_metrics = test_metrics_a
@@ -1601,8 +1628,10 @@ def main():
         best_epoch = f"avg_last_{n_avg}"  # 표시용
         # nt_results 위해 변수 보관
         avg_nt_results = nt_results_a
+        avg_selected_nt_result = selected_nt_result_a
     else:
         avg_nt_results = None
+        avg_selected_nt_result = None
 
     # Training plots
     save_training_plots(history, log_dir)
@@ -1626,6 +1655,8 @@ def main():
         bi["test_recall"] = round(best_test_recall, 4)
         bi["test_acc"] = round(test_acc_a, 4)
         bi["test_metrics"] = best_test_metrics
+        bi["selected_normal_threshold"] = float(args.normal_threshold)
+        bi["selected_normal_threshold_result"] = avg_selected_nt_result
         bi["normal_threshold_results"] = avg_nt_results
         bi["averaging"] = {"enabled": True, "last_n": len(avg_buffer)}
 

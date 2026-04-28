@@ -10,7 +10,7 @@
 # 참고: --train_config 생략 시 (현재 하위호환) 이 파일이 자동 로드됨 (configs/train/winning.yaml 있으면).
 
 # ---------- data ----------
-data_config: config.yaml       # generate_data.py 가 쓴 dataset config
+data_config: dataset.yaml      # project root active dataset config
 mode: binary                   # binary / multiclass / anomaly_type
 normal_ratio: 0                # 0 = 전체 사용, 700 / 2800 등 지정
 max_per_class: 0               # 0 = 전체 사용 (override 시 train 데이터 cap)

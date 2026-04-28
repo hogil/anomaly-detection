@@ -35,7 +35,7 @@
 | 이미지 생성 | `generate_images.py` | `images/`, `display/` 렌더링 |
 | 데이터셋 검증 | `scripts/validate_dataset.py` | 생성된 anomaly 강도와 weak case 검증 |
 | 단일 학습 | `train.py` | 1개 설정 학습 |
-| 전체 sweep/ablation | `run_experiments_v11.py` | `sweep`, `lr`, `gc`, `smooth`, `reg`, `color` 그룹 실행 |
+| 전체 sweep/ablation | `run_experiments_v11.py` | `sweep`, `lr`, `gc`, `wd`, `smooth`, `reg`, `color` 그룹 실행 |
 
 ## 3. 사전 준비
 
@@ -114,13 +114,13 @@ python train.py \
 python run_experiments_v11.py --groups sweep --num_workers 1 --name-prefix company_run
 ```
 
-### 4.4 Group C/D/F/G ablation
+### 4.4 Group C/D/D2/F/G ablation
 
 현재 기준 추천 `base_n`은 `700` 입니다.
 
 ```bash
 python run_experiments_v11.py \
-  --groups lr gc smooth reg \
+  --groups lr gc wd smooth reg \
   --base_n 700 \
   --num_workers 1 \
   --name-prefix company_run
@@ -228,8 +228,8 @@ bash scripts/run_v11_pipeline.sh all --name-prefix company_run --num-workers 8 -
 
 1. dataset 생성
 2. normal_ratio sweep
-3. perclass sweep
-4. ablation
+3. ablation
+4. perclass sweep
 5. paper table 생성
 
 ## 6. 권장 실행 순서
@@ -241,8 +241,8 @@ bash scripts/run_v11_pipeline.sh all --name-prefix company_run --num-workers 8 -
 3. `train` stage로 ref 1개 확인
 4. `sweep` stage 실행
 5. `summary`로 best `n` 확인
-6. 필요하면 `perclass` stage 실행
-7. `ablation` stage 실행
+6. `ablation` stage 실행
+7. 필요하면 `perclass` stage 실행
 8. `paper` stage로 개별 best item / combo 표 생성
 
 ### 가장 짧은 검증 루프

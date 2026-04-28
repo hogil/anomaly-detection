@@ -8,7 +8,7 @@
 
 | 단계 | 파일 | 역할 | 입력 | 출력 |
 |---|---|---|---|---|
-| 1 | `generate_data.py` | tabular 데이터 생성 (시계열 + 시나리오) | `config.yaml` | `data/timeseries.csv`, `data/scenarios.csv` |
+| 1 | `generate_data.py` | tabular 데이터 생성 (시계열 + 시나리오) | `dataset.yaml` | `data/timeseries.csv`, `data/scenarios.csv` |
 | 2 | `generate_images.py` | overlay 이미지 렌더링 (학습용 + 사람 확인용) | `data/*.csv` | `images/{train,val,test}/{cls}/*.png`, `display/...` |
 | 3 | `train.py` | ConvNeXtV2-Tiny 학습 (1 실험) | `images/`, `data/scenarios.csv` | `logs/<exp>/{best_model.pth, best_info.json, ...}` |
 | 4 | `run_experiments.py` | 24 실험 한 방에 (sweep/reg/lr/mc) | train.py 호출 | `logs/<exp>/`, `logs/experiments_summary.json` |
@@ -24,7 +24,9 @@
 
 | 파일 | 역할 |
 |---|---|
-| `config.yaml` | 데이터 생성 + 학습 설정 (현재 v9: noise +25%, sparse 62%) |
+| `dataset.yaml` | 활성 데이터 생성 설정 (project root SSOT) |
+| `configs/datasets/` | dataset snapshot backup 폴더 |
+| `configs/runs/` | experiment execution condition backup 폴더 |
 
 **weights/** (gitignored — `python download.py` 로 받기, git에 절대 커밋 X). 파일명은 HF model id 그대로:
 
@@ -112,7 +114,7 @@ CLI 옵션:
 - `--workers 1` : 순차 (default, 노트북 호환)
 - `--workers 0` : auto (cpu_count - 1)
 - `--workers N` : N process 병렬
-- `--config config.yaml` : 다른 config 파일
+- `--config dataset.yaml` : 기본 active dataset 설정
 
 산출물:
 ```

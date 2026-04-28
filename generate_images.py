@@ -22,6 +22,8 @@ from functools import partial
 
 from src.data.image_renderer import ImageRenderer
 
+DEFAULT_DATASET_CONFIG = "dataset.yaml"
+
 
 # worker별 ts_grouped 캐시 (process 단위)
 _worker_cache = {}
@@ -42,6 +44,8 @@ def _init_worker(ts_pickle_path: str, config: dict, x_col: str = "time_index"):
     _worker_cache["title_columns"] = img_cfg.get("title_columns", ["device", "step", "item"])
     _worker_cache["x_label"] = img_cfg.get("x_label") or x_col
     _worker_cache["y_label"] = img_cfg.get("y_label", "Measurement Value (nm)")
+    # Stage 14 color ablation: "always" (default) or "context_only"
+    _worker_cache["fleet_mode"] = img_cfg.get("fleet_mode", "always")
 
 
 def _render_one(row_dict: dict):
@@ -115,7 +119,13 @@ def _render_one(row_dict: dict):
         except (TypeError, ValueError):
             target_value = None
 
-    renderer.render_overlay(fleet_data, target_id, str(train_path),
+    # Stage 14: fleet_mode="context_only" → non-context class 에서는 fleet 제거 (target 만)
+    fleet_mode = _worker_cache.get("fleet_mode", "always")
+    if fleet_mode == "context_only" and cls != "context":
+        train_fleet_data = {target_id: fleet_data[target_id]} if target_id in fleet_data else fleet_data
+    else:
+        train_fleet_data = fleet_data
+    renderer.render_overlay(train_fleet_data, target_id, str(train_path),
                             target_value=target_value)
 
     anomalous_ids = [target_id] if cls != "normal" else []
@@ -163,11 +173,16 @@ def render_all(config: dict, num_workers: int = 0, x_col: str = None):
 
     rows = sc_df.to_dict(orient="records")
 
+    chunk_size = 5 if num_workers > 1 else 1
+    max_tasks_per_child = 100 if num_workers > 1 else 50
+
     try:
-        with Pool(processes=num_workers, initializer=_init_worker,
-                  initargs=(ts_pickle_path, config, x_col)) as pool:
+        with Pool(processes=num_workers,
+                  initializer=_init_worker,
+                  initargs=(ts_pickle_path, config, x_col),
+                  maxtasksperchild=max_tasks_per_child) as pool:
             results = list(tqdm(
-                pool.imap_unordered(_render_one, rows, chunksize=20),
+                pool.imap_unordered(_render_one, rows, chunksize=chunk_size),
                 total=len(rows), desc="이미지 생성"
             ))
     finally:
@@ -182,7 +197,7 @@ def render_all(config: dict, num_workers: int = 0, x_col: str = None):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="config.yaml")
+    parser.add_argument("--config", default=DEFAULT_DATASET_CONFIG)
     parser.add_argument("--workers", type=int, default=0,
                         help="병렬 worker 수 (0=auto, CPU 코어 수-1)")
     parser.add_argument("--x_col", type=str, default=None,

@@ -5,8 +5,10 @@ Groups (실행 순서 권장):
     perclass: Group B2 — Train max_per_class × 5 seed (50 runs, train split only)
     lr     : Group C — LR sweep × 3 seeds (18 runs, --base_n 필요)
     gc     : Group D — Gradient clipping sweep × 3 seeds (9 runs, --base_n 필요)
+    wd     : Group D2 — AdamW weight decay sweep × 3 seeds (9 runs, --base_n 필요)
     smooth : Group F — Smoothing window ablation × 3 seeds (9 runs, --base_n 필요)
     reg    : Group G — Regularization ablation × 3 seeds (6 runs, --base_n 필요)
+    rescue : Group G2 — Overfit rescue (high-LR overfit cases + weight decay, 8 runs)
     combo  : Paper combo — 선택한 best item들을 동시에 적용 (3 runs, --combo-* 필요)
     color  : Group E — Rendering color 비교 × 3 seeds (9 runs, 이미지 생성 필요)
 
@@ -15,7 +17,7 @@ Groups (실행 순서 권장):
     python run_experiments_v11.py --groups sweep
 
     # Step 2: best_n 결정 후 C/D/F/G 실행 (예: best_n=2800)
-    python run_experiments_v11.py --groups lr gc smooth reg --base_n 2800
+    python run_experiments_v11.py --groups lr gc wd smooth reg rescue --base_n 2800
 
     # Step 3: 이미지 생성 후 color 그룹
     #   python generate_images.py --config config_red.yaml
@@ -200,6 +202,12 @@ GC_VARIANTS = {
     "50": ["--grad_clip", "5.0"],
 }
 
+WD_VARIANTS = {
+    "000": ["--weight_decay", "0.0"],
+    "002": ["--weight_decay", "0.02"],
+    "005": ["--weight_decay", "0.05"],
+}
+
 SMOOTH_VARIANTS = {
     "1raw":  ["--smooth_window", "1", "--smooth_method", "median"],
     "5med":  ["--smooth_window", "5", "--smooth_method", "median"],
@@ -209,6 +217,13 @@ SMOOTH_VARIANTS = {
 REG_VARIANTS = {
     "ls01": ["--label_smoothing", "0.1"],
     "dp02": ["--stochastic_depth_rate", "0.2"],
+}
+
+RESCUE_VARIANTS = {
+    "lr3e5_wd002": ["--lr_backbone", "3e-5", "--lr_head", "3e-4", "--warmup_epochs", "5", "--weight_decay", "0.02"],
+    "lr3e5_wd005": ["--lr_backbone", "3e-5", "--lr_head", "3e-4", "--warmup_epochs", "5", "--weight_decay", "0.05"],
+    "lr5e5_wd002": ["--lr_backbone", "5e-5", "--lr_head", "5e-4", "--warmup_epochs", "5", "--weight_decay", "0.02"],
+    "lr5e5_wd005": ["--lr_backbone", "5e-5", "--lr_head", "5e-4", "--warmup_epochs", "5", "--weight_decay", "0.05"],
 }
 
 
@@ -291,6 +306,30 @@ def build_gc(base_n: int) -> List[Exp]:
     return exps
 
 
+def build_wd(base_n: int) -> List[Exp]:
+    """Group D2 — AdamW weight decay × 3 seeds (9 runs).
+
+    Winning baseline weight_decay=0.01 은 sweep 그룹(B)에 이미 포함되어 있으므로 제외한다.
+    """
+    base_fixed = [
+        "--mode", "binary", "--epochs", "20", "--patience", "5",
+        "--smooth_window", "3", "--smooth_method", "median",
+        "--lr_backbone", "2e-5", "--lr_head", "2e-4", "--warmup_epochs", "5",
+        "--grad_clip", "1.0", "--ema_decay", "0.0",
+        "--normal_ratio", str(base_n),
+    ]
+    exps = []
+    for tag, wd_args in WD_VARIANTS.items():
+        for seed in ABLATION_SEEDS:
+            exps.append(Exp(
+                name=f"v11_wd{tag}_n{base_n}_s{seed}",
+                group="wd",
+                args=base_fixed + wd_args + ["--seed", str(seed)],
+                note=f"weight_decay={wd_args[-1]} | n={base_n} seed={seed}",
+            ))
+    return exps
+
+
 def build_smooth(base_n: int) -> List[Exp]:
     """Group F — Smoothing window ablation × 3 seeds (9 runs).
 
@@ -329,6 +368,29 @@ def build_reg(base_n: int) -> List[Exp]:
     return exps
 
 
+def build_rescue(base_n: int) -> List[Exp]:
+    """Group G2 — High-LR overfit cases에 weight decay를 직접 붙이는 실험.
+
+    과적합이 실제로 관찰된 seed(42, 2)에 한정해서 빠르게 확인한다.
+    """
+    base_fixed = [
+        "--mode", "binary", "--epochs", "20", "--patience", "5",
+        "--smooth_window", "3", "--smooth_method", "median",
+        "--grad_clip", "1.0", "--ema_decay", "0.0",
+        "--normal_ratio", str(base_n),
+    ]
+    exps = []
+    for tag, extra_args in RESCUE_VARIANTS.items():
+        for seed in (42, 2):
+            exps.append(Exp(
+                name=f"v11_rescue_{tag}_n{base_n}_s{seed}",
+                group="rescue",
+                args=base_fixed + extra_args + ["--seed", str(seed)],
+                note=f"overfit rescue {tag} | n={base_n} seed={seed}",
+            ))
+    return exps
+
+
 def build_color(base_n: int) -> List[Exp]:
     """Group E — Color rendering 비교 × 3 seeds (9 runs, 마지막).
 
@@ -358,11 +420,12 @@ def build_color(base_n: int) -> List[Exp]:
     return exps
 
 
-def build_combo(base_n: int, lr_tag: str, gc_tag: str, smooth_tag: str, reg_tag: str) -> List[Exp]:
+def build_combo(base_n: int, lr_tag: str, gc_tag: str, wd_tag: str, smooth_tag: str, reg_tag: str) -> List[Exp]:
     """Paper-style combo: best item from each group를 동시에 적용."""
     combo_args = []
     combo_args += LR_VARIANTS[lr_tag]
     combo_args += GC_VARIANTS[gc_tag]
+    combo_args += WD_VARIANTS[wd_tag]
     combo_args += SMOOTH_VARIANTS[smooth_tag]
     combo_args += REG_VARIANTS[reg_tag]
 
@@ -370,10 +433,10 @@ def build_combo(base_n: int, lr_tag: str, gc_tag: str, smooth_tag: str, reg_tag:
     exps = []
     for seed in ABLATION_SEEDS:
         exps.append(Exp(
-            name=f"v11_combo_lr{lr_tag}_gc{gc_tag}_sw{smooth_tag}_reg{reg_tag}_n{base_n}_s{seed}",
+            name=f"v11_combo_lr{lr_tag}_gc{gc_tag}_wd{wd_tag}_sw{smooth_tag}_reg{reg_tag}_n{base_n}_s{seed}",
             group="combo",
             args=base_fixed + combo_args + ["--seed", str(seed)],
-            note=f"combo lr={lr_tag} gc={gc_tag} smooth={smooth_tag} reg={reg_tag} | n={base_n} seed={seed}",
+            note=f"combo lr={lr_tag} gc={gc_tag} wd={wd_tag} smooth={smooth_tag} reg={reg_tag} | n={base_n} seed={seed}",
         ))
     return exps
 
@@ -386,15 +449,18 @@ def build_experiments(base_n: int, groups: List[str], name_prefix: str = "",
         "perclass": lambda: build_perclass(base_n),
         "lr":     lambda: build_lr(base_n),
         "gc":     lambda: build_gc(base_n),
+        "wd":     lambda: build_wd(base_n),
         "smooth": lambda: build_smooth(base_n),
         "reg":    lambda: build_reg(base_n),
+        "rescue": lambda: build_rescue(base_n),
         "combo":  lambda: build_combo(
             base_n,
             combo_tags["lr_tag"],
             combo_tags["gc_tag"],
+            combo_tags["wd_tag"],
             combo_tags["smooth_tag"],
             combo_tags["reg_tag"],
-        ) if {"lr_tag", "gc_tag", "smooth_tag", "reg_tag"} <= set(combo_tags.keys()) else [],
+        ) if {"lr_tag", "gc_tag", "wd_tag", "smooth_tag", "reg_tag"} <= set(combo_tags.keys()) else [],
         "color":  lambda: build_color(base_n),
     }
     exps: List[Exp] = []
@@ -434,6 +500,7 @@ def snapshot_run_spec(args, exps: List[Exp], num_gpus: int, server_extra: List[s
         "combo_tags": {
             "lr_tag": args.combo_lr_tag,
             "gc_tag": args.combo_gc_tag,
+            "wd_tag": args.combo_wd_tag,
             "smooth_tag": args.combo_smooth_tag,
             "reg_tag": args.combo_reg_tag,
         },
@@ -652,14 +719,16 @@ def _print_row(exp: Exp, m: dict):
 def print_summary(exps: List[Exp], summary_tag: str = "") -> dict:
     out: dict = {"by_group": {}}
 
-    GROUP_ORDER = ["sweep", "perclass", "lr", "gc", "smooth", "reg", "combo", "color"]
+    GROUP_ORDER = ["sweep", "perclass", "lr", "gc", "wd", "smooth", "reg", "rescue", "combo", "color"]
     GROUP_LABEL = {
         "sweep":  "Group B — Normal ratio × Seed sweep",
         "perclass": "Group B2 — Train per-class max_per_class × Seed sweep",
         "lr":     "Group C — LR sweep",
         "gc":     "Group D — Gradient clipping sweep",
+        "wd":     "Group D2 — AdamW weight decay sweep",
         "smooth": "Group F — Smoothing window ablation",
         "reg":    "Group G — Regularization ablation",
+        "rescue": "Group G2 — High-LR overfit rescue",
         "combo":  "Paper Combo — selected items combined",
         "color":  "Group E — Color rendering 비교",
     }
@@ -796,7 +865,7 @@ def print_summary(exps: List[Exp], summary_tag: str = "") -> dict:
 # CLI
 # ============================================================================
 
-ALL_GROUPS = ["sweep", "perclass", "lr", "gc", "smooth", "reg", "combo", "color"]
+ALL_GROUPS = ["sweep", "perclass", "lr", "gc", "wd", "smooth", "reg", "rescue", "combo", "color"]
 
 
 def main():
@@ -807,7 +876,7 @@ def main():
     parser.add_argument(
         "--groups", nargs="+", default=["sweep"],
         choices=ALL_GROUPS,
-        help="실행 그룹 (default: sweep). 권장 순서: sweep/perclass → lr gc smooth reg → combo → color",
+        help="실행 그룹 (default: sweep). 권장 순서: sweep/perclass → lr gc wd smooth reg rescue → combo → color",
     )
     parser.add_argument(
         "--config", type=str, default="dataset.yaml",
@@ -815,7 +884,7 @@ def main():
     )
     parser.add_argument(
         "--base_n", type=int, default=700,
-        help="lr/gc/smooth/reg/color 그룹에서 사용할 normal_ratio (default: 700). "
+        help="lr/gc/wd/smooth/reg/rescue/color 그룹에서 사용할 normal_ratio (default: 700). "
              "sweep 완료 후 best_n으로 설정 권장.",
     )
     parser.add_argument(
@@ -845,6 +914,8 @@ def main():
                         help="combo 그룹에서 사용할 lr tag")
     parser.add_argument("--combo-gc-tag", type=str, default=None, choices=list(GC_VARIANTS.keys()),
                         help="combo 그룹에서 사용할 gc tag")
+    parser.add_argument("--combo-wd-tag", type=str, default=None, choices=list(WD_VARIANTS.keys()),
+                        help="combo 그룹에서 사용할 wd tag")
     parser.add_argument("--combo-smooth-tag", type=str, default=None, choices=list(SMOOTH_VARIANTS.keys()),
                         help="combo 그룹에서 사용할 smooth tag")
     parser.add_argument("--combo-reg-tag", type=str, default=None, choices=list(REG_VARIANTS.keys()),
@@ -871,6 +942,7 @@ def main():
     combo_tags = {
         "lr_tag": args.combo_lr_tag,
         "gc_tag": args.combo_gc_tag,
+        "wd_tag": args.combo_wd_tag,
         "smooth_tag": args.combo_smooth_tag,
         "reg_tag": args.combo_reg_tag,
     }
@@ -881,7 +953,7 @@ def main():
         combo_tags={k: v for k, v in combo_tags.items() if v is not None},
     )
     if "combo" in args.groups and not any(e.group == "combo" for e in exps):
-        raise SystemExit("combo 그룹은 --combo-lr-tag/--combo-gc-tag/--combo-smooth-tag/--combo-reg-tag 가 모두 필요합니다.")
+        raise SystemExit("combo 그룹은 --combo-lr-tag/--combo-gc-tag/--combo-wd-tag/--combo-smooth-tag/--combo-reg-tag 가 모두 필요합니다.")
 
     done_count = sum(1 for e in exps if e.is_done())
     ready_count = sum(1 for e in exps if e.is_ready()[0] and not e.is_done())

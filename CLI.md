@@ -100,7 +100,7 @@ python train.py \
 | 옵션 | default | 설명 |
 |---|---|---|
 | `--log_dir` | logs | 출력 폴더. 매 실험 새 이름 필수 (삭제 금지) |
-| `--config` | config.yaml | YAML 설정 경로 |
+| `--config` | dataset.yaml | YAML 설정 경로 |
 
 ---
 

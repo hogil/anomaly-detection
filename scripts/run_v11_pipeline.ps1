@@ -79,7 +79,7 @@ switch ($Stage) {
     "ablation" {
         Invoke-Step -Args (@(
             "run_experiments_v11.py",
-            "--groups", "lr", "gc", "smooth", "reg",
+            "--groups", "lr", "gc", "wd", "smooth", "reg",
             "--config", $Config,
             "--base_n", "$BaseN",
             "--num_workers", "$NumWorkers",
@@ -121,16 +121,16 @@ switch ($Stage) {
         ) + $ExtraArgs)
         Invoke-Step -Args (@(
             "run_experiments_v11.py",
-            "--groups", "perclass",
+            "--groups", "lr", "gc", "wd", "smooth", "reg",
             "--config", $Config,
+            "--base_n", "$BaseN",
             "--num_workers", "$NumWorkers",
             "--name-prefix", $NamePrefix
         ) + $ExtraArgs)
         Invoke-Step -Args (@(
             "run_experiments_v11.py",
-            "--groups", "lr", "gc", "smooth", "reg",
+            "--groups", "perclass",
             "--config", $Config,
-            "--base_n", "$BaseN",
             "--num_workers", "$NumWorkers",
             "--name-prefix", $NamePrefix
         ) + $ExtraArgs)

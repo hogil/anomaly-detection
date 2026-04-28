@@ -21,12 +21,11 @@ BASE_ARGS = {
     "--num_workers": 0,
     "--ema_decay": 0.0,
     "--normal_ratio": 700,
-    "--smooth_window": 3,
-    "--smooth_method": "median",
+    "--smooth_window": 0,
     "--lr_backbone": "2e-5",
     "--lr_head": "2e-4",
     "--warmup_epochs": 5,
-    "--grad_clip": 1.0,
+    "--grad_clip": 0.0,
     "--weight_decay": 0.01,
 }
 
@@ -46,27 +45,14 @@ def run(tag: str, candidate: str, seed: int, args: dict[str, object], reason: st
 def main() -> int:
     runs: list[dict[str, object]] = []
 
-    # Parse the in-flight gc=1.25 seed after it finishes, before urgent follow-ups.
-    gc_args = dict(BASE_ARGS)
-    gc_args["--grad_clip"] = 1.25
-    runs.append(
-        run(
-            "fresh0412_v11_gc125_n700_s4",
-            "fresh0412_v11_gc125_n700",
-            4,
-            gc_args,
-            "finish parsing in-flight gc=1.25 seed before urgent reference checks",
-        )
-    )
-
     for seed in SEEDS:
         runs.append(
             run(
-                f"fresh0412_v11_refcheck_n700_s{seed}",
-                "fresh0412_v11_refcheck_n700",
+                f"fresh0412_v11_rawref_n700_s{seed}",
+                "fresh0412_v11_rawref_n700",
                 seed,
                 BASE_ARGS,
-                "urgent same-condition reference rerun to verify baseline reproducibility",
+                "raw reference rerun: no grad clip, no val smoothing, label_smoothing=0.0",
             )
         )
 
@@ -79,7 +65,7 @@ def main() -> int:
                 "fresh0412_v11_regls007_n700",
                 seed,
                 ls_args,
-                "label_smoothing=0.07 neighbor added between no-smoothing and 0.1/0.15",
+                "label_smoothing=0.07 on raw reference parent: no grad clip, no val smoothing",
             )
         )
 
@@ -87,10 +73,10 @@ def main() -> int:
     OUT.write_text(
         json.dumps(
             {
-                "created_at": "2026-04-28T08:20:00",
-                "selected_reference": "fresh0412_v11_n700_existing",
+                "created_at": "2026-04-28T09:00:00",
+                "selected_reference": "fresh0412_v11_rawref_n700",
                 "selected_config": BASE_CONFIG,
-                "note": "Urgent queue: parse in-flight gc=1.25, rerun reference, then add label_smoothing=0.07.",
+                "note": "Urgent queue: raw reference without grad_clip or val smoothing, then label_smoothing=0.07 on the same raw parent.",
                 "runs": runs,
             },
             ensure_ascii=False,

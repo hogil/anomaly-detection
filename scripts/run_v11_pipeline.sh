@@ -143,7 +143,7 @@ case "$STAGE" in
 
   ablation)
     run_cmd "$PYTHON" run_experiments_v11.py \
-      --groups lr gc smooth reg \
+      --groups lr gc wd smooth reg \
       --config "$CONFIG" \
       --base_n "$BASE_N" \
       --num_workers "$NUM_WORKERS" \
@@ -181,15 +181,15 @@ case "$STAGE" in
       --name-prefix "$NAME_PREFIX" \
       "${EXTRA_ARGS[@]}"
     run_cmd "$PYTHON" run_experiments_v11.py \
-      --groups perclass \
+      --groups lr gc wd smooth reg \
       --config "$CONFIG" \
+      --base_n "$BASE_N" \
       --num_workers "$NUM_WORKERS" \
       --name-prefix "$NAME_PREFIX" \
       "${EXTRA_ARGS[@]}"
     run_cmd "$PYTHON" run_experiments_v11.py \
-      --groups lr gc smooth reg \
+      --groups perclass \
       --config "$CONFIG" \
-      --base_n "$BASE_N" \
       --num_workers "$NUM_WORKERS" \
       --name-prefix "$NAME_PREFIX" \
       "${EXTRA_ARGS[@]}"

@@ -11,6 +11,9 @@ cd "$ROOT"
 STDOUT_DIR="$ROOT/validations/sweep_logs"
 mkdir -p "$STDOUT_DIR"
 
+# Force unbuffered Python stdout so sweep logs show progress in real time
+export PYTHONUNBUFFERED=1
+
 LAPTOP_BASE=(
   --mode binary
   --epochs 20
@@ -24,8 +27,10 @@ LAPTOP_BASE=(
   --weight_decay 0.01
   --ema_decay 0.0
   --normal_ratio 700
-  --batch_size 32
+  --batch_size 192
   --precision fp16
+  --num_workers 6
+  --prefetch_factor 4
 )
 
 # Call: run_one <name> <extra args...>

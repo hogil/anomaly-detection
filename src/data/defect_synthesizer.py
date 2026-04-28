@@ -13,7 +13,7 @@
 
 import numpy as np
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Optional, Tuple
 
 
 @dataclass
@@ -33,9 +33,15 @@ class DefectSynthesizer:
         self.cfg = config["defect"]
         self.rng = rng or np.random.default_rng()
 
-    def inject(self, values: np.ndarray, mask: np.ndarray,
-               defect_type: str, fleet_range: float = 0.0,
-               fleet_noise_std: float = 0.0) -> Tuple[np.ndarray, DefectInfo]:
+    def inject(
+        self,
+        values: np.ndarray,
+        mask: np.ndarray,
+        defect_type: str,
+        fleet_range: float = 0.0,
+        fleet_noise_std: float = 0.0,
+        defect_bounds: Optional[Tuple[int, int]] = None,
+    ) -> Tuple[np.ndarray, DefectInfo]:
         self._fleet_range = fleet_range  # drift에서 사용
         anomaly_values = values.copy()
         total_length = len(values)
@@ -45,15 +51,26 @@ class DefectSynthesizer:
             return anomaly_values, DefectInfo(defect_type, 0, 0, 0, {})
 
         # 불량 영역: 오른쪽 끝에서부터 (drift, spike 는 전용 범위 사용)
-        if defect_type == "drift" and "region_ratio_range" in self.cfg.get("drift", {}):
+        if defect_bounds is not None:
+            start_idx, end_idx = defect_bounds
+        elif defect_type == "drift" and "region_ratio_range" in self.cfg.get("drift", {}):
             region_ratio = self.rng.uniform(*self.cfg["drift"]["region_ratio_range"])
+            defect_length = max(1, int(total_length * region_ratio))
+            start_idx = total_length - defect_length
+            end_idx = total_length
+            start_idx, end_idx = self._expand_drift_bounds_for_visible_span(
+                valid_indices, total_length, start_idx, end_idx,
+            )
         elif defect_type == "spike" and "region_ratio_range" in self.cfg.get("spike", {}):
             region_ratio = self.rng.uniform(*self.cfg["spike"]["region_ratio_range"])
+            defect_length = max(1, int(total_length * region_ratio))
+            start_idx = total_length - defect_length
+            end_idx = total_length
         else:
             region_ratio = self.rng.uniform(*self.cfg["region_ratio_range"])
-        defect_length = max(1, int(total_length * region_ratio))
-        start_idx = total_length - defect_length
-        end_idx = total_length
+            defect_length = max(1, int(total_length * region_ratio))
+            start_idx = total_length - defect_length
+            end_idx = total_length
 
         affected = valid_indices[(valid_indices >= start_idx) & (valid_indices < end_idx)]
 
@@ -68,9 +85,9 @@ class DefectSynthesizer:
             target_baseline_std = np.nanstd(values[valid_indices])
         target_baseline_std = max(target_baseline_std, 0.01)  # 최소값 보장
 
-        # Effective std = max(target baseline, fleet noise)
-        # → target이 조용한 구간이어도 anomaly 는 fleet 시각 noise 기준으로 크게 들어감
-        baseline_std = max(target_baseline_std, fleet_noise_std)
+        # 기본 anomaly 강도는 target 자신의 normal baseline 기준으로만 생성한다.
+        # fleet noise 를 반영한 보정은 사후 visibility check 에서 "필요한 샘플만" 수행한다.
+        baseline_std = target_baseline_std
 
         inject_fn = {
             "mean_shift": self._inject_mean_shift,
@@ -88,6 +105,31 @@ class DefectSynthesizer:
             num_affected=len(affected),
             parameters=params,
         )
+
+    def _expand_drift_bounds_for_visible_span(
+        self,
+        valid_indices: np.ndarray,
+        total_length: int,
+        start_idx: int,
+        end_idx: int,
+    ) -> Tuple[int, int]:
+        """Extend drift leftward when visible affected span is too short."""
+        cfg = self.cfg.get("drift", {})
+        span_range = cfg.get("visible_span_ratio_range")
+        if not span_range or len(valid_indices) < 2:
+            return start_idx, end_idx
+
+        target_span = int(total_length * self.rng.uniform(*span_range))
+        if target_span <= 0:
+            return start_idx, end_idx
+
+        last_valid = int(valid_indices[-1])
+        eligible = valid_indices[valid_indices <= (last_valid - target_span)]
+        if len(eligible) == 0:
+            return start_idx, end_idx
+
+        candidate_start = int(eligible[-1])
+        return min(start_idx, candidate_start), end_idx
 
     def _inject_mean_shift(self, values: np.ndarray, affected: np.ndarray,
                            start: int, end: int, baseline_std: float) -> dict:
@@ -107,13 +149,6 @@ class DefectSynthesizer:
                                    start: int, end: int, baseline_std: float) -> dict:
         cfg = self.cfg["standard_deviation"]
         scale = self.rng.uniform(*cfg["scale_range"])
-
-        # Low-noise 보정: baseline_std 가 매우 작으면 scale 을 1.15~1.3× boost
-        # (조용한 normal 샘플에서 std anomaly 가 보이도록)
-        low_noise_thr = cfg.get("low_noise_threshold", 0.04)
-        if baseline_std < low_noise_thr:
-            low_boost = float(self.rng.uniform(1.15, 1.30))
-            scale *= low_boost
 
         # 목표 산포 = baseline_std × scale
         # baseline에 추가 노이즈만 더해서 패턴 보존하면서 산포 확대
@@ -169,10 +204,13 @@ class DefectSynthesizer:
         # max_drift 결정
         sigma_based = baseline_std * sigma_factor
         fleet_range = getattr(self, '_fleet_range', 0.0)
-        range_based = fleet_range * 1.2
         min_sigma = cfg.get("min_max_drift_sigma", 2.5)
-        floor = baseline_std * min_sigma
-        max_drift_abs = max(sigma_based, range_based, floor)
+        visual_floor_sigma = max(float(cfg.get("visual_floor_sigma", 0.0)), float(min_sigma))
+        floor = baseline_std * visual_floor_sigma
+        max_drift_abs = max(sigma_based, floor)
+        max_range_scale = float(cfg.get("max_range_scale", 0.7))
+        if fleet_range > 0 and max_range_scale > 0:
+            max_drift_abs = min(max_drift_abs, fleet_range * max_range_scale)
         max_drift = max_drift_abs * direction
 
         # defect 영역 [start, end) 기준 비례 위치 0~1 (dense cluster여도 영역 전체 기준)
@@ -186,4 +224,5 @@ class DefectSynthesizer:
                 "sigma_factor": float(sigma_factor),
                 "baseline_std": float(baseline_std),
                 "max_drift": float(abs(max_drift)),
-                "fleet_range": float(fleet_range)}
+                "fleet_range": float(fleet_range),
+                "visual_floor_sigma": float(visual_floor_sigma)}

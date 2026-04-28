@@ -399,8 +399,8 @@ class ImageRenderer:
 
     @staticmethod
     def _finalize_display(fig, ax, save_path):
-        plt.tight_layout(pad=0.8)
+        fig.tight_layout(pad=0.8)
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(save_path, dpi=DISPLAY_DPI, bbox_inches="tight",
+        fig.savefig(save_path, dpi=DISPLAY_DPI,
                     facecolor="#FAFAFA", edgecolor="none")
         plt.close(fig)

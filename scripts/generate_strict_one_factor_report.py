@@ -134,6 +134,8 @@ FAMILY_BASELINES: dict[str, tuple[str, float | str]] = {
     "normal_ratio": ("700", 700.0),
     "lr": ("2e-5 / 2e-4", 2e-5),
     "warmup": ("5", 5.0),
+    "gc": ("1", 1.0),
+    "weight_decay": ("0.01", 0.01),
     "smoothing": ("3-median", 3.1),
     "label_smoothing": ("0.00", 0.00),
     "stochastic_depth": ("0.00", 0.00),
@@ -150,6 +152,9 @@ COLOR_DESCRIPTIONS = {
     "c02": "trend blue `#4878CF`, fleet alpha `0.15`",
     "c03": "trend red `#E43320`, fleet alpha `0.15`",
 }
+
+OPERATING_BASELINE = "fresh0412_v11_refcheck_gcsmooth_n700"
+HISTORICAL_BASELINE = "fresh0412_v11_n700_existing"
 
 
 @dataclass
@@ -332,9 +337,9 @@ def baseline_metrics() -> tuple[float, float, float]:
     data = load_json(VALIDATIONS / "baseline_delta_latest.json")
     base = data.get("baseline", {})
     return (
-        float(base.get("f1_mean", 0.99014)),
-        float(base.get("fn_mean", 9.8)),
-        float(base.get("fp_mean", 5.0)),
+        float(base.get("f1_mean", 0.99548)),
+        float(base.get("fn_mean", 4.4)),
+        float(base.get("fp_mean", 2.4)),
     )
 
 
@@ -354,7 +359,7 @@ def inject_baselines(records: dict[str, dict[str, ConditionRecord]]) -> None:
                 fp=bfp,
                 status="reference",
                 source="baseline",
-                candidate="fresh0412_v11_n700_existing",
+                candidate=OPERATING_BASELINE,
             ),
         )
 
@@ -652,8 +657,8 @@ def evidence_limits(records: dict[str, dict[str, ConditionRecord]]) -> list[str]
                 three_seed += 1
 
     return [
-        "운영 baseline은 `fresh0412_v11_n700_existing`이며 band-hit은 `3/5`입니다. `s42`, `s2`는 FP가 낮아서 기준 자체가 완벽한 ref는 아니고, 논문에서는 이 한계를 명시해야 합니다.",
-        "`gc`와 `weight_decay`는 기존 ref를 축 내부 control point로 쓰지 않습니다. 기존 ref에는 기본값(`grad_clip=1.0`, `weight_decay=0.01`)이 기록돼 있지만, 같은 strict sweep에서 재실행한 control이 아니므로 곡선 해석에서는 제외합니다.",
+        f"운영 baseline은 `{OPERATING_BASELINE}`입니다. 5-seed matched control 기준 `F1=0.9955`, `FN=4.4`, `FP=2.4`이며 target band hit은 `0/5`입니다. FP가 전 seed에서 낮아 기준선이 너무 깨끗하다는 한계를 명시해야 합니다.",
+        f"`{HISTORICAL_BASELINE}`은 historical selected ref로 보존하되, strict one-factor 표와 delta 계산의 현재 기준은 `{OPERATING_BASELINE}`입니다.",
         "`label_smoothing=0.0`은 baseline train config에 명시된 no-smoothing 상태입니다. 단, `label_smoothing>0`에서는 loss 구현 경로가 `CrossEntropyLoss(label_smoothing=...)`로 바뀌므로 최종 claim에는 이 구현 차이를 한계로 적어야 합니다.",
         "현재 표는 baseline-fixed one-factor evidence만 섞어 보여줍니다. alternate-parent stress, bad-case rescue, logical/per-member 실험은 별도 표로 분리해야 합니다.",
         f"아직 claim 성숙 전인 조건이 남아 있습니다: queued `{queued}`개, partial `{partial}`개, 5-seed 미만 완료 `{three_seed}`개.",
@@ -886,7 +891,8 @@ def write_markdown(
         "",
         "## Summary",
         "",
-        f"- Frozen ref: `fresh0412_v11_n700_existing` -> `F1={fmt_float(baseline[0])}`, `FN={fmt_compact(baseline[1])}`, `FP={fmt_compact(baseline[2])}` over `5/5` seeds.",
+        f"- Operating baseline: `{OPERATING_BASELINE}` -> `F1={fmt_float(baseline[0])}`, `FN={fmt_compact(baseline[1])}`, `FP={fmt_compact(baseline[2])}` over `5/5` seeds.",
+        f"- Historical selected ref: `{HISTORICAL_BASELINE}` -> `F1=0.9901`, `FN=9.8`, `FP=5.0`; kept only as reference-selection history.",
         f"- Main strict queue: `{main_complete}` completed runs, decision `{strict_summary.get('decision')}`.",
         f"- Round-2 refinement: `{round2_complete}/{round2_total}` completed runs, stage `{state.get('stage')}`, status `{state.get('status')}`.",
         "",

@@ -63,6 +63,7 @@ def scan_results(prefix: str, base_n: int) -> dict:
         "baseline": [],
         "lr": {},
         "gc": {},
+        "wd": {},
         "smooth": {},
         "reg": {},
         "combo": {},
@@ -72,10 +73,11 @@ def scan_results(prefix: str, base_n: int) -> dict:
         "baseline": re.compile(rf"{re.escape(prefix)}_v11_n{base_n}_s(?P<seed>\d+)"),
         "lr": re.compile(rf"{re.escape(prefix)}_v11_lr(?P<tag>[^_]+)_n{base_n}_s(?P<seed>\d+)"),
         "gc": re.compile(rf"{re.escape(prefix)}_v11_gc(?P<tag>[^_]+)_n{base_n}_s(?P<seed>\d+)"),
+        "wd": re.compile(rf"{re.escape(prefix)}_v11_wd(?P<tag>[^_]+)_n{base_n}_s(?P<seed>\d+)"),
         "smooth": re.compile(rf"{re.escape(prefix)}_v11_sw(?P<tag>[^_]+)_n{base_n}_s(?P<seed>\d+)"),
         "reg": re.compile(rf"{re.escape(prefix)}_v11_reg(?P<tag>[^_]+)_n{base_n}_s(?P<seed>\d+)"),
         "combo": re.compile(
-            rf"{re.escape(prefix)}_v11_combo_lr(?P<lr>[^_]+)_gc(?P<gc>[^_]+)_sw(?P<sw>[^_]+)_reg(?P<reg>[^_]+)_n{base_n}_s(?P<seed>\d+)"
+            rf"{re.escape(prefix)}_v11_combo_lr(?P<lr>[^_]+)_gc(?P<gc>[^_]+)_wd(?P<wd>[^_]+)_sw(?P<sw>[^_]+)_reg(?P<reg>[^_]+)_n{base_n}_s(?P<seed>\d+)"
         ),
     }
 
@@ -89,13 +91,13 @@ def scan_results(prefix: str, base_n: int) -> dict:
 
         m = patterns["combo"].search(name)
         if m:
-            tag = f"lr={m.group('lr')},gc={m.group('gc')},sw={m.group('sw')},reg={m.group('reg')}"
+            tag = f"lr={m.group('lr')},gc={m.group('gc')},wd={m.group('wd')},sw={m.group('sw')},reg={m.group('reg')}"
             data["combo"].setdefault(tag, []).append(
                 {"seed": int(m.group("seed")), "name": name, **metric}
             )
             continue
 
-        for group in ("lr", "gc", "smooth", "reg"):
+        for group in ("lr", "gc", "wd", "smooth", "reg"):
             m = patterns[group].search(name)
             if m:
                 data[group].setdefault(m.group("tag"), []).append(
@@ -154,16 +156,16 @@ def choose_best_variant(variants: dict[str, list[dict]], expected_count: int) ->
 def build_main_rows(prefix: str, base_n: int, scanned: dict) -> tuple[list[dict], dict]:
     baseline = aggregate(scanned["baseline"])
     winners = {}
-    for group in ("lr", "gc", "smooth", "reg"):
+    for group in ("lr", "gc", "wd", "smooth", "reg"):
         tag, agg = choose_best_variant(scanned[group], expected_count=len(rev11.ABLATION_SEEDS))
         if tag is not None:
             winners[group] = {"tag": tag, **agg}
 
     combo_key = None
     combo_agg = None
-    if len(winners) == 4:
+    if len(winners) == 5:
         combo_key = (
-            f"lr={winners['lr']['tag']},gc={winners['gc']['tag']},"
+            f"lr={winners['lr']['tag']},gc={winners['gc']['tag']},wd={winners['wd']['tag']},"
             f"sw={winners['smooth']['tag']},reg={winners['reg']['tag']}"
         )
         combo_agg = aggregate(scanned["combo"].get(combo_key, []))
@@ -179,6 +181,8 @@ def build_main_rows(prefix: str, base_n: int, scanned: dict) -> tuple[list[dict]
         rows.append({"setting": "+LR", "variant": winners["lr"]["tag"], **winners["lr"]})
     if "gc" in winners:
         rows.append({"setting": "+GC", "variant": winners["gc"]["tag"], **winners["gc"]})
+    if "wd" in winners:
+        rows.append({"setting": "+WD", "variant": winners["wd"]["tag"], **winners["wd"]})
     if "smooth" in winners:
         rows.append({"setting": "+Smooth", "variant": winners["smooth"]["tag"], **winners["smooth"]})
     if "reg" in winners:
@@ -213,7 +217,7 @@ def write_tables(prefix: str, base_n: int, scanned: dict) -> dict:
             )
 
         f.write("\n## Group Winners\n\n")
-        for group in ("lr", "gc", "smooth", "reg"):
+        for group in ("lr", "gc", "wd", "smooth", "reg"):
             if group in winners:
                 f.write(f"- `{group}`: `{winners[group]['tag']}`\n")
 
@@ -242,6 +246,7 @@ def all_individual_groups_complete(scanned: dict) -> bool:
         len(scanned["baseline"]) == len(rev11.SWEEP_SEEDS)
         and all(len(scanned["lr"].get(tag, [])) == len(rev11.ABLATION_SEEDS) for tag in rev11.LR_VARIANTS)
         and all(len(scanned["gc"].get(tag, [])) == len(rev11.ABLATION_SEEDS) for tag in rev11.GC_VARIANTS)
+        and all(len(scanned["wd"].get(tag, [])) == len(rev11.ABLATION_SEEDS) for tag in rev11.WD_VARIANTS)
         and all(len(scanned["smooth"].get(tag, [])) == len(rev11.ABLATION_SEEDS) for tag in rev11.SMOOTH_VARIANTS)
         and all(len(scanned["reg"].get(tag, [])) == len(rev11.ABLATION_SEEDS) for tag in rev11.REG_VARIANTS)
     )
@@ -252,11 +257,11 @@ def combo_marker_path(prefix: str, base_n: int) -> Path:
 
 
 def maybe_launch_combo(args, winners: dict, scanned: dict) -> tuple[bool, str]:
-    if len(winners) != 4:
+    if len(winners) != 5:
         return False, "best-per-group 미확정"
 
     combo_key = (
-        f"lr={winners['lr']['tag']},gc={winners['gc']['tag']},"
+        f"lr={winners['lr']['tag']},gc={winners['gc']['tag']},wd={winners['wd']['tag']},"
         f"sw={winners['smooth']['tag']},reg={winners['reg']['tag']}"
     )
     if len(scanned["combo"].get(combo_key, [])) == len(rev11.ABLATION_SEEDS):
@@ -276,6 +281,7 @@ def maybe_launch_combo(args, winners: dict, scanned: dict) -> tuple[bool, str]:
         "--name-prefix", args.prefix,
         "--combo-lr-tag", winners["lr"]["tag"],
         "--combo-gc-tag", winners["gc"]["tag"],
+        "--combo-wd-tag", winners["wd"]["tag"],
         "--combo-smooth-tag", winners["smooth"]["tag"],
         "--combo-reg-tag", winners["reg"]["tag"],
     ]
@@ -306,6 +312,7 @@ def print_status(prefix: str, base_n: int, scanned: dict, table_info: dict):
     for group, variants in (
         ("lr", rev11.LR_VARIANTS),
         ("gc", rev11.GC_VARIANTS),
+        ("wd", rev11.WD_VARIANTS),
         ("smooth", rev11.SMOOTH_VARIANTS),
         ("reg", rev11.REG_VARIANTS),
     ):
@@ -334,9 +341,9 @@ def main():
             break
 
         combo_done = False
-        if len(table_info["winners"]) == 4:
+        if len(table_info["winners"]) == 5:
             combo_key = (
-                f"lr={table_info['winners']['lr']['tag']},gc={table_info['winners']['gc']['tag']},"
+                f"lr={table_info['winners']['lr']['tag']},gc={table_info['winners']['gc']['tag']},wd={table_info['winners']['wd']['tag']},"
                 f"sw={table_info['winners']['smooth']['tag']},reg={table_info['winners']['reg']['tag']}"
             )
             combo_done = len(scanned["combo"].get(combo_key, [])) == len(rev11.ABLATION_SEEDS)

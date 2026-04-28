@@ -58,8 +58,18 @@ class ScenarioGenerator:
             self._ctx_pool[col] = self.ctx_cfg[col]["ids"]
             self._ctx_count[col] = self.ctx_cfg[col]["count_range"]
 
+    def sample_chart_meta(self) -> tuple[str, str, str]:
+        """Sample a single device/step/item triple."""
+        device = str(self.rng.choice(self.chart_cfg["device"]["ids"]))
+        step = str(self.rng.choice(self.chart_cfg["step"]["ids"]))
+        item = str(self.rng.choice(self.chart_cfg["item"]["ids"]))
+        return device, step, item
+
     def generate(self, chart_id: str, cls: str,
-                 context_column: str = None) -> ScenarioResult:
+                 context_column: str = None,
+                 device: str = None,
+                 step: str = None,
+                 item: str = None) -> ScenarioResult:
         """1개 학습 샘플 생성
 
         Args:
@@ -68,9 +78,8 @@ class ScenarioGenerator:
             context_column: context 컬럼 강제 지정 (None이면 랜덤)
         """
         # 1) Chart 정의: device + step + item 랜덤 선택
-        device = str(self.rng.choice(self.chart_cfg["device"]["ids"]))
-        step = str(self.rng.choice(self.chart_cfg["step"]["ids"]))
-        item = str(self.rng.choice(self.chart_cfg["item"]["ids"]))
+        if device is None or step is None or item is None:
+            device, step, item = self.sample_chart_meta()
 
         # 2) Context 컬럼 선택
         if context_column is None:
@@ -101,15 +110,19 @@ class ScenarioGenerator:
                 fleet_means.append(np.nanmean(values[valid]))
 
         # 7) Fleet 평균 정렬
+        # mean_range는 "각 멤버의 center offset"이 아니라 fleet 전체 band 폭으로 해석한다.
+        # 이전 구현처럼 각 멤버를 독립적으로 ±range 안에 배치하면 실제 fleet range가
+        # 멤버 수가 늘수록 거의 2배까지 벌어져 시각적으로 너무 넓어졌다.
         fleet_center = np.mean(fleet_means) if fleet_means else 0.0
         fleet_var = self.ctx_cfg["fleet_variation"]
+        target_offsets = self._sample_centered_offsets(len(contexts), fleet_var["mean_range"])
 
-        for mid in contexts:
+        for mid, offset in zip(contexts, target_offsets):
             values, mask = context_data[mid]
             valid = np.where(mask)[0]
             if len(valid) > 0:
                 cur = np.nanmean(values[valid])
-                tgt = fleet_center + self.rng.uniform(*fleet_var["mean_range"]) * self.rng.choice([-1, 1])
+                tgt = fleet_center + offset
                 values[valid] += (tgt - cur)
                 context_data[mid] = (values, mask)
 
@@ -126,7 +139,7 @@ class ScenarioGenerator:
         else:
             # 불량 영역에 유효 포인트 최소 보장 (config의 enforcement.min_defect_points_range)
             enf = self.cfg.get("defect", {}).get("enforcement", {})
-            mdp_range = enf.get("min_defect_points_range", [12, 25])
+            mdp_range = self._resolve_min_defect_points_range(cls, enf)
             MIN_DEFECT_POINTS = int(self.rng.integers(mdp_range[0], mdp_range[1] + 1))
 
             values, mask = context_data[target]
@@ -180,6 +193,7 @@ class ScenarioGenerator:
                         values, mask, cls,
                         fleet_range=fleet_visible_range,
                         fleet_noise_std=fleet_noise_std,
+                        defect_bounds=(start, end),
                     )
 
             context_data[target] = (new_values, mask)
@@ -241,6 +255,38 @@ class ScenarioGenerator:
             defect_params=defect_params,
             timeseries_rows=rows,
         )
+
+    def _resolve_min_defect_points_range(self, cls: str, enforcement_cfg: dict) -> List[int]:
+        """Return class-specific visible-point floor when configured."""
+        defect_cfg = self.cfg.get("defect", {}).get(cls, {})
+        override = defect_cfg.get("min_defect_points_range")
+        if override:
+            return [int(override[0]), int(override[1])]
+        base = enforcement_cfg.get("min_defect_points_range", [12, 25])
+        return [int(base[0]), int(base[1])]
+
+    def _sample_centered_offsets(self, count: int, band_range: List[float]) -> np.ndarray:
+        """Zero-mean member offsets whose total range stays inside band_range.
+
+        band_range is interpreted as the full fleet mean spread, matching the
+        config comment "fleet 멤버 평균 차이".
+        """
+        if count <= 1:
+            return np.zeros(count, dtype=float)
+
+        band = float(self.rng.uniform(*band_range))
+
+        # Zero-mean raw offsets, then rescale so the final fleet range equals the
+        # sampled band instead of each member independently drifting by ±band.
+        raw = self.rng.normal(0.0, 1.0, count)
+        raw -= float(np.mean(raw))
+
+        raw_range = float(np.max(raw) - np.min(raw))
+        if raw_range < 1e-9:
+            raw = np.linspace(-0.5, 0.5, count, dtype=float)
+            raw_range = float(np.max(raw) - np.min(raw))
+
+        return raw * (band / raw_range)
 
     def _normalize_normal_target(self, context_data, contexts, target):
         """Normal 클래스에서 target이 fleet 대비 이상해 보이지 않도록 강제 보정.
@@ -372,13 +418,16 @@ class ScenarioGenerator:
         # fleet 통계
         fleet_all_vals = []
         fleet_defect_vals = []
+        fleet_within_stds = []
         for mid in contexts:
             if mid == target:
                 continue
             v, m = context_data[mid]
             vi = np.where(m)[0]
             if len(vi) > 0:
-                fleet_all_vals.append(v[vi])
+                member_vals = v[vi]
+                fleet_all_vals.append(member_vals)
+                fleet_within_stds.append(float(np.std(member_vals)))
                 di = vi[(vi >= defect_start) & (vi < defect_end)]
                 if len(di) > 0:
                     fleet_defect_vals.append(v[di])
@@ -386,65 +435,109 @@ class ScenarioGenerator:
             return
         fleet_all = np.concatenate(fleet_all_vals)
         fleet_std = max(float(np.std(fleet_all)), 1e-6)
+        fleet_within_std = max(float(np.mean(fleet_within_stds)), 1e-6) if fleet_within_stds else fleet_std
         fleet_defect_mean = (
             float(np.mean(np.concatenate(fleet_defect_vals)))
             if fleet_defect_vals else float(np.mean(fleet_all))
         )
 
+        left = np.where(tm)[0]
+        left = left[left < defect_start]
+        if len(left) >= 3:
+            left_std = max(float(np.std(tv[left])), 1e-6)
+        else:
+            left_std = fleet_within_std
+
+        # 실전성 기준: fleet 전체 spread 가 아니라 baseline 내부 noise 기준으로만 바닥값 보정
+        ref_noise = max(left_std, fleet_within_std)
+
         if cls == "mean_shift":
             floor = enf.get("mean_shift_floor_sigma", 1.8)
+            self_floor = enf.get("mean_shift_self_floor_sigma", floor)
             cur_mean = float(np.mean(tv[affected]))
-            cur_dev = (cur_mean - fleet_defect_mean) / fleet_std
-            if abs(cur_dev) < floor:
-                direction = 1 if cur_dev >= 0 else -1
-                target_dev = floor * float(self.rng.uniform(1.0, 1.25)) * direction
-                shift_extra = (target_dev - cur_dev) * fleet_std
-                tv[affected] += shift_extra
+            left_mean = float(np.mean(tv[left])) if len(left) >= 3 else fleet_defect_mean
+
+            # Mean shift는 사람 눈 기준으로도 "오른쪽 구간이 baseline에서 이동"해 보여야 한다.
+            # 그래서 fleet 대비 gap 뿐 아니라 target 자신의 pre-defect 평균과의 shift도 함께 강제한다.
+            cur_dev = (cur_mean - fleet_defect_mean) / ref_noise
+            cur_self_shift = (cur_mean - left_mean) / max(left_std, 1e-6)
+            if abs(cur_dev) < floor or abs(cur_self_shift) < self_floor:
+                direction = 1.0
+                if abs(cur_self_shift) > 1e-6:
+                    direction = 1.0 if cur_self_shift >= 0 else -1.0
+                elif abs(cur_dev) > 1e-6:
+                    direction = 1.0 if cur_dev >= 0 else -1.0
+
+                fleet_target_mean = (
+                    fleet_defect_mean
+                    + direction
+                    * floor
+                    * float(self.rng.uniform(1.02, 1.08))
+                    * ref_noise
+                )
+                self_target_mean = (
+                    left_mean
+                    + direction
+                    * self_floor
+                    * float(self.rng.uniform(1.02, 1.08))
+                    * max(left_std, 1e-6)
+                )
+                target_mean = (
+                    max(fleet_target_mean, self_target_mean)
+                    if direction > 0
+                    else min(fleet_target_mean, self_target_mean)
+                )
+                tv[affected] += target_mean - cur_mean
 
         elif cls == "standard_deviation":
             floor_ratio = enf.get("std_floor_ratio", 2.0)
-            # 좌측 영역 std (defect 영역 밖)
-            left = np.where(tm)[0]
-            left = left[left < defect_start]
-            if len(left) >= 3:
-                left_std = max(float(np.std(tv[left])), 1e-6)
-            else:
-                left_std = fleet_std
-            ref_std = max(left_std, fleet_std)
-            target_std = ref_std * floor_ratio
+            target_std = ref_noise * floor_ratio * float(self.rng.uniform(1.02, 1.08))
             cur_std = max(float(np.std(tv[affected])), 1e-6)
             if cur_std < target_std:
-                extra_var = target_std ** 2 - cur_std ** 2
-                if extra_var > 0:
-                    extra_noise = self.rng.normal(0, np.sqrt(extra_var), len(affected))
-                    # 패턴 보존 위해 단순 가산
-                    tv[affected] += extra_noise
+                cur_mean = float(np.mean(tv[affected]))
+                centered = tv[affected] - cur_mean
+                if cur_std < 1e-6:
+                    centered = self.rng.normal(0, 1.0, len(affected))
+                    cur_std = max(float(np.std(centered)), 1e-6)
+                # 기대값이 아니라 실제 affected std가 floor를 넘도록 직접 스케일링
+                tv[affected] = cur_mean + centered * (target_std / cur_std)
 
         elif cls == "spike":
             floor = enf.get("spike_floor_sigma", 5.0)
-            max_dev = float(np.max(np.abs(tv[affected] - fleet_defect_mean)))
-            if max_dev / fleet_std < floor:
-                # 가장 큰 1~3개 점을 강제 boost (최소 보장)
-                n_boost = min(3, max(1, len(affected) // 5))
-                boost_idx = self.rng.choice(affected, size=n_boost, replace=False)
+            deviations = np.abs(tv[affected] - fleet_defect_mean)
+            max_dev = float(np.max(deviations))
+            if max_dev / ref_noise < floor:
+                # 이미 생성된 spike 중 가장 튄 점만 최소한으로 강화한다.
+                n_boost = min(2, max(1, len(affected) // 8))
+                boost_order = np.argsort(deviations)
+                boost_idx = affected[boost_order[-n_boost:]]
+                target_mag = floor * float(self.rng.uniform(1.02, 1.10)) * ref_noise
                 for bi in boost_idx:
-                    direction = float(self.rng.choice([-1, 1]))
-                    mag = floor * float(self.rng.uniform(1.0, 1.4)) * fleet_std
-                    tv[bi] = fleet_defect_mean + direction * mag
+                    cur_delta = float(tv[bi] - fleet_defect_mean)
+                    direction = 1.0 if cur_delta >= 0 else -1.0
+                    if abs(cur_delta) < target_mag:
+                        tv[bi] = fleet_defect_mean + direction * target_mag
 
         elif cls == "drift":
             floor = enf.get("drift_floor_sigma", 1.8)
+            drift_cfg = self.cfg.get("defect", {}).get("drift", {})
+            visual_floor = max(float(drift_cfg.get("visual_floor_sigma", 0.0)), float(floor))
             n = len(affected)
             q = max(2, n // 4)
+            rel = (affected - defect_start) / max(defect_end - defect_start - 1, 1)
+            rel_gap = max(float(np.mean(rel[-q:]) - np.mean(rel[:q])), 1e-6)
             start_mean = float(np.mean(tv[affected[:q]]))
             end_mean = float(np.mean(tv[affected[-q:]]))
-            cur_drift = (end_mean - start_mean) / fleet_std
-            if abs(cur_drift) < floor:
+            drift_ref_noise = max(left_std, 1e-6)
+            cur_drift = (end_mean - start_mean) / drift_ref_noise
+            if abs(cur_drift) < visual_floor:
                 direction = 1 if cur_drift >= 0 else -1
-                target_drift = floor * float(self.rng.uniform(1.0, 1.3)) * direction
-                extra = (target_drift - cur_drift) * fleet_std
-                # 시간 비례 추가 drift (defect 영역 [defect_start, defect_end) 전체 기준)
-                rel = (affected - defect_start) / max(defect_end - defect_start - 1, 1)
+                target_drift = visual_floor * float(self.rng.uniform(1.02, 1.10)) * direction
+                target_delta = target_drift * drift_ref_noise
+                current_delta = end_mean - start_mean
+                # quarter-window 측정치 기준으로 목표 drift를 맞추려면
+                # rel 자체가 아니라 (끝 평균 rel - 시작 평균 rel) 만큼 보정량을 나눠야 한다.
+                extra = (target_delta - current_delta) / rel_gap
                 tv[affected] += rel * extra
 
         context_data[target] = (tv, tm)

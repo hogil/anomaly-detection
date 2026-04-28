@@ -121,7 +121,7 @@ def run_inference(
     scenarios_file: str = None,
 ):
     # config
-    with open("config.yaml", encoding="utf-8") as f:
+    with open("dataset.yaml", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
     img_cfg = cfg.get("image", {})
     title_columns = img_cfg.get("title_columns", ["device", "step", "item"])

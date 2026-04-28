@@ -74,12 +74,19 @@ scenarios.csv:
 ### 3.1 전체 흐름
 
 ```
-config.yaml → generate_data.py → data/timeseries.csv + data/scenarios.csv
-                                           ↓
-                               generate_images.py → images/ + display/
-                                           ↓
-                                    train.py → weights/best_model.pth + logs/
+dataset.yaml → generate_data.py → data/timeseries.csv + data/scenarios.csv
+                                            ↓
+                                generate_images.py → images/ + display/
+                                            ↓
+                                     train.py → weights/best_model.pth + logs/
 ```
+
+**Dataset config workflow (2026-04-12 확정):**
+- **활성 데이터셋 설정 SSOT는 repo root `dataset.yaml`**
+- `config.yaml` 은 구형 스크립트 호환용 미러일 뿐, 새 작업의 source of truth 로 쓰지 않는다
+- `configs/datasets/` 는 dataset snapshot/backups 전용
+- `configs/runs/` 는 experiment execution condition backup 전용
+- 데이터/이미지/검증/학습/preview 실행은 모두 root `dataset.yaml` 기준으로 한다
 
 ### 3.2 이미지 포맷 (ALL overlay 통일)
 
@@ -114,8 +121,8 @@ config.yaml → generate_data.py → data/timeseries.csv + data/scenarios.csv
 
 ### 3.4 Test 난이도
 
-- test_difficulty_scale: 0.7
-- test 불량 강도 = train × 0.7 (더 미묘)
+- test_difficulty_scale: 0.8
+- test 불량 강도 = train × 0.8 (더 미묘)
 
 ---
 
@@ -189,10 +196,13 @@ src/
 ├── models/
 │   └── focal_loss.py           # Focal Loss
 │
-generate_data.py                # tabular CSV 생성
-generate_images.py              # CSV → overlay 이미지
-train.py                        # 학습 + 평가 + 로깅
-config.yaml                     # 전체 설정
+    generate_data.py                # tabular CSV 생성
+    generate_images.py              # CSV → overlay 이미지
+    train.py                        # 학습 + 평가 + 로깅
+    dataset.yaml                    # 활성 dataset 설정 SSOT
+    config.yaml                     # legacy compatibility mirror
+    configs/datasets/               # dataset snapshot backup
+    configs/runs/                   # experiment/run condition backup
 ```
 
 ---

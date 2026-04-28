@@ -1,6 +1,20 @@
 # 실험 요약
 
-_자동 갱신 시각: `2026-04-28T12:45:39`._
+_자동 갱신 시각: `2026-04-28T15:22:24+09:00`._
+
+## 현재 진행 상태
+
+- Team agent 체제로 전환했습니다. Agent A는 완료 artifact와 `docs/summary.md` 반영 근거를 확인했고, Agent B는 raw baseline 기준 재개 명령과 다음 실험 순서를 점검했습니다.
+- 업데이트 시점에 raw server baseline refcheck가 실행 중입니다: `fresh0412_v11_refcheck_raw_n700_s42`, controller PID `8360`, train PID `30708`, live log `validations/paper_refcheck_raw_live.log`.
+- 재개된 queue는 `validations/paper_refcheck_raw_queue.json`이며 기준 설정은 `grad_clip=0.0`, `smooth_window=1`, `smooth_method=median`, `label_smoothing=0.0`입니다.
+- 학습 완료 후 다음 조건으로 즉시 넘어가는 handoff는 smoke run으로 검증했습니다. `max_samples_per_split=10`, `epochs=3`의 2-run queue가 `queue_exhausted`까지 완료됐고, 첫 run의 `=== EXIT 0 ... ===` 직후 두 번째 `=== RUN ... ===`가 시작됐습니다.
+
+## Team Agent 운영 계획
+
+- 1단계: raw baseline refcheck 5 seeds 완료 후 `validations/server_paper_refcheck_raw_summary.md`를 기준선 표로 채택합니다.
+- 2단계: raw baseline이 끝나면 `scripts/sweeps_server/02_round1.sh --skip-weights --skip-dataset`로 rawbase strict round1을 실행합니다. 이 준비 과정은 tag를 `fresh0412_v11_rawbase_...`로 바꿔 기존 gcsmooth 로그 재사용을 피합니다.
+- 3단계: raw round1 결과로 round2를 새로 선택합니다. 기존 `paper_strict_single_factor_round2_*` 산출물은 gcsmooth 기준이므로 raw baseline claim에는 직접 재사용하지 않습니다.
+- 4단계: raw 기준 결과를 본 뒤 기존 유망축인 `label_smoothing`, `abnormal_weight`, `stochastic_depth`, `ema`, `normal_ratio`를 다시 우선순위화합니다. 특히 raw baseline에서는 `gc=0`이 기준 자체라 GC 축 해석을 새로 해야 합니다.
 
 ## 결과 해석
 
@@ -11,8 +25,9 @@ _자동 갱신 시각: `2026-04-28T12:45:39`._
 
 ## 한계와 수정 필요 사항
 
-- 운영 baseline은 `fresh0412_v11_refcheck_gcsmooth_n700`입니다. 5-seed matched control 기준 `F1=0.9955`, `FN=4.4`, `FP=2.4`이며 target band hit은 `0/5`입니다. FP가 전 seed에서 낮아 기준선이 너무 깨끗하다는 한계를 명시해야 합니다.
-- `fresh0412_v11_n700_existing`은 historical selected ref로 보존하되, strict one-factor 표와 delta 계산의 현재 기준은 `fresh0412_v11_refcheck_gcsmooth_n700`입니다.
+- 서버 운영 baseline은 raw 기준 `fresh0412_v11_refcheck_raw_n700`로 전환 중입니다. 아직 5-seed refcheck가 완료되지 않았으므로, 아래 기존 strict 표와 delta는 완료된 matched control `fresh0412_v11_refcheck_gcsmooth_n700` 기준으로 남겨둡니다.
+- 완료된 gcsmooth matched control은 `F1=0.9955`, `FN=4.4`, `FP=2.4`, target band hit `0/5`입니다. FP가 전 seed에서 낮아 기준선이 너무 깨끗하다는 한계가 있습니다.
+- `fresh0412_v11_n700_existing`은 historical selected ref로 보존합니다. raw 5-seed가 완료되면 strict one-factor 표와 delta 계산 기준을 raw baseline으로 재생성해야 합니다.
 - `label_smoothing=0.0`은 baseline train config에 명시된 no-smoothing 상태입니다. 단, `label_smoothing>0`에서는 loss 구현 경로가 `CrossEntropyLoss(label_smoothing=...)`로 바뀌므로 최종 claim에는 이 구현 차이를 한계로 적어야 합니다.
 - 현재 표는 baseline-fixed one-factor evidence만 섞어 보여줍니다. alternate-parent stress, bad-case rescue, logical/per-member 실험은 별도 표로 분리해야 합니다.
 - 아직 claim 성숙 전인 조건이 남아 있습니다: queued `6`개, 부분완료 `0`개, 5-seed 미만 완료 `15`개.
@@ -21,7 +36,8 @@ _자동 갱신 시각: `2026-04-28T12:45:39`._
 
 ## 요약
 
-- Operating baseline: `fresh0412_v11_refcheck_gcsmooth_n700` -> `F1=0.9955`, `FN=4.4`, `FP=2.4` over `5/5` seeds.
+- Active server baseline candidate: `fresh0412_v11_refcheck_raw_n700` -> refcheck running, 5-seed summary pending.
+- Last completed matched control: `fresh0412_v11_refcheck_gcsmooth_n700` -> `F1=0.9955`, `FN=4.4`, `FP=2.4` over `5/5` seeds.
 - Historical selected ref: `fresh0412_v11_n700_existing` -> `F1=0.9901`, `FN=9.8`, `FP=5.0`; kept only as reference-selection history.
 - 메인 strict queue: `158` 완료 run, decision `queue_exhausted`.
 - Round-2 refinement: `13/40` 완료 run, stage `urgent_reference_then_round2`, status `running`.

@@ -7,7 +7,7 @@
 - `ref` 기준 실행
 - `normal_ratio` sweep 실행
 - `train per-class count` sweep 실행
-- `best_n=700` 기준 `lr/gc/smooth/reg` ablation 실행
+- `best_n=700` 기준 `lr/gc/wd/smooth/reg` ablation 실행
 
 ## 2. 서버 준비
 
@@ -56,6 +56,38 @@ weights/convnextv2_tiny.fcmae_ft_in22k_in1k.pth
 
 ## 4. 가장 간단한 전체 실행
 
+논문용 strict one-factor 실험을 서버에서 한 번에 돌릴 때는 아래 명령을 우선 사용합니다.
+
+```bash
+bash scripts/run_paper_server_all.sh \
+  --config dataset.yaml \
+  --workers 16 \
+  --num-workers 8
+```
+
+이 스크립트가 수행하는 순서는 다음과 같습니다.
+
+1. pretrained weight 확인 및 필요 시 다운로드
+2. `data/`, `images/`가 없으면 데이터/이미지 생성 및 검증
+3. 이전 상태 reference 재실행: `grad_clip=1.0`, `smooth_window=3`, `median`, `n700`, 5 seeds
+4. strict one-factor round 1 queue 실행
+5. round 1 결과로 round 2 queue 선택 및 실행
+6. instability case 수집
+7. prediction trend 분석
+8. `docs/summary.md` 및 plot/report 갱신
+
+긴 서버 작업은 `tmux`에서 실행합니다.
+
+```bash
+tmux new -s anomaly-paper
+source .venv/bin/activate
+bash scripts/run_paper_server_all.sh --config dataset.yaml --workers 16 --num-workers 8
+```
+
+중간에 끊고 나중에 이어서 돌릴 때는 같은 명령을 다시 실행하면 됩니다. 이미 완료된 tag는 controller가 기본적으로 건너뜁니다. 강제로 다시 돌릴 때만 `--force`를 붙입니다.
+
+일반 v11 전체 파이프라인을 다시 돌릴 때는 wrapper의 `all` stage를 사용할 수 있습니다.
+
 가장 단순한 방식은 wrapper의 `all` stage 입니다.
 
 ```bash
@@ -71,8 +103,8 @@ bash scripts/run_v11_pipeline.sh all \
 
 1. dataset 생성
 2. normal_ratio sweep
-3. perclass sweep
-4. ablation
+3. ablation
+4. perclass sweep
 5. paper table 생성
 
 ## 5. 데이터셋 생성
@@ -125,7 +157,30 @@ python run_experiments_v11.py \
   --name-prefix server_run
 ```
 
-## 8. train per-class count sweep
+## 8. overfit-first ablation
+
+현재 기준 `best_n=700`으로 진행합니다.
+
+```bash
+bash scripts/run_v11_pipeline.sh ablation \
+  --base-n 700 \
+  --name-prefix server_run \
+  --num-workers 8
+```
+
+직접 명령:
+
+```bash
+python run_experiments_v11.py \
+  --groups lr gc wd smooth reg \
+  --base_n 700 \
+  --server h200 \
+  --gpus 2 \
+  --num_workers 8 \
+  --name-prefix server_run
+```
+
+## 9. train per-class count sweep
 
 이 실험은 train split에서 original class별 최대 개수를 동일하게 맞춥니다.
 
@@ -144,29 +199,6 @@ bash scripts/run_v11_pipeline.sh perclass \
 ```bash
 python run_experiments_v11.py \
   --groups perclass \
-  --server h200 \
-  --gpus 2 \
-  --num_workers 8 \
-  --name-prefix server_run
-```
-
-## 9. ablation
-
-현재 기준 `best_n=700`으로 진행합니다.
-
-```bash
-bash scripts/run_v11_pipeline.sh ablation \
-  --base-n 700 \
-  --name-prefix server_run \
-  --num-workers 8
-```
-
-직접 명령:
-
-```bash
-python run_experiments_v11.py \
-  --groups lr gc smooth reg \
-  --base_n 700 \
   --server h200 \
   --gpus 2 \
   --num_workers 8 \

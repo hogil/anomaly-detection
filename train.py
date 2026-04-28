@@ -11,7 +11,7 @@ ConvNeXtV2-Tiny (pretrained, file-based) + Focal Loss
 
 Usage:
     python train.py
-    python train.py --config config.yaml --epochs 50
+    python train.py --config dataset.yaml --epochs 50
 """
 
 import argparse
@@ -24,7 +24,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from torchvision import transforms
 from pathlib import Path
 from PIL import Image
@@ -51,6 +51,37 @@ def _worker_init_fn(worker_id):
     seed = _GLOBAL_WORKER_SEED + worker_id
     np.random.seed(seed)
     random.seed(seed)
+
+
+def build_train_sampler(train_df: pd.DataFrame, mode: str, sampler_name: str, seed: int):
+    """Create an optional weighted sampler to compensate for train prior skew."""
+    if sampler_name == "shuffle":
+        return None, None
+
+    if sampler_name == "balanced_original":
+        keys = train_df["class"].astype(str)
+        label_name = "original"
+    elif sampler_name == "balanced_binary":
+        if mode == "binary":
+            keys = train_df["class"].eq("normal").map({True: "normal", False: "abnormal"})
+            label_name = "binary"
+        else:
+            keys = train_df["class"].astype(str)
+            label_name = "class"
+    else:
+        raise ValueError(f"Unknown sampler: {sampler_name}")
+
+    counts = keys.value_counts().to_dict()
+    weights = torch.as_tensor([1.0 / counts[k] for k in keys], dtype=torch.double)
+    generator = torch.Generator()
+    generator.manual_seed(seed)
+    sampler = WeightedRandomSampler(
+        weights=weights,
+        num_samples=len(weights),
+        replacement=True,
+        generator=generator,
+    )
+    return sampler, {"label_name": label_name, "counts": counts}
 
 
 # =============================================================================
@@ -137,7 +168,14 @@ class ChartImageDataset(Dataset):
             cls = row["class"]
             split = row["split"]
             chart_id = row["chart_id"]
-            img_path = image_dir / split / cls / f"{chart_id}.png"
+            image_name = None
+            if "image_name" in row and pd.notna(row["image_name"]):
+                image_name = str(row["image_name"])
+            elif "target_member" in row and pd.notna(row["target_member"]):
+                image_name = f"{chart_id}_{row['target_member']}.png"
+            else:
+                image_name = f"{chart_id}.png"
+            img_path = image_dir / split / cls / image_name
             if not img_path.exists():
                 continue
 
@@ -179,8 +217,13 @@ class ChartImageDataset(Dataset):
 # Model
 # =============================================================================
 
-def create_model(num_classes: int, model_name: str, device: torch.device,
-                  dropout: float = 0.5):
+def create_model(
+    num_classes: int,
+    model_name: str,
+    device: torch.device,
+    dropout: float = 0.5,
+    stochastic_depth_rate: float = 0.0,
+):
     """timm 모델 생성. pretrained=False + weights/{model_name}.pth 로드.
 
     파일명은 HF model id 그대로:
@@ -194,7 +237,11 @@ def create_model(num_classes: int, model_name: str, device: torch.device,
             f"먼저 'python download.py' 실행하여 weights/ 폴더에 다운로드"
         )
 
-    model = timm.create_model(model_name, pretrained=False)
+    model = timm.create_model(
+        model_name,
+        pretrained=False,
+        drop_path_rate=stochastic_depth_rate,
+    )
     state_dict = torch.load(weights_path, map_location="cpu", weights_only=True)
     model.load_state_dict(state_dict)
     print(f"  가중치 로드: {weights_path}")
@@ -256,6 +303,13 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
 
     pbar = tqdm(loader, desc=f"Epoch {epoch}/{total_epochs} [Train]",
                 leave=False, ncols=100)
+
+    def grad_norm_with_optional_clip():
+        if grad_clip is not None and grad_clip > 0:
+            return torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip).item()
+        # max_norm=inf computes the total norm without changing gradients.
+        return torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=float("inf")).item()
+
     for batch in pbar:
         if len(batch) == 3:
             images, labels, weights = batch
@@ -295,7 +349,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
             scaler.scale(loss).backward()
             # gradient clipping (cliff fall 안전망) — pre-clip norm 캡처
             scaler.unscale_(optimizer)
-            gn = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip).item()
+            gn = grad_norm_with_optional_clip()
             grad_norms_pre_clip.append(gn)
             scaler.step(optimizer)
             scaler.update()
@@ -307,7 +361,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
                 if weights is not None and ohem_ratio == 0:
                     loss = (loss * weights).mean() if loss.dim() > 0 else loss
             loss.backward()
-            gn = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip).item()
+            gn = grad_norm_with_optional_clip()
             grad_norms_pre_clip.append(gn)
             optimizer.step()
         else:
@@ -317,7 +371,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
             if weights is not None and ohem_ratio == 0:
                 loss = (loss * weights).mean() if loss.dim() > 0 else loss
             loss.backward()
-            gn = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip).item()
+            gn = grad_norm_with_optional_clip()
             grad_norms_pre_clip.append(gn)
             optimizer.step()
 
@@ -336,6 +390,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
     import numpy as _np
     _gn = _np.array([g for g in grad_norms_pre_clip if _np.isfinite(g)])
     if len(_gn) > 0:
+        clipped_count = int((_gn > grad_clip).sum()) if grad_clip is not None and grad_clip > 0 else 0
         gn_stats = {
             "mean": float(_gn.mean()),
             "max": float(_gn.max()),
@@ -344,7 +399,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
             "p99": float(_np.percentile(_gn, 99)),
             "std": float(_gn.std()),
             "n_steps": int(len(_gn)),
-            "n_clipped": int((_gn > 1.0).sum()),
+            "n_clipped": clipped_count,
         }
     else:
         gn_stats = None
@@ -662,7 +717,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--train_config", default=None,
                         help="학습 hparam YAML (default: configs/train/winning.yaml 자동 로드)")
-    parser.add_argument("--config", default=td("data_config", "config.yaml"))
+    parser.add_argument("--config", default=td("data_config", "dataset.yaml"))
     parser.add_argument("--epochs", type=int, default=td("epochs", 20))
     parser.add_argument("--batch_size", type=int, default=td("batch_size", 32))
     parser.add_argument("--lr_backbone", type=float, default=td("lr_backbone", 2e-5),
@@ -692,6 +747,8 @@ def main():
     parser.add_argument("--mode", type=str, default=td("mode", "binary"),
                         choices=["multiclass", "binary", "anomaly_type"])
     parser.add_argument("--dropout", type=float, default=td("dropout", 0.0))
+    parser.add_argument("--stochastic_depth_rate", type=float, default=td("stochastic_depth_rate", 0.0),
+                        help="timm drop_path_rate (ConvNeXt stochastic depth). 0.0=disabled")
     parser.add_argument("--mixup_alpha", type=float, default=td("mixup_alpha", 0.2))
     parser.add_argument("--ema_decay", type=float, default=td("ema_decay", 0.0),
                         help="EMA of weights decay. 0=disabled (default). 짧은 학습 (<5000 step) 에선 EMA 가 수렴 못해서 raw 보다 나쁨. 긴 학습에서만 0.999 권장.")
@@ -699,6 +756,11 @@ def main():
                         help="학습 데이터 클래스당 최대 수 (0=전체)")
     parser.add_argument("--normal_ratio", type=int, default=td("normal_ratio", 0),
                         help="Binary mode: normal 학습 샘플 수 (0=전체, abnormal은 고정)")
+    parser.add_argument("--scenarios_csv", type=str, default=None,
+                        help="override scenarios CSV path (default: {data_dir}/scenarios.csv)")
+    parser.add_argument("--train_sampler", type=str, default=td("train_sampler", "shuffle"),
+                        choices=["shuffle", "balanced_binary", "balanced_original"],
+                        help="Train DataLoader sampler. balanced_original은 원본 6개 class 기준으로 균등 샘플링.")
     parser.add_argument("--ohem_ratio", type=float, default=td("ohem_ratio", 0.0),
                         help="OHEM ratio (0=off, 0.75=top75pct, 0.5=top50pct)")
     parser.add_argument("--focal_gamma", type=float, default=td("focal_gamma", 0.0),
@@ -721,6 +783,8 @@ def main():
                         help="save guard 절대 floor: val_loss 가 이 값 미만이면 guard 발동 안 함")
     parser.add_argument("--save_strict_only", action="store_true", default=td("save_strict_only", True),
                         help="best 저장은 strict > 만 허용 (2026-04-09 기본값 True)")
+    parser.add_argument("--allow_tie_save", action="store_true", default=td("allow_tie_save", False),
+                        help="save_strict_only 반대 플래그: tie (==) 에도 best 저장 허용. 연구용.")
     parser.add_argument("--avg_last_n", type=int, default=td("avg_last_n", 0),
                         help="[deprecated] post-hoc weight 평균 (0=비활성)")
     parser.add_argument("--smooth_window", type=int, default=td("smooth_window", 3),
@@ -843,6 +907,7 @@ def main():
         "cudnn_benchmark": torch.backends.cudnn.benchmark,
         "cudnn_deterministic": torch.backends.cudnn.deterministic,
         "dropout": args.dropout,
+        "stochastic_depth_rate": args.stochastic_depth_rate,
         "focal_gamma": args.focal_gamma,
         "smooth_window": args.smooth_window,
         "smooth_method": args.smooth_method,
@@ -857,7 +922,9 @@ def main():
         print(f"    {k}: {v}")
 
     # 데이터
-    sc_df = pd.read_csv(data_dir / "scenarios.csv")
+    scenarios_csv = Path(args.scenarios_csv) if args.scenarios_csv else (data_dir / "scenarios.csv")
+    sc_df = pd.read_csv(scenarios_csv)
+    print(f"  Scenarios CSV: {scenarios_csv}")
     train_df = sc_df[sc_df["split"] == "train"]
     val_df = sc_df[sc_df["split"] == "val"]
     test_df = sc_df[sc_df["split"] == "test"]
@@ -926,13 +993,31 @@ def main():
         prefetch_factor=args.prefetch_factor if num_workers > 0 else None,
         worker_init_fn=_worker_init_fn if num_workers > 0 else None,
     )
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, **common)
+    train_sampler, sampler_info = build_train_sampler(train_df, args.mode, args.train_sampler, args.seed)
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=args.batch_size,
+        shuffle=train_sampler is None,
+        sampler=train_sampler,
+        **common,
+    )
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, **common)
     test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, **common)
     print(f"  DataLoader: num_workers={num_workers}, pin_memory=True, prefetch_factor=4, persistent_workers={num_workers > 0}")
+    if sampler_info is None:
+        print("  Train sampler: shuffle")
+    else:
+        counts_str = ", ".join(f"{k}={v}" for k, v in sampler_info["counts"].items())
+        print(f"  Train sampler: {args.train_sampler} ({sampler_info['label_name']}: {counts_str})")
 
     # 모델 — weights/<short>.pth 자동 매핑 (없으면 FileNotFoundError)
-    model = create_model(num_classes, args.model_name, device, dropout=args.dropout)
+    model = create_model(
+        num_classes,
+        args.model_name,
+        device,
+        dropout=args.dropout,
+        stochastic_depth_rate=args.stochastic_depth_rate,
+    )
     params_M = sum(p.numel() for p in model.parameters()) / 1e6
 
     # torch.compile (H100/H200 권장: 20~50% 가속)
@@ -1065,7 +1150,7 @@ def main():
 
     # ⭐ Config YAML 자동 snapshot — 재현성 + 추적성
     # 1) train_config_used.yaml = effective config (CLI override 반영된 최종 args)
-    # 2) data_config_used.yaml  = 학습 당시의 config.yaml (데이터 생성 config)
+    # 2) data_config_used.yaml  = 학습 당시의 dataset.yaml (데이터 생성 config)
     try:
         _effective_train = vars(args).copy()
         # Path / non-serializable 정리
@@ -1073,7 +1158,7 @@ def main():
                             for k, v in _effective_train.items()}
         with open(log_dir / "train_config_used.yaml", "w", encoding="utf-8") as _f:
             yaml.safe_dump(_effective_train, _f, sort_keys=False, allow_unicode=True)
-        # 원본 data config (config.yaml) 도 함께 복사
+        # 원본 data config (dataset.yaml) 도 함께 복사
         _src_cfg = Path(args.config)
         if _src_cfg.exists():
             import shutil as _sh
@@ -1090,8 +1175,11 @@ def main():
     best_test_recall = 0.0
     best_test_f1 = 0.0
     patience_counter = 0
-    # test_history: 매 best update (NEW BEST 또는 TIE save) 시마다 test 측정값 누적
+    # test_history: best update 또는 val_f1 peak 시 test 측정값 누적
+    # - NEW_BEST: strict improvement on smoothed val_f1 (ep >= best_update_start)
+    # - VAL_PEAK: raw val_f1 최고 갱신 (ep 1부터, model 저장 없음, 분석 전용)
     test_history = []
+    best_raw_val_f1_seen = -1.0  # ep1부터 추적하는 raw val_f1 watermark
 
     print(f"\n{'='*60}")
     print(f"  학습 시작 ({args.epochs} epochs)")
@@ -1133,11 +1221,14 @@ def main():
             amp_dtype=amp_dtype,
         )
 
-        # Test 평가: 절대규칙 — ep >= early_stop_start 면 매 epoch 강제
+        # Test 평가: (a) ep >= early_stop_start 면 매 epoch 강제,
+        #           (b) --eval_test_every_epoch 플래그,
+        #           (c) raw val_f1 가 watermark 를 갱신한 경우 (ep 1부터, VAL_PEAK 기록용)
         ep_test_metrics = None
+        is_raw_val_peak = val_f1 > best_raw_val_f1_seen
         force_test_eval = epoch >= early_stop_start
-        if args.eval_test_every_epoch or force_test_eval:
-            _, _, ep_test_recall, ep_test_f1, ep_test_metrics, _, _ = evaluate(
+        if args.eval_test_every_epoch or force_test_eval or is_raw_val_peak:
+            _, _, ep_test_recall, ep_test_f1, ep_test_metrics, ep_test_preds, ep_test_labels = evaluate(
                 eval_model, test_loader, criterion, device, classes,
                 desc=f"Epoch {epoch}/{args.epochs} [TestEpoch]",
                 amp_dtype=amp_dtype,
@@ -1247,7 +1338,12 @@ def main():
                 print(f"\n  ! SAVE REJECT (val_loss guard): val_loss={val_loss:.4f} > threshold {guard_threshold:.4f} "
                       f"(best={best_val_loss_seen:.4f} × {args.val_loss_max_ratio}, min_abs={args.val_loss_guard_min_abs})")
 
-        should_save = is_strict_improvement and not save_rejected
+        # Tie-save: default False (strict >만). --allow_tie_save 로 활성화해 tie (==) 도 저장 가능.
+        effective_strict_only = args.save_strict_only and not args.allow_tie_save
+        if effective_strict_only:
+            should_save = is_strict_improvement and not save_rejected
+        else:
+            should_save = is_candidate and not save_rejected
 
         if should_save:
             patience_counter = 0
@@ -1382,6 +1478,42 @@ def main():
                 print(f"\n  No improvement ({patience_counter}/{args.patience})")
             else:
                 print(f"\n  (pre-early_stop_start: patience 미시작, ep {epoch} < {early_stop_start})")
+
+        # VAL_PEAK: raw val_f1 watermark 갱신 시 test_history 에 기록 (best 저장은 안 함)
+        # - should_save 경로에서 이미 NEW_BEST 로 기록된 경우 중복 방지
+        # - ep_test_metrics 는 is_raw_val_peak 분기에서 이미 계산됨
+        if is_raw_val_peak and not should_save and ep_test_metrics is not None:
+            if args.mode == "binary":
+                _bin_preds = np.asarray(ep_test_preds)
+                _bin_labels = np.asarray(ep_test_labels)
+            else:
+                _bin_preds = (np.asarray(ep_test_preds) != 0).astype(int)
+                _bin_labels = (np.asarray(ep_test_labels) != 0).astype(int)
+            _cm = _compute_binary_confusion(_bin_preds, _bin_labels)
+            _tn_p, _fn_p, _fp_p, _tp_p = _cm["tn"], _cm["fn"], _cm["fp"], _cm["tp"]
+            _nor_R = _tn_p / (_tn_p + _fp_p) if (_tn_p + _fp_p) > 0 else 0.0
+            _abn_R = _tp_p / (_tp_p + _fn_p) if (_tp_p + _fn_p) > 0 else 0.0
+            test_history.append({
+                "epoch": epoch,
+                "event": "VAL_PEAK",
+                "patience": patience_counter,
+                "val_f1": round(val_f1, 4),
+                "val_recall": round(val_recall, 4),
+                "val_target_smoothed": round(val_target_recall, 4),
+                "test_f1": round(ep_test_f1, 4),
+                "test_recall": round(ep_test_recall, 4),
+                "test_nor_R": round(_nor_R, 4),
+                "test_abn_R": round(_abn_R, 4),
+                **_cm,
+            })
+            print(f"  [VAL_PEAK@ep{epoch:02d}] raw val_f1 {val_f1:.4f} > prev {best_raw_val_f1_seen:.4f}  "
+                  f"| test_f1={ep_test_f1:.4f} abn_R={_abn_R:.4f} FN={_fn_p} FP={_fp_p}")
+            # 파일에도 즉시 persist (run 중단 대비)
+            with open(log_dir / "test_history.json", "w", encoding="utf-8") as f:
+                json.dump(test_history, f, indent=2, ensure_ascii=False)
+
+        if is_raw_val_peak:
+            best_raw_val_f1_seen = val_f1
 
         # epoch 시간 누적
         epoch_times.append(time.time() - t0)

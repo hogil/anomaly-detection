@@ -27,6 +27,8 @@ import argparse
 import copy
 import csv
 import json
+import sys
+import time
 import yaml
 import numpy as np
 import pandas as pd
@@ -37,6 +39,11 @@ from multiprocessing import Pool, cpu_count
 from src.data.scenario_generator import ScenarioGenerator
 
 DEFAULT_DATASET_CONFIG = "dataset.yaml"
+TQDM_DISABLE = not sys.stderr.isatty()
+
+
+def _log(message: str) -> None:
+    print(message, flush=True)
 
 
 def stratified_train_val_split(df: pd.DataFrame, val_ratio: float,
@@ -155,7 +162,7 @@ def generate_batch(config, classes, count_per_class, rng, start_id, label,
 
     for cls in classes:
         n = count_per_class[cls] if isinstance(count_per_class, dict) else count_per_class
-        for i in tqdm(range(n), desc=f"{cls}({label})"):
+        for i in tqdm(range(n), desc=f"{cls}({label})", disable=TQDM_DISABLE):
             if all_context_columns_per_chart:
                 family_id = f"ch_{sc_id:05d}"
                 device, step, item = gen.sample_chart_meta()
@@ -328,26 +335,57 @@ def generate_batch_parallel(config, classes, count_per_class, base_seed,
                 tasks.append((sc_id, cls, batch_idx))
             sc_id += 1
 
-    print(f"  [parallel] {len(tasks)} 시나리오, {num_workers} workers, batch_idx={batch_idx}")
+    _log(f"  [parallel] {len(tasks):,} 시나리오, {num_workers} workers, batch_idx={batch_idx}")
 
+    stage_started = time.perf_counter()
     with Pool(processes=num_workers, initializer=_init_worker,
               initargs=(config, base_seed)) as pool:
         # imap_unordered로 worker 부하 자동 분산
         results = list(tqdm(
             pool.imap_unordered(_gen_one, tasks, chunksize=8),
-            total=len(tasks), desc=f"{label}({num_workers}w)"
+            total=len(tasks), desc=f"{label}({num_workers}w)", disable=TQDM_DISABLE
         ))
+    _log(f"  [parallel] 생성 완료: {label}, elapsed={time.perf_counter() - stage_started:.1f}s")
 
     # sid_int 순으로 정렬하여 deterministic 순서 복원
+    _log(f"  [parallel] 결과 정렬/병합 중: {label}")
     results.sort(key=lambda r: (r[0], r[1], r[2]))
 
     all_ts_rows = []
     all_sc_rows = []
-    for _, _, _, sc_row, ts_rows in results:
+    for _, _, _, sc_row, ts_rows in tqdm(
+        results,
+        total=len(results),
+        desc=f"{label} 병합",
+        disable=TQDM_DISABLE,
+    ):
         all_sc_rows.append(sc_row)
         all_ts_rows.extend(ts_rows)
+    _log(f"  [parallel] 병합 완료: scenarios={len(all_sc_rows):,}, timeseries_rows={len(all_ts_rows):,}")
 
     return all_ts_rows, all_sc_rows, sc_id
+
+
+def write_rows_csv(path: Path, rows: list[dict], chunk_size: int = 50_000) -> None:
+    """Write large CSV rows with visible progress between generation and training."""
+    _log(f"  저장 시작: {path} ({len(rows):,} rows)")
+    if not rows:
+        with path.open("w", encoding="utf-8-sig", newline="") as f:
+            pass
+        _log(f"  저장 완료: {path}")
+        return
+    fieldnames = list(rows[0].keys())
+    with path.open("w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for start in tqdm(
+            range(0, len(rows), chunk_size),
+            total=(len(rows) + chunk_size - 1) // chunk_size,
+            desc=f"{path.name} 저장",
+            disable=TQDM_DISABLE,
+        ):
+            writer.writerows(rows[start:start + chunk_size])
+    _log(f"  저장 완료: {path}")
 
 
 def generate(config: dict, num_workers: int = 1,
@@ -391,9 +429,10 @@ def generate(config: dict, num_workers: int = 1,
         nw = max(1, num_workers)
     use_parallel = nw > 1
 
-    print(f"\n  Workers: {nw} ({'parallel' if use_parallel else 'sequential'})")
+    total_started = time.perf_counter()
+    _log(f"\n  Workers: {nw} ({'parallel' if use_parallel else 'sequential'})")
     if all_context_columns_per_chart:
-        print("  Context family mode: all context columns per device/step/item family")
+        _log("  Context family mode: all context columns per device/step/item family")
 
     # val_difficulty_scale != 1.0 이면 train/val 별도 생성
     if val_scale != 1.0:
@@ -402,9 +441,9 @@ def generate(config: dict, num_workers: int = 1,
         n_val_dict = {cls: max(1, round(n_trainval_dict[cls] * val_frac)) for cls in classes}
         n_train_dict = {cls: n_trainval_dict[cls] - n_val_dict[cls] for cls in classes}
 
-        print(f"\n=== Train (full intensity) ===")
+        _log(f"\n=== Train (full intensity) ===")
         for cls in classes:
-            print(f"  {cls}: {n_train_dict[cls]}")
+            _log(f"  {cls}: {n_train_dict[cls]}")
         if use_parallel:
             tr_ts, tr_sc, next_id = generate_batch_parallel(
                 config, classes, n_train_dict, seed, 0, "train",
@@ -418,9 +457,9 @@ def generate(config: dict, num_workers: int = 1,
             )
 
         val_config = scale_config(config, val_scale)
-        print(f"\n=== Val (scale={val_scale}) ===")
+        _log(f"\n=== Val (scale={val_scale}) ===")
         for cls in classes:
-            print(f"  {cls}: {n_val_dict[cls]}")
+            _log(f"  {cls}: {n_val_dict[cls]}")
         if use_parallel:
             va_ts, va_sc, next_id = generate_batch_parallel(
                 val_config, classes, n_val_dict, seed, next_id, "val",
@@ -439,9 +478,9 @@ def generate(config: dict, num_workers: int = 1,
         val_df["split"] = "val"
         tv_ts = tr_ts + va_ts
     else:
-        print(f"\n=== Train+Val ===")
+        _log(f"\n=== Train+Val ===")
         for cls in classes:
-            print(f"  {cls}: {n_trainval_dict[cls]}")
+            _log(f"  {cls}: {n_trainval_dict[cls]}")
         if use_parallel:
             tv_ts, tv_sc, next_id = generate_batch_parallel(
                 config, classes, n_trainval_dict, seed, 0, "train+val",
@@ -457,9 +496,9 @@ def generate(config: dict, num_workers: int = 1,
         val_df = None
 
     test_config = scale_config(config, test_scale)
-    print(f"\n=== Test (scale={test_scale}) ===")
+    _log(f"\n=== Test (scale={test_scale}) ===")
     for cls in classes:
-        print(f"  {cls}: {n_test_dict[cls]}")
+        _log(f"  {cls}: {n_test_dict[cls]}")
     if use_parallel:
         te_ts, te_sc, _ = generate_batch_parallel(
             test_config, classes, n_test_dict, seed, next_id, "test",
@@ -492,33 +531,33 @@ def generate(config: dict, num_workers: int = 1,
 
     te_df["split"] = "test"
 
+    _log("\n=== Finalize ===")
+    _log("  scenarios 병합 중...")
     scenarios_df = pd.concat([train_df, val_df, te_df]).reset_index(drop=True)
 
+    _log("  timeseries 병합 중...")
     ts_rows = tv_ts + te_ts
     ts_path = out_dir / "timeseries.csv"
-    if ts_rows:
-        with ts_path.open("w", encoding="utf-8-sig", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=list(ts_rows[0].keys()))
-            writer.writeheader()
-            writer.writerows(ts_rows)
-    else:
-        with ts_path.open("w", encoding="utf-8-sig", newline="") as f:
-            pass
-    scenarios_df.to_csv(out_dir / "scenarios.csv", index=False)
+    write_rows_csv(ts_path, ts_rows)
+    scenarios_path = out_dir / "scenarios.csv"
+    _log(f"  저장 시작: {scenarios_path} ({len(scenarios_df):,} rows)")
+    scenarios_df.to_csv(scenarios_path, index=False)
+    _log(f"  저장 완료: {scenarios_path}")
 
-    print(f"\n{'='*50}")
-    print(f"  데이터 생성 완료")
-    print(f"{'='*50}")
-    print(f"  시나리오: {len(scenarios_df)}")
-    print(f"  시계열 행: {len(ts_rows):,}")
+    _log(f"\n{'='*50}")
+    _log(f"  데이터 생성 완료")
+    _log(f"{'='*50}")
+    _log(f"  시나리오: {len(scenarios_df)}")
+    _log(f"  시계열 행: {len(ts_rows):,}")
     tr = len(scenarios_df[scenarios_df["split"]=="train"])
     va = len(scenarios_df[scenarios_df["split"]=="val"])
     te = len(scenarios_df[scenarios_df["split"]=="test"])
-    print(f"  train={tr}, val={va}, test={te}")
+    _log(f"  train={tr}, val={va}, test={te}")
     for cls in classes:
         c = len(scenarios_df[scenarios_df["class"]==cls])
-        print(f"    {cls}: {c}")
-    print(f"\n  저장: {out_dir}/")
+        _log(f"    {cls}: {c}")
+    _log(f"  elapsed: {time.perf_counter() - total_started:.1f}s")
+    _log(f"\n  저장: {out_dir}/")
 
 
 def _snapshot_config(config: dict, source_path: Path) -> None:
@@ -553,7 +592,7 @@ def _snapshot_config(config: dict, source_path: Path) -> None:
     except OSError:
         pass
 
-    print(f"  [config snapshot] → {snapshot_path}")
+    _log(f"  [config snapshot] → {snapshot_path}")
 
 
 def main():

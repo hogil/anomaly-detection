@@ -12,6 +12,8 @@ display/: 전체 멤버 색상 구분
 
 import argparse
 import os
+import sys
+import time
 import yaml
 import numpy as np
 import pandas as pd
@@ -23,6 +25,7 @@ from functools import partial
 from src.data.image_renderer import ImageRenderer
 
 DEFAULT_DATASET_CONFIG = "dataset.yaml"
+TQDM_DISABLE = not sys.stderr.isatty()
 
 
 # worker별 ts_grouped 캐시 (process 단위)
@@ -142,14 +145,29 @@ def _render_one(row_dict: dict):
     return sid
 
 
-def render_all(config: dict, num_workers: int = 0, x_col: str = None):
+def _log(message: str) -> None:
+    print(message, flush=True)
+
+
+def render_all(
+    config: dict,
+    num_workers: int = 0,
+    x_col: str = None,
+    chunksize: int | None = None,
+    maxtasksperchild: int = 0,
+):
     out_cfg = config["output"]
     data_dir = Path(out_cfg["data_dir"])
+    started = time.perf_counter()
 
-    print(f"데이터 로드 중...")
+    _log("데이터 로드 중...")
     ts_df = pd.read_csv(data_dir / "timeseries.csv")
     sc_df = pd.read_csv(data_dir / "scenarios.csv")
+    _log(f"  CSV 로드 완료: timeseries={len(ts_df):,} rows, scenarios={len(sc_df):,} rows")
+
+    _log("  chart_id별 timeseries group 생성 중...")
     ts_grouped = {sid: grp for sid, grp in ts_df.groupby("chart_id")}
+    _log(f"  group 생성 완료: {len(ts_grouped):,} charts")
 
     # x 컬럼 자동 감지: time_index → timestamp → date 순서
     if x_col is None:
@@ -159,40 +177,74 @@ def render_all(config: dict, num_workers: int = 0, x_col: str = None):
                 break
         if x_col is None:
             x_col = "time_index"  # fallback
-    print(f"X 컬럼: {x_col} (dtype={ts_df[x_col].dtype})")
+    _log(f"X 컬럼: {x_col} (dtype={ts_df[x_col].dtype})")
 
     if num_workers <= 0:
         num_workers = max(1, cpu_count() - 1)
-    print(f"이미지 생성: {len(sc_df)}개 (workers={num_workers})")
+    if chunksize is None:
+        chunksize = 8 if num_workers > 1 else 1
+    _log(
+        f"이미지 생성: {len(sc_df):,}개 "
+        f"(workers={num_workers}, chunksize={chunksize}, maxtasksperchild={maxtasksperchild or 'off'})"
+    )
 
-    # ts_grouped를 worker 간 공유 (pickle to temp file)
-    import pickle, tempfile
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pkl") as f:
-        pickle.dump(ts_grouped, f)
-        ts_pickle_path = f.name
+    for split, cls in sc_df[["split", "class"]].drop_duplicates().itertuples(index=False):
+        (Path(out_cfg["image_dir"]) / str(split) / str(cls)).mkdir(parents=True, exist_ok=True)
+        (Path(out_cfg["display_dir"]) / str(split) / str(cls)).mkdir(parents=True, exist_ok=True)
 
     rows = sc_df.to_dict(orient="records")
 
-    chunk_size = 5 if num_workers > 1 else 1
-    max_tasks_per_child = 100 if num_workers > 1 else 50
+    if num_workers == 1:
+        _worker_cache["ts_grouped"] = ts_grouped
+        _worker_cache["renderer"] = ImageRenderer(config)
+        _worker_cache["images_dir"] = Path(config["output"]["image_dir"])
+        _worker_cache["display_dir"] = Path(config["output"]["display_dir"])
+        _worker_cache["x_col"] = x_col
+        img_cfg = config.get("image", {})
+        _worker_cache["title_columns"] = img_cfg.get("title_columns", ["device", "step", "item"])
+        _worker_cache["x_label"] = img_cfg.get("x_label") or x_col
+        _worker_cache["y_label"] = img_cfg.get("y_label", "Measurement Value (nm)")
+        _worker_cache["fleet_mode"] = img_cfg.get("fleet_mode", "always")
+        rendered = 0
+        for result in tqdm(rows, total=len(rows), desc="이미지 생성", disable=TQDM_DISABLE):
+            if _render_one(result) is not None:
+                rendered += 1
+    else:
+        # ts_grouped를 worker 간 공유 (pickle to temp file)
+        import pickle, tempfile
 
-    try:
-        with Pool(processes=num_workers,
-                  initializer=_init_worker,
-                  initargs=(ts_pickle_path, config, x_col),
-                  maxtasksperchild=max_tasks_per_child) as pool:
-            results = list(tqdm(
-                pool.imap_unordered(_render_one, rows, chunksize=chunk_size),
-                total=len(rows), desc="이미지 생성"
-            ))
-    finally:
-        os.unlink(ts_pickle_path)
+        _log("  worker 초기화용 timeseries pickle 생성 중...")
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pkl") as f:
+            pickle.dump(ts_grouped, f, protocol=pickle.HIGHEST_PROTOCOL)
+            ts_pickle_path = f.name
+        _log(f"  pickle 생성 완료: {os.path.getsize(ts_pickle_path) / (1024*1024):.1f} MB")
+
+        pool_kwargs = {
+            "processes": num_workers,
+            "initializer": _init_worker,
+            "initargs": (ts_pickle_path, config, x_col),
+        }
+        if maxtasksperchild > 0:
+            pool_kwargs["maxtasksperchild"] = maxtasksperchild
+
+        rendered = 0
+        try:
+            _log("  worker 시작 중...")
+            with Pool(**pool_kwargs) as pool:
+                iterator = pool.imap_unordered(_render_one, rows, chunksize=chunksize)
+                for result in tqdm(iterator, total=len(rows), desc="이미지 생성", disable=TQDM_DISABLE):
+                    if result is not None:
+                        rendered += 1
+        finally:
+            os.unlink(ts_pickle_path)
 
     for split in ["train", "val", "test"]:
         n = len(sc_df[sc_df["split"] == split])
-        print(f"  {split}: {n}개")
-    print(f"\n  학습용: {out_cfg['image_dir']}/")
-    print(f"  유저용: {out_cfg['display_dir']}/")
+        _log(f"  {split}: {n}개")
+    _log(f"  rendered: {rendered:,}/{len(sc_df):,}")
+    _log(f"  elapsed: {time.perf_counter() - started:.1f}s")
+    _log(f"\n  학습용: {out_cfg['image_dir']}/")
+    _log(f"  유저용: {out_cfg['display_dir']}/")
 
 
 def main():
@@ -202,10 +254,20 @@ def main():
                         help="병렬 worker 수 (0=auto, CPU 코어 수-1)")
     parser.add_argument("--x_col", type=str, default=None,
                         help="x축 컬럼명 (자동 감지: time_index, timestamp, ...)")
+    parser.add_argument("--chunksize", type=int, default=0,
+                        help="Pool chunksize (0=auto)")
+    parser.add_argument("--maxtasksperchild", type=int, default=0,
+                        help="worker recycle interval. 0=off; old behavior used 100 and can cause long pauses.")
     args = parser.parse_args()
     with open(args.config, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
-    render_all(config, num_workers=args.workers, x_col=args.x_col)
+    render_all(
+        config,
+        num_workers=args.workers,
+        x_col=args.x_col,
+        chunksize=args.chunksize or None,
+        maxtasksperchild=args.maxtasksperchild,
+    )
 
 
 if __name__ == "__main__":

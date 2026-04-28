@@ -13,6 +13,7 @@ python generate_images.py --config dataset.yaml --workers 24
 ```
 
 `images/`는 모델 입력이고 `display/`는 사람이 보는 확인용 이미지입니다.
+데이터/이미지 생성 로그가 `tee`로 저장될 때는 progress bar 대신 단계 로그가 찍힙니다. 이미지 생성 worker 재시작은 기본 off입니다. 메모리 누수가 의심될 때만 `--maxtasksperchild 500`처럼 켭니다.
 
 ## 3. 학습
 

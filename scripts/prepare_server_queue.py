@@ -96,6 +96,10 @@ def parse_gc_candidates(raw: str) -> set[str]:
     return out
 
 
+def parse_axis_filter(raw: str) -> set[str]:
+    return {item.strip() for item in raw.split(",") if item.strip()}
+
+
 def load_finished_tags(path: Path | None) -> set[str]:
     if path is None:
         return set()
@@ -160,6 +164,9 @@ def prepare_queue(args: argparse.Namespace) -> dict[str, Any]:
         payload["server_start_after_candidate"] = args.start_after_candidate
     allowed_gc_candidates = parse_gc_candidates(args.gc_candidates)
     payload["server_gc_candidates"] = sorted(allowed_gc_candidates)
+    include_axes = parse_axis_filter(args.include_axes)
+    if include_axes:
+        payload["server_include_axes"] = sorted(include_axes)
     finished_tags = load_finished_tags(args.skip_completed_summary)
     if args.skip_completed_summary is not None:
         payload["server_skip_completed_summary"] = str(args.skip_completed_summary)
@@ -180,12 +187,16 @@ def prepare_queue(args: argparse.Namespace) -> dict[str, Any]:
     prepared_runs: list[dict[str, Any]] = []
     skipped_duplicate_controls: list[str] = []
     skipped_gc_candidates: list[str] = []
+    skipped_axes: list[str] = []
     for run in payload.get("runs", []):
         candidate = rewrite_for_raw_server_baseline(run)
         if is_duplicate_raw_gc00(candidate):
             skipped_duplicate_controls.append(candidate)
             continue
         axis = infer_axis(candidate)
+        if include_axes and axis not in include_axes:
+            skipped_axes.append(f"{axis}:{candidate}")
+            continue
         if axis == "gc" and normalize_candidate(candidate) not in allowed_gc_candidates:
             skipped_gc_candidates.append(candidate)
             continue
@@ -222,6 +233,9 @@ def prepare_queue(args: argparse.Namespace) -> dict[str, Any]:
             "[queue] skipped extra GC candidates: "
             + ", ".join(payload["server_skipped_gc_candidates"])
         )
+    if skipped_axes:
+        payload["server_skipped_axes"] = sorted(set(skipped_axes))
+        print(f"[queue] skipped runs outside requested axes: {len(skipped_axes)}")
 
     return payload
 
@@ -246,6 +260,11 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Optional controller summary JSON. Runs with status complete/skipped in this summary are omitted from the prepared queue.",
+    )
+    parser.add_argument(
+        "--include-axes",
+        default="",
+        help="Optional comma-separated axis allow-list such as gc,stochastic_depth,focal_gamma.",
     )
     return parser.parse_args()
 

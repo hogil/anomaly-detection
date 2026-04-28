@@ -22,6 +22,7 @@ MAX_LAUNCHED=0
 ROUND1_START_AFTER_AXIS=""
 ROUND1_START_AFTER_CANDIDATE=""
 ROUND1_SKIP_COMPLETED=1
+ROUND1_INCLUDE_AXES=""
 
 usage() {
   cat <<'EOF'
@@ -46,6 +47,8 @@ Options:
   --round1-include-gc     Include the 5-condition GC block (default)
   --round1-start-after-candidate STR
                           Start strict round1 after this candidate's last queued seed
+  --round1-include-axes CSV
+                          Only keep these round1 axes when preparing the queue
   --round1-skip-completed Omit completed/skipped tags from the existing round1 summary (default)
   --round1-keep-completed Keep completed/skipped tags in the prepared round1 queue
   --skip-weights          Do not run download.py when weights are missing
@@ -72,6 +75,7 @@ while [[ $# -gt 0 ]]; do
     --round1-after-gc) ROUND1_START_AFTER_AXIS="gc"; shift ;;
     --round1-include-gc) ROUND1_START_AFTER_AXIS=""; shift ;;
     --round1-start-after-candidate) ROUND1_START_AFTER_CANDIDATE="$2"; shift 2 ;;
+    --round1-include-axes) ROUND1_INCLUDE_AXES="$2"; shift 2 ;;
     --round1-skip-completed) ROUND1_SKIP_COMPLETED=1; shift ;;
     --round1-keep-completed) ROUND1_SKIP_COMPLETED=0; shift ;;
     --skip-weights) SKIP_WEIGHTS=1; shift ;;
@@ -142,6 +146,7 @@ prepare_queue() {
   local start_after_axis="${3:-}"
   local start_after_candidate="${4:-}"
   local skip_completed_summary="${5:-}"
+  local include_axes="${6:-}"
   local args=(
     scripts/prepare_server_queue.py
     --src "$src"
@@ -158,6 +163,9 @@ prepare_queue() {
   fi
   if [[ -n "$skip_completed_summary" ]]; then
     args+=(--skip-completed-summary "$skip_completed_summary")
+  fi
+  if [[ -n "$include_axes" ]]; then
+    args+=(--include-axes "$include_axes")
   fi
   run_cmd "$PYTHON" "${args[@]}"
 }
@@ -242,7 +250,8 @@ main() {
       validations/server_paper_rawbase_strict_single_factor_queue.json \
       "$ROUND1_START_AFTER_AXIS" \
       "$ROUND1_START_AFTER_CANDIDATE" \
-      "$round1_skip_completed_summary"
+      "$round1_skip_completed_summary" \
+      "$ROUND1_INCLUDE_AXES"
     run_controller \
       validations/server_paper_rawbase_strict_single_factor_queue.json \
       validations/server_paper_rawbase_strict_single_factor_summary.json \

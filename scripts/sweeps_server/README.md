@@ -21,8 +21,8 @@ All options are passed through to `scripts/run_paper_server_all.sh`.
 Useful resume/debug examples:
 
 ```bash
-bash scripts/sweeps_server/02_round1.sh --max-launched 1
 bash scripts/sweeps_server/07_round1_remaining.sh
+bash scripts/sweeps_server/02_round1.sh --max-launched 1
 bash scripts/sweeps_server/06_sample_skip.sh
 bash scripts/sweeps_server/04_round2.sh
 bash scripts/sweeps_server/05_post.sh --candidate-prefix fresh0412_v11
@@ -32,7 +32,7 @@ Defaults are inherited from `run_paper_server_all.sh`: data/image generation wor
 
 The active server baseline is raw: `grad_clip=0.0`, `smooth_window=1`, `smooth_method=median`. Prepared server queues rewrite run tags with `fresh0412_v11_rawbase_...` so old GC/smoothed logs are not reused. The GC axis is limited to 5 conditions by default: `gc01`, `gc025`, `gc05`, `gc15`, and `gc50`. The raw duplicate `gc00` control is skipped because raw refcheck already covers `grad_clip=0.0`.
 
-Round1 queue preparation removes tags already marked `complete` or `skipped` in `validations/server_paper_rawbase_strict_single_factor_summary.json` by default. Use `07_round1_remaining.sh` when resuming only the unfinished conditions; use `--round1-keep-completed` only when intentionally rebuilding the full prepared queue.
+Round1 queue preparation removes tags already marked `complete` or `skipped` in `validations/server_paper_rawbase_strict_single_factor_summary.json` by default. Use `07_round1_remaining.sh` on the server for the current needed-only resume. It skips weights/data/refcheck/round2/post, keeps only `gc`, `stochastic_depth`, `focal_gamma`, `abnormal_weight`, `ema`, `color`, and `allow_tie_save`, and omits lower-priority warmup follow-ups. Use `--round1-keep-completed` only when intentionally rebuilding the full prepared queue.
 
 For local/Windows chaining without bash, use:
 

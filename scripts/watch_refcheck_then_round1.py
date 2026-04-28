@@ -127,6 +127,8 @@ def launch_round1(args: argparse.Namespace, handle: TextIO) -> int:
         and not args.force
     ):
         prepare_cmd.extend(["--skip-completed-summary", str(args.skip_completed_summary)])
+    if args.include_axes:
+        prepare_cmd.extend(["--include-axes", args.include_axes])
 
     code = run_logged(prepare_cmd, handle)
     if code != 0:
@@ -219,6 +221,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--completion-exit-grace", type=float, default=15.0)
     parser.add_argument("--start-after-axis", default="")
     parser.add_argument("--start-after-candidate", default="")
+    parser.add_argument("--include-axes", default="")
     parser.add_argument("--keep-completed-in-queue", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--max-launched", type=int, default=0)

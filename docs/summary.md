@@ -1,6 +1,6 @@
 # 실험 요약
 
-_자동 갱신 시각: `2026-04-29T05:44:12+09:00`._
+_자동 갱신 시각: `2026-04-29T05:53:42+09:00`._
 
 ## 실험 방식
 
@@ -16,7 +16,7 @@ _자동 갱신 시각: `2026-04-29T05:44:12+09:00`._
 | `fresh0412_v11_refcheck_raw_n700` | raw server baseline | 5/5 | 0.9975 | 1.6 | 2.2 | 현재 서버 기준선 |
 | `fresh0412_v11_refcheck_gcsmooth_n700` | matched control | 5/5 | 0.9955 | 4.4 | 2.4 | 아래 기존 strict 표의 delta 기준 |
 | `fresh0412_v11_n700_existing` | historical selected ref | 5/5 | 0.9901 | 9.8 | 5.0 | 과거 reference 선택 기록 |
-| rawbase round1 live | rawbase history | 38 runs | 0.9981 | 0.632 | 2.158 | 중간 집계, 최종 claim 아님 |
+| rawbase round1 live | rawbase history | 39 runs | 0.9981 | 0.641 | 2.256 | 중간 집계, 최종 claim 아님 |
 | sample-skip pilot | separate 1-run | 1/1 | 0.9973 | 2 | 2 | main sweep과 분리 |
 
 ## Best Known Method
@@ -32,6 +32,16 @@ _자동 갱신 시각: `2026-04-29T05:44:12+09:00`._
 | `ema` | `0.0 / off` | `0.99` | 0.9972 | 1 | 3.2 | single-axis evidence |
 | `allow_tie_save` | `off` | `on` | 0.9974 | 2.2 | 1.8 | single-axis evidence |
 
+## 학습 이미지 예시
+
+학습 데이터는 `normal`과 불량 class별 이미지로 구성합니다. 모델 입력은 training image이고, display image는 같은 sample을 사람이 확인하기 쉽게 축/legend/색을 붙인 렌더링입니다.
+
+| training image | display image |
+| --- | --- |
+| ![training images by class](sample_overview_train.png) | ![display images by class](sample_overview_display.png) |
+
+불량 class는 `mean_shift`, `std_dev`, `spike`, `drift`, `context`처럼 class별로 나뉘며, 각 이미지는 해당 class label로 학습됩니다.
+
 ## Logical Member Attribution Example
 
 같은 context chart를 member별 class 판단 이미지로 확장합니다. 불량 member 이미지만 anomaly class이고, 양호 member 이미지는 normal class입니다.
@@ -46,8 +56,8 @@ _자동 갱신 시각: `2026-04-29T05:44:12+09:00`._
 
 | scope | 남은 내용 | runs |
 | --- | --- | ---: |
-| current rawbase queue | `stochastic_depth` 3조건, `focal_gamma` 3조건, `abnormal_weight` 5조건, `ema` 2조건, `color` 2조건, `allow_tie_save` 1조건 | 80 |
-| remaining-only resume | `gc025` 잔여 2 seeds, `gc05/gc15/gc50`, `warmup` 2조건 | 27 |
+| current rawbase queue | `stochastic_depth` 잔여 14 seeds, `focal_gamma` 3조건, `abnormal_weight` 5조건, `ema` 2조건, `color` 2조건, `allow_tie_save` 1조건 | 79 |
+| server needed-only resume | current rawbase 잔여 + `gc025` 잔여 2 seeds + `gc05/gc15/gc50`; `warmup` 후순위 제외 | 96 |
 | round2 | rawbase round1 완료 후 결과 기준으로 새 선정 | pending |
 
 ## 플롯 목록

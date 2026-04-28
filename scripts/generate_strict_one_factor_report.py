@@ -918,6 +918,16 @@ def write_markdown(
     lines.extend(best_known_method(records) or ["- No completed candidate set yet."])
     lines.extend([
         "",
+        "## 학습 이미지 예시",
+        "",
+        "학습 데이터는 `normal`과 불량 class별 이미지로 구성합니다. 모델 입력은 training image이고, display image는 같은 sample을 사람이 확인하기 쉽게 축/legend/색을 붙인 렌더링입니다.",
+        "",
+        "| training image | display image |",
+        "| --- | --- |",
+        "| ![training images by class](sample_overview_train.png) | ![display images by class](sample_overview_display.png) |",
+        "",
+        "불량 class는 `mean_shift`, `std_dev`, `spike`, `drift`, `context`처럼 class별로 나뉘며, 각 이미지는 해당 class label로 학습됩니다.",
+        "",
         "## Logical Member Attribution Example",
         "",
         "같은 context chart를 member별 class 판단 이미지로 확장합니다. 불량 member 이미지만 anomaly class이고, 양호 member 이미지는 normal class입니다.",

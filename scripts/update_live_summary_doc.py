@@ -354,29 +354,6 @@ def build_performance_summary(args: argparse.Namespace) -> list[str]:
     return lines
 
 
-def build_rawbase_progress(args: argparse.Namespace) -> list[str]:
-    rawbase = read_json(args.rawbase_summary)
-    by_candidate = rawbase.get("aggregates", {}).get("by_candidate", {})
-    lines = [
-        "",
-        "| candidate | seeds | F1 | FN | FP | status |",
-        "| --- | ---: | ---: | ---: | ---: | --- |",
-    ]
-    if isinstance(by_candidate, dict):
-        for name, row in sorted(by_candidate.items()):
-            complete = int(row.get("complete", 0) or 0)
-            status = "complete" if complete >= 5 else "partial"
-            lines.append(
-                f"| `{name}` | {complete}/5 | {fmt_num(row.get('f1_mean'))} | "
-                f"{fmt_num(row.get('fn_mean'), 3)} | {fmt_num(row.get('fp_mean'), 3)} | {status} |"
-            )
-    active = active_log(args.logs_dir)
-    if active:
-        lines.extend(["", f"- active run: `{active}`"])
-    lines.append("")
-    return lines
-
-
 def replace_section(text: str, heading: str, new_lines: list[str]) -> str:
     pattern = re.compile(rf"({re.escape(heading)}\n)(.*?)(\n## )", re.S)
     replacement = r"\1" + "\n".join(new_lines) + r"\3"
@@ -384,14 +361,6 @@ def replace_section(text: str, heading: str, new_lines: list[str]) -> str:
     if count != 1:
         raise SystemExit(f"heading section not found: {heading}")
     return text
-
-
-def insert_section_before(text: str, heading: str, section_heading: str, new_lines: list[str]) -> str:
-    idx = text.find(heading)
-    if idx < 0:
-        return text.rstrip() + "\n\n" + section_heading + "\n" + "\n".join(new_lines) + "\n"
-    section = section_heading + "\n" + "\n".join(new_lines)
-    return text[:idx].rstrip() + "\n\n" + section.rstrip() + "\n\n" + text[idx:].lstrip()
 
 
 def replace_tail(text: str, heading: str, new_lines: list[str]) -> str:
@@ -421,10 +390,6 @@ def main() -> int:
         text = replace_section(text, "## 성능 요약", build_performance_summary(args))
     elif "## 현재 진행 상태" in text:
         text = replace_section(text, "## 현재 진행 상태", build_status(args))
-    if "## Rawbase 진행" in text:
-        text = replace_section(text, "## Rawbase 진행", build_rawbase_progress(args))
-    elif "## Best Known Method" in text:
-        text = insert_section_before(text, "## Best Known Method", "## Rawbase 진행", build_rawbase_progress(args))
     if "## 요약" in text:
         text = replace_section(text, "## 요약", build_overview(args))
     if "## Rawbase Live Tables And Plots" in text:

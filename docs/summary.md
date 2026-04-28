@@ -1,6 +1,6 @@
 # 실험 요약
 
-_자동 갱신 시각: `2026-04-28T23:56:44+09:00`._
+_자동 갱신 시각: `2026-04-29T05:26:44+09:00`._
 
 ## 실험 방식
 
@@ -16,20 +16,8 @@ _자동 갱신 시각: `2026-04-28T23:56:44+09:00`._
 | `fresh0412_v11_refcheck_raw_n700` | raw server baseline | 5/5 | 0.9975 | 1.6 | 2.2 | 현재 서버 기준선 |
 | `fresh0412_v11_refcheck_gcsmooth_n700` | matched control | 5/5 | 0.9955 | 4.4 | 2.4 | 아래 기존 strict 표의 delta 기준 |
 | `fresh0412_v11_n700_existing` | historical selected ref | 5/5 | 0.9901 | 9.8 | 5.0 | 과거 reference 선택 기록 |
-| rawbase round1 live | rawbase history | 19 runs | 0.9982 | 0.526 | 2.158 | 중간 집계, 최종 claim 아님 |
+| rawbase round1 live | rawbase history | 37 runs | 0.9981 | 0.595 | 2.216 | 중간 집계, 최종 claim 아님 |
 | sample-skip pilot | separate 1-run | 1/1 | 0.9973 | 2 | 2 | main sweep과 분리 |
-
-## Rawbase 진행
-
-| candidate | seeds | F1 | FN | FP | status |
-| --- | ---: | ---: | ---: | ---: | --- |
-| `fresh0412_v11_rawbase_gc01_n700` | 5/5 | 0.9976 | 0.6 | 3 | complete |
-| `fresh0412_v11_rawbase_gc025_n700` | 3/5 | 0.9984 | 0.333 | 2 | partial |
-| `fresh0412_v11_rawbase_n3000` | 5/5 | 0.9985 | 0.4 | 1.8 | complete |
-| `fresh0412_v11_rawbase_n3150` | 5/5 | 0.9981 | 0.8 | 2 | complete |
-| `fresh0412_v11_rawbase_n3300` | 1/5 | 0.9993 | 0 | 1 | partial |
-
-- active run: `260428_235024_fresh0412_v11_rawbase_n3300_s1`
 
 ## Best Known Method
 

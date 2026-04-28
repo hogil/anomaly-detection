@@ -36,9 +36,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import queue
 import re
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -270,17 +273,81 @@ def build_command(run: dict[str, Any]) -> list[str]:
     return cmd
 
 
-def launch_run(run: dict[str, Any], dry_run: bool) -> int:
+def _stop_completed_process(proc: subprocess.Popen, tag: str) -> None:
+    print(f"[controller] completion marker seen; stopping lingering train.py for {tag}", flush=True)
+    proc.terminate()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        print(f"[controller] terminate timed out; killing train.py for {tag}", flush=True)
+        proc.kill()
+        proc.wait(timeout=10)
+
+
+def launch_run(run: dict[str, Any], dry_run: bool, completion_exit_grace: float) -> int:
     cmd = build_command(run)
     print(f"\n=== RUN {run['tag']} seed={run['seed']} ===", flush=True)
     print(" ".join(cmd), flush=True)
     if dry_run:
         return 0
     started = time.time()
-    result = subprocess.run(cmd, cwd=ROOT, check=False)
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    proc = subprocess.Popen(
+        cmd,
+        cwd=ROOT,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
+    output_queue: queue.Queue[str] = queue.Queue()
+
+    def read_output() -> None:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            output_queue.put(line)
+
+    reader = threading.Thread(target=read_output, daemon=True)
+    reader.start()
+    completion_seen_at: float | None = None
+    forced_after_completion = False
+    returncode: int | None = None
+    while True:
+        try:
+            line = output_queue.get(timeout=0.2)
+        except queue.Empty:
+            line = None
+        if line is not None:
+            print(line, end="", flush=True)
+            if "학습 완료" in line or "CM_NT" in line:
+                completion_seen_at = completion_seen_at or time.time()
+
+        returncode = proc.poll()
+        if returncode is not None:
+            break
+
+        if completion_seen_at is not None and completion_exit_grace >= 0:
+            if time.time() - completion_seen_at >= completion_exit_grace:
+                forced_after_completion = True
+                _stop_completed_process(proc, run["tag"])
+                returncode = 0
+                break
+
+    while True:
+        try:
+            line = output_queue.get_nowait()
+        except queue.Empty:
+            break
+        print(line, end="", flush=True)
     elapsed = round(time.time() - started, 1)
-    print(f"=== EXIT {result.returncode} elapsed={elapsed}s tag={run['tag']} ===", flush=True)
-    return int(result.returncode)
+    suffix = " forced_after_completion=1" if forced_after_completion else ""
+    print(f"=== EXIT {returncode} elapsed={elapsed}s tag={run['tag']}{suffix} ===", flush=True)
+    return int(returncode or 0)
 
 
 def target_seeds(summary: dict[str, Any]) -> set[int]:
@@ -450,6 +517,12 @@ def main() -> int:
         default=0,
         help="If >0, return after launching this many new train.py runs so a master loop can inspect results.",
     )
+    parser.add_argument(
+        "--completion-exit-grace",
+        type=float,
+        default=30.0,
+        help="Seconds to wait after train.py prints completion before terminating a lingering successful process. Negative disables.",
+    )
     args = parser.parse_args()
 
     runs = load_queue(args.queue)
@@ -498,7 +571,7 @@ def main() -> int:
         existing = None if args.force else find_completed_run_dir(run["tag"])
         launched_this_run = False
         if existing is None:
-            code = launch_run(run, args.dry_run)
+            code = launch_run(run, args.dry_run, args.completion_exit_grace)
             launched_this_run = not args.dry_run
             if launched_this_run:
                 launched += 1

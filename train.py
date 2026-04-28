@@ -848,6 +848,8 @@ def main():
                         help="save_strict_only 반대 플래그: tie (==) 에도 best 저장 허용. 연구용.")
     parser.add_argument("--avg_last_n", type=int, default=td("avg_last_n", 0),
                         help="[deprecated] post-hoc weight 평균 (0=비활성)")
+    parser.add_argument("--no_fast_exit", action="store_true", default=td("no_fast_exit", False),
+                        help="Disable hard success exit. Default uses os._exit(0) after all files/logs are flushed so queue controllers can start the next run immediately.")
     parser.add_argument("--smooth_window", type=int, default=td("smooth_window", 3),
                         help="best 기준 val_f1을 최근 N epoch 통계로 smooth (0=비활성)")
     parser.add_argument("--smooth_method", type=str, default=td("smooth_method", "median"),
@@ -1767,6 +1769,14 @@ def main():
     print(f"    예측: {predictions_dir}/ (TN/TP cap 100)")
     print(f"    CM:   {log_dir}/confusion_matrix.png")
     print(f"    CM_NT{args.normal_threshold:g}: {log_dir}/confusion_matrix_nt.png")
+
+    # Queue runs must release the controller immediately after successful saves.
+    # This bypasses slow Python/CUDA/worker finalizers that can keep the process
+    # alive after "학습 완료" has already been printed.
+    if not args.no_fast_exit:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
 
 
 if __name__ == "__main__":

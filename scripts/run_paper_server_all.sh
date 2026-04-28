@@ -233,6 +233,7 @@ run_controller() {
     --target-max 15
     --stop-mode never
     --candidate-min-runs-before-skip 0
+    --completion-exit-grace 15
   )
   if [[ "$FORCE" -eq 1 ]]; then
     args+=(--force)

@@ -1,11 +1,12 @@
 # 실험 요약
 
-_자동 갱신 시각: `2026-04-28T15:32:44+09:00`._
+_자동 갱신 시각: `2026-04-28T15:37:11+09:00`._
 
 ## 현재 진행 상태
 
 - Team agent 체제로 전환했습니다. Agent A는 완료 artifact와 `docs/summary.md` 반영 근거를 확인했고, Agent B는 raw baseline 기준 재개 명령과 다음 실험 순서를 점검했습니다.
-- 업데이트 시점에 raw server baseline refcheck가 실행 중입니다: `fresh0412_v11_refcheck_raw_n700_s42`, controller PID `8360`, train PID `30708`, live log `validations/paper_refcheck_raw_live.log`.
+- 업데이트 시점에 raw server baseline refcheck가 실행 중입니다: controller PID `8360`, watcher PID `668`, live log `validations/paper_refcheck_raw_live.log`.
+- 완료된 raw refcheck seed는 `1/5`입니다. `fresh0412_v11_refcheck_raw_n700_s42`는 `F1=0.9980`, `FN=0`, `FP=3`으로 완료됐고, 직후 `fresh0412_v11_refcheck_raw_n700_s1`가 train PID `12520`으로 시작됐습니다.
 - 재개된 queue는 `validations/paper_refcheck_raw_queue.json`이며 기준 설정은 `grad_clip=0.0`, `smooth_window=1`, `smooth_method=median`, `label_smoothing=0.0`입니다.
 - 학습 완료 후 다음 조건으로 즉시 넘어가는 handoff는 smoke run으로 검증했습니다. `max_samples_per_split=10`, `epochs=3`의 2-run queue가 `queue_exhausted`까지 완료됐고, 첫 run의 `=== EXIT 0 ... ===` 직후 두 번째 `=== RUN ... ===`가 시작됐습니다.
 - NT 평가는 selected threshold만 남겼습니다. 현재 reporting default는 `NT=0.9`이고, smoke run에서 `confusion_matrix_nt.png` 생성까지 확인했습니다.

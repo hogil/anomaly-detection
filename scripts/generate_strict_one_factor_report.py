@@ -922,9 +922,13 @@ def write_markdown(
         "",
         "학습 데이터는 `normal`과 불량 class별 이미지로 구성합니다. 모델 입력은 training image이고, display image는 같은 sample을 사람이 확인하기 쉽게 축/legend/색을 붙인 렌더링입니다.",
         "",
-        "| training image | display image |",
-        "| --- | --- |",
-        "| ![training images by class](sample_overview_train.png) | ![display images by class](sample_overview_display.png) |",
+        "### Training Image",
+        "",
+        "![training images by class](sample_overview_train.png)",
+        "",
+        "### Display Image",
+        "",
+        "![display images by class](sample_overview_display.png)",
         "",
         "불량 class는 `mean_shift`, `std_dev`, `spike`, `drift`, `context`처럼 class별로 나뉘며, 각 이미지는 해당 class label로 학습됩니다.",
         "",
@@ -1015,6 +1019,19 @@ def write_markdown(
                 lines.append(
                     f"| {display_label(row)} | {row.seeds_done}/{row.seeds_total} | {fmt_float(row.f1)} | {fmt_delta(row.f1, opt_base_f1)} | {fmt_compact(row.fn)} | {fmt_delta(row.fn, opt_base_fn, digits=3)} | {fmt_compact(row.fp)} | {fmt_delta(row.fp, opt_base_fp, digits=3)} | {status_label(row.status)} |"
                 )
+
+    lines.extend([
+        "",
+        "## 운영 스크립트",
+        "",
+        "| task | command | output |",
+        "| --- | --- | --- |",
+        "| 추론용 이미지 생성 | `python scripts/generate_inference_images.py --timeseries data/timeseries.csv --scenarios data/scenarios.csv --out-dir inference_inputs` | `model_inputs/`, `display/`, `manifest.csv` |",
+        "| best model 추론 | `python inference.py --model logs/<run>/best_model.pth` | prediction output |",
+        "| normal/abnormal 추가학습 | `python scripts/add_training_from_folders.py --model-run logs/<run> --image-root extra_images --epochs 3 --lr 1e-5 --scheduler cosine` | `logs/addtrain_*/best_model.pth`, `best_info.json`, `history.json`, `confusion_matrix.png` |",
+        "",
+        "추가학습은 기존 `best_model.pth` weight에서 시작하고, LR/scheduler는 추가학습 옵션으로 새로 지정합니다. 추가학습 입력은 모델 입력용 이미지이고, display 이미지는 확인용입니다.",
+    ])
 
     body = "\n".join(lines) + "\n"
     for out_path in out_paths:

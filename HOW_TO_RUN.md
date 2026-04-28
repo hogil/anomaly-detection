@@ -43,6 +43,26 @@ logs/<run>/
 
 ## 4. best_model 추론
 
+실전처럼 이미 만들어진 trend CSV에서 추론용 이미지만 먼저 만들려면:
+
+```bash
+python scripts/generate_inference_images.py \
+  --timeseries data/timeseries.csv \
+  --scenarios data/scenarios.csv \
+  --out-dir inference_inputs
+```
+
+출력:
+
+```text
+inference_inputs/
+  model_inputs/
+  display/
+  manifest.csv
+```
+
+이 스크립트에서 YAML은 렌더링 스타일만 읽습니다. 데이터 위치는 `--timeseries`, `--scenarios`, `--out-dir`로 직접 지정합니다.
+
 ```bash
 python inference.py \
   --model logs/<run>/best_model.pth
@@ -55,7 +75,28 @@ python scripts/server_batch_predict.py \
   --model-run logs/<run>
 ```
 
-## 6. logs에서 summary table/plot 생성
+## 6. normal/abnormal 폴더로 추가학습
+
+```text
+extra_images/
+  normal/
+  abnormal/
+```
+
+```bash
+python scripts/add_training_from_folders.py \
+  --model-run logs/<run> \
+  --image-root extra_images \
+  --epochs 3 \
+  --lr 1e-5 \
+  --scheduler cosine
+```
+
+`best_model.pth`에서는 weight만 불러옵니다. 추가학습용 optimizer LR과 scheduler는 위 옵션으로 새로 정합니다. 출력은 `logs/addtrain_*/best_model.pth`, `best_info.json`, `history.json`, `confusion_matrix.png`입니다.
+
+추가학습 폴더에는 display 이미지가 아니라 모델 입력용 이미지를 넣습니다. display 이미지는 사람이 확인하는 용도입니다.
+
+## 7. logs에서 summary table/plot 생성
 
 ```bash
 python scripts/generate_log_history_report.py \
@@ -79,7 +120,7 @@ validations/log_history_report_rawbase_grad_p99_curves.png
 
 성능 plot 이미지는 이 스크립트가 직접 생성합니다. `generate_images.py`는 학습/display 이미지 생성용입니다.
 
-## 7. 현재 서버 실험 재개
+## 8. 현재 서버 실험 재개
 
 ```bash
 bash scripts/sweeps_server/00_all.sh
@@ -108,7 +149,7 @@ python train.py \
   --log_dir ref_lrwarm3_probe
 ```
 
-## 8. FP/FN이 치우칠 때
+## 9. FP/FN이 치우칠 때
 
 FP가 너무 많으면 정상 이미지를 anomaly로 많이 잡는 상태입니다. 먼저 `normal_ratio`나 `max_per_class`를 올려 normal 쪽 근거를 늘리고, `abnormal_weight`를 낮추거나 `focal_gamma`를 낮춰 anomaly 쪽 압박을 줄입니다. `label_smoothing`이 크면 결정 경계가 흐려질 수 있으니 낮은 값도 같이 봅니다.
 

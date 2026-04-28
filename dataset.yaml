@@ -263,6 +263,6 @@ dataset:
   test_difficulty_scale: 0.8
   val_difficulty_scale: 0.8
 output:
-  data_dir: data_vd080
-  image_dir: images_vd080
-  display_dir: display_vd080
+  data_dir: data
+  image_dir: images
+  display_dir: display

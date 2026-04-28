@@ -23,8 +23,10 @@ Outputs markdown, CSV tables, and PNG plots from `logs/*/history.json` and `best
 
 ## Inference
 
+- `generate_inference_images.py`: render flat inference images from existing `timeseries.csv` and `scenarios.csv`
 - `server_batch_predict.py`: batch inference using a saved `best_model.pth`
 - `run_server_batch_predict.sh`: shell wrapper
+- `add_training_from_folders.py`: load a saved best model and fine-tune from `normal/` and `abnormal/` image folders
 
 ## Dataset / Validation
 

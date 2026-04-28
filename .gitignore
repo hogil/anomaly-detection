@@ -21,6 +21,7 @@ weights/
 
 # Inference outputs
 inference_output/
+inference_inputs/
 inference_demo/
 test_render/
 server_inference/

@@ -15,6 +15,7 @@ Usage:
 """
 
 import argparse
+import gc
 import json
 import os
 import time
@@ -452,6 +453,29 @@ def _rename_to_best_metrics(log_dir, base_prefix: str, test_f1: float, test_reca
     except OSError as e:
         print(f"  ! rename failed ({e}); keeping {log_dir.name}")
         return log_dir, log_dir / "predictions"
+
+
+def _shutdown_dataloader_workers(*loaders) -> int:
+    """Stop persistent DataLoader workers before printing final completion."""
+    stopped = 0
+    for loader in loaders:
+        iterator = getattr(loader, "_iterator", None)
+        if iterator is None:
+            continue
+        shutdown = getattr(iterator, "_shutdown_workers", None)
+        if shutdown is None:
+            continue
+        try:
+            shutdown()
+            stopped += 1
+        except Exception as exc:
+            print(f"  [warn] DataLoader worker shutdown failed: {exc}")
+        finally:
+            try:
+                loader._iterator = None
+            except Exception:
+                pass
+    return stopped
 
 
 @torch.no_grad()
@@ -1717,6 +1741,19 @@ def main():
         )
         info_path = log_dir / "best_info.json"
 
+    # 전체 히스토리 저장
+    with open(log_dir / "history.json", "w", encoding="utf-8") as f:
+        json.dump(history, f, indent=2)
+
+    # `학습 완료` 출력 뒤 controller가 바로 다음 run으로 넘어가도록 worker cleanup을 먼저 끝낸다.
+    cleanup_start = time.time()
+    stopped_loaders = _shutdown_dataloader_workers(train_loader, val_loader, test_loader)
+    del train_loader, val_loader, test_loader
+    gc.collect()
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+    cleanup_elapsed = time.time() - cleanup_start
+
     # 최종 요약
     print(f"\n{'='*60}")
     print(f"  학습 완료")
@@ -1727,6 +1764,7 @@ def main():
         print(f"  Test: recall={best_test_recall:.4f}  f1={best_test_f1:.4f}")
         print_class_table(best_test_metrics, title="Final Test Performance (Best Model)")
     print(f"  Time: total={total_train_time/60:.1f}min, avg_epoch={avg_epoch_time:.1f}s")
+    print(f"  Cleanup: dataloaders={stopped_loaders}, elapsed={cleanup_elapsed:.1f}s")
     print(f"  Params: {params_M:.2f}M")
     print(f"\n  저장:")
     print(f"    모델: {log_dir}/best_model.pth")
@@ -1734,10 +1772,6 @@ def main():
     print(f"    곡선: {log_dir}/training_curves.png")
     print(f"    예측: {predictions_dir}/ (TN/TP cap 100)")
     print(f"    CM:   {log_dir}/confusion_matrix.png")
-
-    # 전체 히스토리 저장
-    with open(log_dir / "history.json", "w", encoding="utf-8") as f:
-        json.dump(history, f, indent=2)
 
 
 if __name__ == "__main__":

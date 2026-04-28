@@ -264,7 +264,7 @@ def flatten_train_args(run: dict[str, Any]) -> list[str]:
 
 
 def build_command(run: dict[str, Any]) -> list[str]:
-    cmd = [sys.executable, "train.py"]
+    cmd = [sys.executable, "-u", "train.py"]
     cmd.extend(flatten_train_args(run))
     cmd.extend(["--seed", str(run["seed"]), "--log_dir", str(run["tag"])])
     return cmd
@@ -272,14 +272,14 @@ def build_command(run: dict[str, Any]) -> list[str]:
 
 def launch_run(run: dict[str, Any], dry_run: bool) -> int:
     cmd = build_command(run)
-    print(f"\n=== RUN {run['tag']} seed={run['seed']} ===")
-    print(" ".join(cmd))
+    print(f"\n=== RUN {run['tag']} seed={run['seed']} ===", flush=True)
+    print(" ".join(cmd), flush=True)
     if dry_run:
         return 0
     started = time.time()
     result = subprocess.run(cmd, cwd=ROOT, check=False)
     elapsed = round(time.time() - started, 1)
-    print(f"=== EXIT {result.returncode} elapsed={elapsed}s tag={run['tag']} ===")
+    print(f"=== EXIT {result.returncode} elapsed={elapsed}s tag={run['tag']} ===", flush=True)
     return int(result.returncode)
 
 

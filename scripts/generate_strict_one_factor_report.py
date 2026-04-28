@@ -939,6 +939,8 @@ def write_markdown(
         "",
         "같은 context chart를 member별 target 이미지로 확장합니다. 불량 member를 target으로 만든 이미지만 anomaly class이고, 양호 member를 target으로 만든 이미지는 normal class입니다.",
         "",
+        "아래 예시는 같은 chart `ch_09100`을 `EQP A`, `EQP B`, `EQP C`, `EQP D`, `EQP E` target 이미지로 펼친 것입니다. 각 EQP target은 서로 다른 색으로 표시하고, 회색 점들은 같은 context 안의 비교 fleet입니다. 이 예시에서는 `EQP E`만 anomaly target이고 `EQP A-D`는 normal target입니다.",
+        "",
         "![logical member target examples](logical_member_targets_ch09100.png)",
         "",
         "즉 family 전체 이상 감지가 아니라, highlight 된 member 단위로 label을 부여하는 학습 예시입니다.",

@@ -219,7 +219,7 @@ def build_status(args: argparse.Namespace) -> list[str]:
     lines = [
         "",
         "- 이 블록은 `scripts/update_live_summary_doc.py`가 controller artifact에서 갱신합니다.",
-        "- 서버 rawbase queue 정책: summary 축 기준으로 `normal_ratio`, `per_class`, `lr`, `warmup`, `gc`, `label_smoothing`, `stochastic_depth`, `focal_gamma`, `abnormal_weight`, `ema`, `color`, `allow_tie_save`를 실행합니다. GC는 5조건만 유지하고 sample-skip은 main sweep과 분리합니다.",
+        "- 서버 rawbase queue 정책: summary 축 기준으로 `lr`, `warmup`을 먼저 실행한 뒤 `normal_ratio`, `per_class`, `gc`, `label_smoothing`, `stochastic_depth`, `focal_gamma`, `abnormal_weight`, `ema`, `color`, `allow_tie_save`를 실행합니다. GC는 5조건만 유지하고 sample-skip은 main sweep과 분리합니다.",
     ]
     if raw_agg:
         lines.append(

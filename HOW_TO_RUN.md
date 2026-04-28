@@ -85,6 +85,29 @@ validations/log_history_report_rawbase_grad_p99_curves.png
 bash scripts/sweeps_server/00_all.sh
 ```
 
+현재 서버 queue는 `lr`와 `warmup`을 먼저 실행합니다. ref 자체의 LR/warmup을 바꾸려면 `validations/paper_refcheck_raw_queue.json`에서 각 seed의 아래 값을 바꿉니다.
+
+```json
+"--lr_backbone": "3e-5",
+"--lr_head": "3e-4",
+"--warmup_epochs": 3
+```
+
+단일 run으로 먼저 확인하려면:
+
+```bash
+python train.py \
+  --config dataset.yaml \
+  --mode binary \
+  --lr_backbone 3e-5 \
+  --lr_head 3e-4 \
+  --warmup_epochs 3 \
+  --grad_clip 0.0 \
+  --smooth_window 1 \
+  --normal_ratio 700 \
+  --log_dir ref_lrwarm3_probe
+```
+
 ## 8. FP/FN이 치우칠 때
 
 FP가 너무 많으면 정상 이미지를 anomaly로 많이 잡는 상태입니다. 먼저 `normal_ratio`나 `max_per_class`를 올려 normal 쪽 근거를 늘리고, `abnormal_weight`를 낮추거나 `focal_gamma`를 낮춰 anomaly 쪽 압박을 줄입니다. `label_smoothing`이 크면 결정 경계가 흐려질 수 있으니 낮은 값도 같이 봅니다.

@@ -100,8 +100,15 @@ def parse_gc_candidates(raw: str) -> set[str]:
     return out
 
 
-def parse_axis_filter(raw: str) -> set[str]:
-    return {item.strip() for item in raw.split(",") if item.strip()}
+def parse_axis_filter(raw: str) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw.split(","):
+        item = item.strip()
+        if item and item not in seen:
+            out.append(item)
+            seen.add(item)
+    return out
 
 
 def load_finished_tags(path: Path | None) -> set[str]:
@@ -169,8 +176,10 @@ def prepare_queue(args: argparse.Namespace) -> dict[str, Any]:
     allowed_gc_candidates = parse_gc_candidates(args.gc_candidates)
     payload["server_gc_candidates"] = sorted(allowed_gc_candidates)
     include_axes = parse_axis_filter(args.include_axes)
+    include_axis_set = set(include_axes)
+    axis_order = {axis: idx for idx, axis in enumerate(include_axes)}
     if include_axes:
-        payload["server_include_axes"] = sorted(include_axes)
+        payload["server_include_axes"] = include_axes
     finished_tags = load_finished_tags(args.skip_completed_summary)
     if args.skip_completed_summary is not None:
         payload["server_skip_completed_summary"] = str(args.skip_completed_summary)
@@ -192,13 +201,13 @@ def prepare_queue(args: argparse.Namespace) -> dict[str, Any]:
     skipped_duplicate_controls: list[str] = []
     skipped_gc_candidates: list[str] = []
     skipped_axes: list[str] = []
-    for run in payload.get("runs", []):
+    for original_index, run in enumerate(payload.get("runs", [])):
         candidate = rewrite_for_raw_server_baseline(run)
         if is_duplicate_raw_gc00(candidate):
             skipped_duplicate_controls.append(candidate)
             continue
         axis = infer_axis(candidate)
-        if include_axes and axis not in include_axes:
+        if include_axes and axis not in include_axis_set:
             skipped_axes.append(f"{axis}:{candidate}")
             continue
         if axis == "gc" and normalize_candidate(candidate) not in allowed_gc_candidates:
@@ -215,7 +224,20 @@ def prepare_queue(args: argparse.Namespace) -> dict[str, Any]:
         run_args["--config"] = args.config
         run_args["--num_workers"] = args.num_workers
         run_args["--prefetch_factor"] = args.prefetch_factor
+        run["_server_axis"] = axis
+        run["_server_source_index"] = original_index
         prepared_runs.append(run)
+
+    if axis_order:
+        prepared_runs.sort(
+            key=lambda run: (
+                axis_order.get(str(run.get("_server_axis", "")), len(axis_order)),
+                int(run.get("_server_source_index", 0)),
+            )
+        )
+    for run in prepared_runs:
+        run.pop("_server_axis", None)
+        run.pop("_server_source_index", None)
 
     if finished_tags:
         before = len(prepared_runs)

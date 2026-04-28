@@ -56,7 +56,7 @@ _자동 갱신 시각: `2026-04-29T06:03:42+09:00`._
 
 | scope | 남은 내용 | runs |
 | --- | --- | ---: |
-| current rawbase queue | `normal_ratio`, `per_class`, `LR`, `warmup`, `GC 5조건`, `label_smoothing 5조건`, `stochastic_depth 5조건`, `focal_gamma 5조건`, `abnormal_weight 5조건`, `ema 5조건`, `color`, `allow_tie_save` | pending |
+| current rawbase queue | `LR`, `warmup` 먼저 실행 후 `normal_ratio`, `per_class`, `GC 5조건`, `label_smoothing 5조건`, `stochastic_depth 5조건`, `focal_gamma 5조건`, `abnormal_weight 5조건`, `ema 5조건`, `color`, `allow_tie_save` | pending |
 | server needed-only resume | 완료/스킵된 tag는 자동 제외하고 summary 축 잔여만 실행 | pending |
 | round2 | rawbase round1 완료 후 결과 기준으로 새 선정 | pending |
 

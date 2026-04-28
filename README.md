@@ -16,7 +16,6 @@
 ## Main Files
 
 - `dataset.yaml`: active dataset/rendering config
-- `config.yaml`: default training config
 - `generate_data.py`: tabular data generator
 - `generate_images.py`: training/display image renderer
 - `train.py`: training entrypoint

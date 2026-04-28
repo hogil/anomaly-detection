@@ -523,7 +523,15 @@ def evaluate(model, loader, criterion, device, classes, desc="Eval",
         prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
         rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
         f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
-        class_metrics[cls] = {"recall": rec, "precision": prec, "f1": f1, "count": cnt}
+        class_metrics[cls] = {
+            "recall": rec,
+            "precision": prec,
+            "f1": f1,
+            "count": cnt,
+            "tp": tp,
+            "fp": fp,
+            "fn": fn,
+        }
 
     avg_loss = total_loss / total
     accuracy = float((all_preds == all_labels).mean())
@@ -536,14 +544,22 @@ def evaluate(model, loader, criterion, device, classes, desc="Eval",
 def print_class_table(metrics, title=""):
     """클래스별 성능 테이블 출력"""
     print(f"\n  {title}")
-    print(f"  {'Class':>20s} | {'Recall':>7s} | {'Prec':>7s} | {'F1':>7s} | {'N':>4s}")
-    print(f"  {'-'*20}-+-{'-'*7}-+-{'-'*7}-+-{'-'*7}-+-{'-'*4}")
+    print(f"  {'Class':>20s} | {'Recall':>7s} | {'Prec':>7s} | {'F1':>7s} | {'N':>4s} | {'FN':>4s} | {'FP':>4s}")
+    print(f"  {'-'*20}-+-{'-'*7}-+-{'-'*7}-+-{'-'*7}-+-{'-'*4}-+-{'-'*4}-+-{'-'*4}")
     for cls, m in metrics.items():
-        print(f"  {cls:>20s} | {m['recall']:7.3f} | {m['precision']:7.3f} | {m['f1']:7.3f} | {m['count']:4d}")
+        fn = int(m.get("fn", 0))
+        fp = int(m.get("fp", 0))
+        print(
+            f"  {cls:>20s} | {m['recall']:7.3f} | {m['precision']:7.3f} | "
+            f"{m['f1']:7.3f} | {m['count']:4d} | {fn:4d} | {fp:4d}"
+        )
     avg_r = np.mean([m["recall"] for m in metrics.values()])
     avg_f = np.mean([m["f1"] for m in metrics.values()])
-    print(f"  {'-'*20}-+-{'-'*7}-+-{'-'*7}-+-{'-'*7}-+-{'-'*4}")
-    print(f"  {'AVERAGE':>20s} | {avg_r:7.3f} |         | {avg_f:7.3f} |")
+    total_n = sum(int(m.get("count", 0)) for m in metrics.values())
+    total_fn = sum(int(m.get("fn", 0)) for m in metrics.values())
+    total_fp = sum(int(m.get("fp", 0)) for m in metrics.values())
+    print(f"  {'-'*20}-+-{'-'*7}-+-{'-'*7}-+-{'-'*7}-+-{'-'*4}-+-{'-'*4}-+-{'-'*4}")
+    print(f"  {'AVERAGE':>20s} | {avg_r:7.3f} |         | {avg_f:7.3f} | {total_n:4d} | {total_fn:4d} | {total_fp:4d}")
 
 
 def _confusion_matrix_np(y_true, y_pred, n_classes):

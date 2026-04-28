@@ -6,8 +6,8 @@ cd "$ROOT_DIR"
 
 PYTHON="${PYTHON:-python}"
 CONFIG="dataset.yaml"
-WORKERS=16
-NUM_WORKERS=8
+WORKERS=24
+NUM_WORKERS=24
 PREFETCH_FACTOR=4
 CANDIDATE_PREFIX="fresh0412_v11"
 MIN_F1="0.99"
@@ -19,6 +19,8 @@ SKIP_ROUND2=0
 SKIP_POST=0
 FORCE=0
 MAX_LAUNCHED=0
+ROUND1_START_AFTER_AXIS=""
+ROUND1_START_AFTER_CANDIDATE=""
 
 usage() {
   cat <<'EOF'
@@ -32,13 +34,16 @@ Runs the paper experiment pipeline in one command:
 Options:
   --python PATH           Python executable (default: python or $PYTHON)
   --config PATH           Dataset config used on this server (default: dataset.yaml)
-  --workers N             Data/image generation workers (default: 16)
-  --num-workers N         train.py DataLoader workers in all queues (default: 8)
+  --workers N             Data/image generation workers (default: 24)
+  --num-workers N         train.py DataLoader workers in all queues (default: 24)
   --prefetch-factor N     train.py prefetch factor in all queues (default: 4)
   --candidate-prefix STR  Prefix for prediction trend analysis (default: fresh0412_v11)
   --min-f1 FLOAT          Minimum F1 for strong-run trend analysis (default: 0.99)
   --force                 Re-run completed tags
   --max-launched N        Stop controller after launching N new runs (debug/resume)
+  --round1-after-gc       Start strict round1 after the GC block
+  --round1-start-after-candidate STR
+                          Start strict round1 after this candidate's last queued seed
   --skip-weights          Do not run download.py when weights are missing
   --skip-dataset          Do not auto-generate data/images
   --skip-refcheck         Skip previous-state reference rerun
@@ -60,6 +65,8 @@ while [[ $# -gt 0 ]]; do
     --min-f1) MIN_F1="$2"; shift 2 ;;
     --force) FORCE=1; shift ;;
     --max-launched) MAX_LAUNCHED="$2"; shift 2 ;;
+    --round1-after-gc) ROUND1_START_AFTER_AXIS="gc"; shift ;;
+    --round1-start-after-candidate) ROUND1_START_AFTER_CANDIDATE="$2"; shift 2 ;;
     --skip-weights) SKIP_WEIGHTS=1; shift ;;
     --skip-dataset) SKIP_DATASET=1; shift ;;
     --skip-refcheck) SKIP_REFCHECK=1; shift ;;
@@ -108,16 +115,80 @@ PY
 prepare_queue() {
   local src="$1"
   local dst="$2"
-  "$PYTHON" - "$src" "$dst" "$CONFIG" "$NUM_WORKERS" "$PREFETCH_FACTOR" <<'PY'
+  local start_after_axis="${3:-}"
+  local start_after_candidate="${4:-}"
+  "$PYTHON" - "$src" "$dst" "$CONFIG" "$NUM_WORKERS" "$PREFETCH_FACTOR" "$start_after_axis" "$start_after_candidate" <<'PY'
 import json
+import re
 import sys
 from pathlib import Path
 
-src, dst, config, num_workers, prefetch_factor = sys.argv[1:]
+src, dst, config, num_workers, prefetch_factor, start_after_axis, start_after_candidate = sys.argv[1:]
 payload = json.loads(Path(src).read_text(encoding="utf-8"))
 payload["server_rewritten_from"] = src
 payload["server_config"] = config
 payload["server_num_workers"] = int(num_workers)
+if start_after_axis:
+    payload["server_start_after_axis"] = start_after_axis
+if start_after_candidate:
+    payload["server_start_after_candidate"] = start_after_candidate
+
+
+def candidate_name(run):
+    candidate = run.get("candidate")
+    if candidate:
+        return str(candidate)
+    return re.sub(r"_s\d+$", "", str(run.get("tag", "")))
+
+
+def infer_axis(candidate):
+    if re.search(r"_gc(?:\d|$)", candidate):
+        return "gc"
+    if re.search(r"_n\d+$", candidate):
+        return "normal_ratio"
+    if "_regls" in candidate:
+        return "label_smoothing"
+    if "_regdp" in candidate:
+        return "stochastic_depth"
+    if "_fg" in candidate:
+        return "focal_gamma"
+    if "_aw" in candidate:
+        return "abnormal_weight"
+    if "_ema" in candidate:
+        return "ema"
+    if "_color_" in candidate:
+        return "color"
+    if "_tie_" in candidate:
+        return "allow_tie_save"
+    return "other"
+
+
+def trim_runs(runs):
+    if not start_after_axis and not start_after_candidate:
+        return runs
+    last_idx = -1
+    for idx, run in enumerate(runs):
+        candidate = candidate_name(run)
+        if start_after_candidate and candidate == start_after_candidate:
+            last_idx = idx
+        if start_after_axis and infer_axis(candidate) == start_after_axis:
+            last_idx = idx
+    if last_idx < 0:
+        target = start_after_candidate or f"axis:{start_after_axis}"
+        raise SystemExit(f"start-after target not found in queue {src}: {target}")
+    kept = runs[last_idx + 1:]
+    if not kept:
+        target = start_after_candidate or f"axis:{start_after_axis}"
+        raise SystemExit(f"queue has no runs after start-after target: {target}")
+    print(f"[queue] trimmed {len(runs) - len(kept)} runs before start-after target; kept {len(kept)}")
+    return kept
+
+
+if isinstance(payload.get("runs"), list):
+    if start_after_axis or start_after_candidate:
+        payload["runs"] = trim_runs(payload["runs"])
+elif start_after_axis or start_after_candidate:
+    raise SystemExit(f"queue has no explicit runs list to trim: {src}")
 
 for run in payload.get("runs", []):
     args = run.setdefault("args", {})
@@ -193,7 +264,9 @@ main() {
   if [[ "$SKIP_ROUND1" -eq 0 ]]; then
     prepare_queue \
       validations/paper_strict_single_factor_queue.json \
-      validations/server_paper_strict_single_factor_queue.json
+      validations/server_paper_strict_single_factor_queue.json \
+      "$ROUND1_START_AFTER_AXIS" \
+      "$ROUND1_START_AFTER_CANDIDATE"
     run_controller \
       validations/server_paper_strict_single_factor_queue.json \
       validations/server_paper_strict_single_factor_summary.json \

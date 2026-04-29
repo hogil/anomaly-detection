@@ -57,12 +57,14 @@ bash scripts/sweeps_server/00_all.sh
 
 ## logs/ 그룹화
 
-batch 실행은 자동으로 `--log-dir-group run_<YYYYMMDD_HHMMSS>`을 붙여서 모든 train.py 출력을 `logs/run_<YYYYMMDD_HHMMSS>/<YYMMDD_HHMMSS>_<topic>_F<f1>_R<recall>/` 형태로 모읍니다.
+batch 실행은 자동으로 `--log-dir-group <YYYYMMDD_HHMMSS>_run_paper`을 붙여서 모든 train.py 출력을 `logs/<YYYYMMDD_HHMMSS>_run_paper/<YYMMDD_HHMMSS>_<topic>_F<f1>_R<recall>/` 형태로 모읍니다 (시각 prefix가 앞에 와서 시간순 sort).
+
+단독 stage 실행은 stage 이름을 group 명에 씁니다: `<timestamp>_backbone`, `<timestamp>_sample_skip`, `<timestamp>_bkm_combined`, `<timestamp>_logical_train`.
 
 `--log_dir`로 받는 값은 `topic`(조건명)이고, 실제 폴더명에는 `train.py`가 자동으로 시작 시각과 best F1/Recall을 붙입니다.
 
 ```bash
-python scripts/generate_group_report.py --group-dir logs/run_20260430_120000
+python scripts/generate_group_report.py --group-dir logs/20260430_120000_run_paper
 ```
 
 ## 참고

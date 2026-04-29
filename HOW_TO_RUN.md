@@ -81,7 +81,7 @@ python train.py \
 | `--ema_decay` | EMA. `0` 이면 끔 | `--ema_decay 0.95` |
 | `--allow_tie_save` | val_f1 tie 시도 저장 허용 | `--allow_tie_save` |
 | `--filter_nonfinite_loss` | NaN/Inf loss 샘플 step skip | `--filter_nonfinite_loss` |
-| `--log_dir_group` | `logs/<group>/<run>/` 형식으로 묶음 | `--log_dir_group run_20260430_120000` |
+| `--log_dir_group` | `logs/<group>/<run>/` 형식으로 묶음 (group 명에 시각이 앞에 와야 sort가 깨지지 않음) | `--log_dir_group 20260430_120000_run_paper` |
 
 출력 폴더 (자동으로 시작 시각과 best F1/Recall이 붙음):
 
@@ -95,7 +95,7 @@ logs/                                                       # 단일 학습 (그
        predictions/
 
 logs/                                                       # 00_all.sh / batch 실행
-└── run_<YYYYMMDD_HHMMSS>/                                  #   group 폴더
+└── <YYYYMMDD_HHMMSS>_run_paper/                            #   group 폴더 (시각 prefix가 먼저)
         ├── <YYMMDD_HHMMSS>_<topic>_F<f1>_R<recall>/
         ├── <YYMMDD_HHMMSS>_<topic>_F<f1>_R<recall>/
         └── ...
@@ -152,7 +152,7 @@ GPU 메모리·CPU 수로 자동 프로필 결정:
 
 `--num-workers`, `--prefetch-factor`, `--max-launched`, `--log-dir-group` 직접 지정하면 위 자동값 덮어씀.
 
-`00_all.sh` 시작할 때 `LOG_DIR_GROUP=run_<YYYYMMDD_HHMMSS>` 한 번 만들어서 모든 stage가 `logs/run_<YYYYMMDD_HHMMSS>/<YYMMDD_HHMMSS>_<topic>_F<f1>_R<recall>/` 아래로 모입니다.
+`00_all.sh` 시작할 때 `LOG_DIR_GROUP=<YYYYMMDD_HHMMSS>_run_paper` 한 번 만들어서 모든 stage가 `logs/<YYYYMMDD_HHMMSS>_run_paper/<YYMMDD_HHMMSS>_<topic>_F<f1>_R<recall>/` 아래로 모입니다 (시각이 앞에 와야 `ls logs/` 시간순 정렬). 단독 stage 실행도 같은 패턴: `13_sample_skip.sh` → `<timestamp>_sample_skip`, `14_backbone.sh` → `<timestamp>_backbone`, `15_logical_train.sh` → `<timestamp>_logical_train`, `17_bkm_combined.sh` → `<timestamp>_bkm_combined`.
 
 ---
 
@@ -333,7 +333,7 @@ python scripts/generate_log_history_report.py \
   --top-k 30
 ```
 
-`logs/<group>/<run>/history.json` 까지 자동으로 추적합니다. 특정 group만 보고 싶으면 `--contains run_20260430` 처럼 지정.
+`logs/<group>/<run>/history.json` 까지 자동으로 추적합니다. 특정 group만 보고 싶으면 `--contains 20260430_120000_run_paper` 처럼 지정.
 
 출력: markdown / CSV / PNG (candidate F1 막대, val_f1 곡선, grad p99 곡선, FN/FP 산점).
 

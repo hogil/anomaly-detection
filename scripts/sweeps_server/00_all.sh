@@ -44,7 +44,7 @@ for raw_arg in "$@"; do
   fi
 done
 if [[ "$HAS_LOG_DIR_GROUP" -eq 0 ]]; then
-  SHARED_LOG_DIR_GROUP="${LOG_DIR_GROUP:-run_$(date +%Y%m%d_%H%M%S)}"
+  SHARED_LOG_DIR_GROUP="${LOG_DIR_GROUP:-$(date +%Y%m%d_%H%M%S)_run_paper}"
   ALL_ARGS=("$@" "--log-dir-group" "$SHARED_LOG_DIR_GROUP")
   echo "[00_all] log_dir_group=$SHARED_LOG_DIR_GROUP"
 else

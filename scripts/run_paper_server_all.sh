@@ -38,7 +38,7 @@ ROUND1_START_AFTER_CANDIDATE=""
 ROUND1_SKIP_COMPLETED=1
 DEFAULT_ROUND1_AXES="normal_ratio,per_class,lr,warmup,label_smoothing,stochastic_depth,focal_gamma,abnormal_weight,ema,allow_tie_save,color,gc"
 ROUND1_INCLUDE_AXES="$DEFAULT_ROUND1_AXES"
-LOG_DIR_GROUP="${LOG_DIR_GROUP:-run_$(date +%Y%m%d_%H%M%S)}"
+LOG_DIR_GROUP="${LOG_DIR_GROUP:-$(date +%Y%m%d_%H%M%S)_run_paper}"
 
 usage() {
   cat <<'EOF'

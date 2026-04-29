@@ -123,6 +123,9 @@ def run_inference(
     limit: int = None,
     split_filter: str = None,
     scenarios_file: str = None,
+    image_dir_name: str = "model_inputs",
+    display_dir_name: str = "display",
+    save_model_inputs: bool = False,
 ):
     # config
     with open("dataset.yaml", encoding="utf-8") as f:
@@ -166,8 +169,15 @@ def run_inference(
         out_path = raw_out.parent / f"{stamp}_{raw_out.name}"
     out_path.mkdir(parents=True, exist_ok=False)
     print(f"Output: {out_path}")
-    (out_path / "normal").mkdir()
-    (out_path / "abnormal").mkdir()
+    display_root = out_path / display_dir_name
+    (display_root / "normal").mkdir(parents=True)
+    (display_root / "abnormal").mkdir()
+    if save_model_inputs:
+        inputs_root = out_path / image_dir_name
+        (inputs_root / "normal").mkdir(parents=True)
+        (inputs_root / "abnormal").mkdir()
+    else:
+        inputs_root = None
     temp_dir = Path(tempfile.mkdtemp(prefix="infer_"))
 
     renderer = ImageRenderer(cfg)
@@ -233,7 +243,7 @@ def run_inference(
         else:
             tgt_str = "tna"
         base_fname = f"{p_pct}_{'_'.join(name_parts)}_{tgt_str}.png"
-        dest_dir = out_path / pred_class
+        dest_dir = display_root / pred_class
         disp_path = dest_dir / base_fname
         # 충돌 시 suffix
         suffix = 1
@@ -253,6 +263,9 @@ def run_inference(
             x_label=x_col,
             target=target,
         )
+        # 5-b. 모델 input 이미지 (224x224) 도 보고 싶으면 같이 저장
+        if inputs_root is not None:
+            shutil.copyfile(str(train_img_path), str(inputs_root / pred_class / base_fname))
 
         # 6. results
         result_row = {
@@ -262,6 +275,10 @@ def run_inference(
             "p_abnormal": round(p_abnormal, 4),
             "target": target if isinstance(target, (int, float)) else "",
             "image_file": str(disp_path.relative_to(out_path)).replace("\\", "/"),
+            "model_input_file": (
+                str((inputs_root / pred_class / base_fname).relative_to(out_path)).replace("\\", "/")
+                if inputs_root is not None else ""
+            ),
         }
         for c in title_columns:
             result_row[c] = row.get(c, "")
@@ -336,15 +353,23 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True,
                         help="학습 log 디렉토리 (e.g., logs/v8seed_n2800_s42)")
-    parser.add_argument("--data_dir", default="data")
-    parser.add_argument("--output_dir", default="inference_output")
+    parser.add_argument("--data_dir", default="data",
+                        help="timeseries.csv + scenarios.csv 가 있는 폴더")
+    parser.add_argument("--output_dir", default="inference_output",
+                        help="결과 저장 위치. 시각 prefix 자동 부여")
     parser.add_argument("--limit", type=int, default=None,
                         help="처리할 chart 수 제한 (prototype)")
     parser.add_argument("--split", type=str, default=None,
                         choices=[None, "train", "val", "test"],
-                        help="특정 split만 처리")
+                        help="scenarios.csv 의 split 컬럼으로 train/val/test 중 하나만 추론")
     parser.add_argument("--scenarios", type=str, default=None,
                         help="scenarios CSV 파일 (default: {data_dir}/scenarios.csv)")
+    parser.add_argument("--display-dir", dest="display_dir", default="display",
+                        help="display 이미지 sub-folder 이름 (default: display). 결과 폴더 안에서 <name>/{normal,abnormal}/ 로 저장")
+    parser.add_argument("--image-dir", dest="image_dir", default="model_inputs",
+                        help="모델 input(224x224) 이미지 sub-folder 이름. --save-model-inputs 와 같이 써야 저장됨")
+    parser.add_argument("--save-model-inputs", action="store_true",
+                        help="display 외에 모델이 본 224x224 input 이미지도 같이 저장")
     args = parser.parse_args()
 
     run_inference(
@@ -354,6 +379,9 @@ def main():
         limit=args.limit,
         split_filter=args.split,
         scenarios_file=args.scenarios,
+        image_dir_name=args.image_dir,
+        display_dir_name=args.display_dir,
+        save_model_inputs=args.save_model_inputs,
     )
 
 

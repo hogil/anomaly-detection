@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Stage 07: stochastic_depth axis sweep.
+set -euo pipefail
+D="$(cd "$(dirname "$0")" && pwd)"
+source "$D/_common.sh"
+run_round1_axes "axis_stochastic_depth" "stochastic_depth" "$@"

@@ -16,12 +16,13 @@ Stages, in order:
   logical_train -> gc -> bkm_combined -> postprocess
 
 Individual stages (run alone):
-  bash scripts/sweeps_server/axis.sh <axis>     # one axis (lr, gc, color, ...)
-  bash scripts/sweeps_server/axis.sh baseline   # baseline 5-seed recheck only
-  bash scripts/sweeps_server/sample_skip.sh     # nonfinite-loss sample-skip probe
-  bash scripts/sweeps_server/backbone.sh        # rotate through weights/*.pth
-  bash scripts/sweeps_server/logical_train.sh   # per-member logical dataset train
-  bash scripts/sweeps_server/bkm_combined.sh    # apply every BKM value at once
+  bash scripts/sweeps_server/01_baseline.sh
+  bash scripts/sweeps_server/02_lr.sh ... 12_color.sh         # one axis each
+  bash scripts/sweeps_server/13_sample_skip.sh                # nonfinite-loss probe
+  bash scripts/sweeps_server/14_backbone.sh                   # rotate weights/*.pth
+  bash scripts/sweeps_server/15_logical_train.sh              # per-member logical
+  bash scripts/sweeps_server/16_gc.sh                         # grad_clip last
+  bash scripts/sweeps_server/17_bkm_combined.sh               # apply all BKMs
 EOF
 }
 
@@ -90,13 +91,13 @@ PRE_COLOR_AXES="lr,warmup,normal_ratio,per_class,label_smoothing,stochastic_dept
 run_round1_axes "needed_pre_color" "$PRE_COLOR_AXES" "${ALL_ARGS[@]}"
 run_round1_axes "color" "color" "${ALL_ARGS[@]}"
 
-bash "$D/sample_skip.sh" "${SAMPLE_SKIP_ARGS[@]}"
-bash "$D/backbone.sh" "${BACKBONE_ARGS[@]}"
-bash "$D/logical_train.sh" "${LOGICAL_TRAIN_ARGS[@]}"
+bash "$D/13_sample_skip.sh" "${SAMPLE_SKIP_ARGS[@]}"
+bash "$D/14_backbone.sh" "${BACKBONE_ARGS[@]}"
+bash "$D/15_logical_train.sh" "${LOGICAL_TRAIN_ARGS[@]}"
 
 run_round1_axes "gc_last" "gc" "${ALL_ARGS[@]}"
 
-bash "$D/bkm_combined.sh" "${BKM_COMBINED_ARGS[@]}"
+bash "$D/17_bkm_combined.sh" "${BKM_COMBINED_ARGS[@]}"
 
 run_paper_stage "postprocess" \
   --skip-weights \

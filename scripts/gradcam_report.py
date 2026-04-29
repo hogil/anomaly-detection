@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 from torchvision import transforms
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,6 +27,25 @@ from inference import _load_model_from_best_info
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
 RIGHT_START = 0.70
+
+
+def load_font(size: int) -> ImageFont.ImageFont:
+    for font_name in ("arial.ttf", "Arial.ttf", "DejaVuSans.ttf"):
+        try:
+            return ImageFont.truetype(font_name, size=size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def fit_multiline_font(text: str, max_width: int, max_height: int, start_size: int, min_size: int) -> ImageFont.ImageFont:
+    probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    for size in range(start_size, min_size - 1, -1):
+        font = load_font(size)
+        bbox = probe.multiline_textbbox((0, 0), text, font=font, spacing=4, align="center")
+        if bbox[2] - bbox[0] <= max_width and bbox[3] - bbox[1] <= max_height:
+            return font
+    return load_font(min_size)
 
 
 def build_transform() -> transforms.Compose:
@@ -200,8 +219,8 @@ def build_cam_overlay_gallery(rows: list[dict[str, Any]], out_path: Path) -> Non
     class_order = [name for name in preferred if name in by_class]
     class_order.extend(sorted(name for name in by_class if name not in class_order))
     cols = max(len(by_class[name]) for name in class_order)
-    label_w, cell_w, cell_h = 150, 224, 252
-    pad = 14
+    label_w, cell_w, cell_h = 360, 224, 224
+    pad = 16
     canvas_w = label_w + cols * cell_w + (cols + 1) * pad
     canvas_h = len(class_order) * cell_h + (len(class_order) + 1) * pad
     canvas = Image.new("RGBA", (canvas_w, canvas_h), "WHITE")
@@ -209,12 +228,25 @@ def build_cam_overlay_gallery(rows: list[dict[str, Any]], out_path: Path) -> Non
 
     for row_idx, class_name in enumerate(class_order):
         y = pad + row_idx * (cell_h + pad)
-        draw.text((pad, y + 104), class_name, fill=(0, 0, 0, 255))
+        label_text = class_name.replace("_", "\n")
+        label_font = fit_multiline_font(label_text, label_w - 2 * pad, cell_h - 2 * pad, 54, 28)
+        label_bbox = draw.multiline_textbbox((0, 0), label_text, font=label_font, spacing=6, align="center")
+        label_text_w = label_bbox[2] - label_bbox[0]
+        label_text_h = label_bbox[3] - label_bbox[1]
+        label_x = pad + (label_w - 2 * pad - label_text_w) // 2
+        label_y = y + (cell_h - label_text_h) // 2
+        draw.multiline_text(
+            (label_x, label_y),
+            label_text,
+            fill=(0, 0, 0, 255),
+            font=label_font,
+            spacing=6,
+            align="center",
+        )
         for col_idx, row in enumerate(by_class[class_name]):
             x = label_w + pad + col_idx * (cell_w + pad)
-            draw.text((x, y), Path(str(row["image"])).stem, fill=(0, 0, 0, 255))
             overlay = Image.open(str(row["cam_overlay"])).convert("RGBA").resize((224, 224))
-            canvas.alpha_composite(overlay, (x, y + 24))
+            canvas.alpha_composite(overlay, (x, y))
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(out_path)

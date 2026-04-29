@@ -209,24 +209,34 @@ bash scripts/run_paper_server_all.sh \
   --skip-weights --skip-dataset --skip-refcheck --skip-round1
 ```
 
-### 데이터셋 변형 yaml 4종
+### 데이터셋 변형 yaml 7종
 
-base + 3개 변형이 repo에 들어있습니다 (각 yaml의 `output.*_dir` 이 분리돼서 동시 생성도 안 부딪힘):
+base + 6개 변형 (×1.15와 ×1.30 두 강도 × 3 종류 변형). 각 yaml의 `output.*_dir` 이 분리돼서 동시 생성도 안 부딪힘:
 
 | yaml | 변형 | 출력 폴더 |
 |---|---|---|
-| `dataset.yaml` | base | `data/`, `images/`, `display/` |
-| `dataset1_noise_strong.yaml` | **noise +30%** (gaussian/laplacian/correlated sigma 모두 ×1.3). anomaly는 그대로 | `data_noise/`, `images_noise/`, `display_noise/` |
-| `dataset2_anomaly_strong.yaml` | **anomaly +30%** (mean_shift/std/spike/drift sigma 범위 ×1.3, enforcement floor 도 같이 올림). noise는 그대로 | `data_strong/`, `images_strong/`, `display_strong/` |
-| `dataset3_all_strong.yaml` | noise +30% **and** anomaly +30% | `data_noise_strong/`, `images_noise_strong/`, `display_noise_strong/` |
+| `dataset.yaml` | base | `data/` |
+| `dataset1_noise_15.yaml` | noise ×1.15 | `data_noise_15/` |
+| `dataset2_noise_30.yaml` | noise ×1.30 | `data_noise_30/` |
+| `dataset3_anomaly_15.yaml` | anomaly ×1.15 | `data_anomaly_15/` |
+| `dataset4_anomaly_30.yaml` | anomaly ×1.30 | `data_anomaly_30/` |
+| `dataset5_all_15.yaml` | noise ×1.15 **and** anomaly ×1.15 | `data_all_15/` |
+| `dataset6_all_30.yaml` | noise ×1.30 **and** anomaly ×1.30 | `data_all_30/` |
 
-### 주말 한 GPU 순차 실행 (4개 yaml 자동, GUI/터미널 끊어도 계속 돔)
+scaling 적용 항목:
+- noise: `gaussian.sigma_range`, `laplacian.b_range`, `correlated.sigma_range` 전부에 factor 곱함
+- anomaly: `mean_shift.shift_sigma_range`, `standard_deviation.scale_range`, `spike.magnitude_sigma_range` (+ `min_magnitude_sigma`), `drift.slope_sigma_range` (+ `min_max_drift_sigma`, `visual_floor_sigma`), 그리고 `defect.enforcement.*_floor_sigma` 도 같이 올려서 약한 case 가 floor 에 잘리지 않게 함
+
+### 주말 한 GPU 순차 실행 (7개 yaml 자동, GUI/터미널 끊어도 계속 돔)
 
 ```bash
 ssh user@server     # GUI 터미널이든 PuTTY든 상관없음
 
 nohup bash -c '
-for cfg in dataset.yaml dataset1_noise_strong.yaml dataset2_anomaly_strong.yaml dataset3_all_strong.yaml; do
+for cfg in dataset.yaml \
+           dataset1_noise_15.yaml dataset2_noise_30.yaml \
+           dataset3_anomaly_15.yaml dataset4_anomaly_30.yaml \
+           dataset5_all_15.yaml dataset6_all_30.yaml; do
   bash scripts/run_paper_server_all.sh --config "$cfg"
 done
 ' > /tmp/weekend.log 2>&1 &
@@ -245,26 +255,26 @@ nvidia-smi                             # GPU 사용 중인지 확인
 pkill -f run_paper_server_all.sh       # 강제 종료
 ```
 
-각 yaml 결과는 자동으로 분리된 폴더에:
+각 yaml 결과는 자동으로 분리된 폴더에 (시간순 정렬):
 
 ```
 validations/
 ├── 20260502_120000_run_paper_dataset/
-├── 20260502_180000_run_paper_dataset1_noise_strong/
-├── 20260503_010000_run_paper_dataset2_anomaly_strong/
-└── 20260503_070000_run_paper_dataset3_all_strong/
+├── 20260502_180000_run_paper_dataset1_noise_15/
+├── 20260503_000000_run_paper_dataset2_noise_30/
+├── 20260503_060000_run_paper_dataset3_anomaly_15/
+├── 20260503_120000_run_paper_dataset4_anomaly_30/
+├── 20260503_180000_run_paper_dataset5_all_15/
+└── 20260504_000000_run_paper_dataset6_all_30/
 logs/
-├── 20260502_120000_run_paper_dataset/<run>/...
-├── 20260502_180000_run_paper_dataset1_noise_strong/<run>/...
-├── 20260503_010000_run_paper_dataset2_anomaly_strong/<run>/...
-└── 20260503_070000_run_paper_dataset3_all_strong/<run>/...
+└── (같은 group prefix 로 분리됨)
 ```
 
 데이터셋별 group 폴더만 따로 정리해서 보고 싶으면:
 
 ```bash
 python scripts/generate_group_report.py --group-dir logs/20260502_120000_run_paper_dataset
-python scripts/generate_group_report.py --group-dir logs/20260502_180000_run_paper_dataset1_noise_strong
+python scripts/generate_group_report.py --group-dir logs/20260502_180000_run_paper_dataset1_noise_15
 # ...
 ```
 

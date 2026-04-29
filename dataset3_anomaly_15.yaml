@@ -1,5 +1,5 @@
-# Variant of dataset.yaml: noise +30%. anomaly 강도는 그대로.
-# noise 영역만 손대고 나머지는 base 와 같음. output 폴더만 분리.
+# Variant: anomaly *1.15. noise unchanged.
+# auto-generated from dataset.yaml. base + scale factors applied.
 
 seed: 42
 episode:
@@ -54,22 +54,21 @@ episode:
     missing:
       density: 0.0
   noise:
-    # +30% vs base (0.03->0.039, 0.065->0.0845, ...)
     gaussian:
       sigma_range:
-      - 0.039
-      - 0.0845
+      - 0.03
+      - 0.065
     laplacian:
       b_range:
-      - 0.0156
-      - 0.039
+      - 0.012
+      - 0.03
     correlated:
       rho_range:
       - 0.0
       - 0.2
       sigma_range:
-      - 0.0039
-      - 0.0104
+      - 0.003
+      - 0.008
 baseline:
   value_range:
   - -0.3
@@ -174,47 +173,47 @@ defect:
   - 0.3
   mean_shift:
     shift_sigma_range:
-    - 0.9
-    - 1.5
+    - 1.035
+    - 1.725
     difficulty_scale_floor: 0.9
   standard_deviation:
     scale_range:
-    - 1.2
-    - 1.8
+    - 1.38
+    - 2.07
   spike:
     magnitude_sigma_range:
-    - 3.8
-    - 6.4
+    - 4.37
+    - 7.36
     difficulty_scale_floor: 0.9
     spike_ratio_range:
     - 0.12
     - 0.28
     min_spikes: 10
-    min_magnitude_sigma: 3.8
+    min_magnitude_sigma: 4.37
     region_ratio_range:
     - 0.12
     - 0.18
   drift:
     slope_sigma_range:
-    - 0.3
-    - 1.3
+    - 0.345
+    - 1.495
     region_ratio_range:
     - 0.2
     - 0.375
     visible_span_ratio_range:
     - 0.12
     - 0.18
-    min_max_drift_sigma: 1.1
-    visual_floor_sigma: 1.5
+    min_max_drift_sigma: 1.265
+    visual_floor_sigma: 1.725
     max_range_scale: 0.7
     drift_method: index
   enforcement:
-    mean_shift_floor_sigma: 1.35
-    mean_shift_self_floor_sigma: 1.0
-    std_floor_ratio: 1.8
-    spike_floor_sigma: 7.5
-    drift_floor_sigma: 1.4
-    context_floor_sigma: 2.0
+    mean_shift_floor_sigma: 1.5525
+    mean_shift_self_floor_sigma: 1.15
+    std_floor_ratio: 2.07
+    spike_floor_sigma: 8.625
+    drift_floor_sigma: 1.61
+    context_floor_sigma: 2.3
     normal_max_right_dev_sigma: 0.5
     normal_max_right_shift_sigma: 0.5
     min_defect_points_range:
@@ -241,7 +240,7 @@ image:
   x_label: null
   y_label: Measurement Value (nm)
 dataset:
-  version: v11_noise
+  version: v11_anomaly_15
   samples_per_class:
     mean_shift: 1000
     standard_deviation: 1000
@@ -263,6 +262,6 @@ dataset:
   test_difficulty_scale: 0.8
   val_difficulty_scale: 0.8
 output:
-  data_dir: data_noise
-  image_dir: images_noise
-  display_dir: display_noise
+  data_dir: data_anomaly_15
+  image_dir: images_anomaly_15
+  display_dir: display_anomaly_15

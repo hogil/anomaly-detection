@@ -13,7 +13,7 @@
 | inference | `python inference.py --model logs/<run>/best_model.pth` | predictions/metrics |
 | add training | `python scripts/add_training_from_folders.py --model-run logs/<run> --image-root extra_images` | fine-tuned `logs/addtrain_*/best_model.pth` |
 | batch inference | `python scripts/server_batch_predict.py --model-run logs/<run>` | server inference outputs |
-| Grad-CAM | `python scripts/gradcam_report.py --model-run logs/<run> --image-root images/test --out-dir validations/gradcam_probe --save-heat-only` | overlays, transparent heat-only CAM, heat CSV |
+| Grad-CAM | `python scripts/gradcam_report.py --model-run logs/<run> --image-root images/test --out-dir validations/gradcam_probe --save-heat-only` | trend+CAM overlays, transparent heat masks, heat CSV |
 | postprocess check | `python scripts/right_crop_postprocess_report.py --model-run logs/<run> --split test` | FP/FN table for right-crop rules |
 | log report | `python scripts/generate_log_history_report.py --logs-dir logs --out-prefix validations/log_history_report --contains rawbase` | markdown, CSV, PNG plots |
 
@@ -27,7 +27,7 @@
 - `scripts/server_batch_predict.py`: batch inference
 - `scripts/generate_inference_images.py`: inference image renderer from existing trend CSVs
 - `scripts/add_training_from_folders.py`: fine-tune a best model from `normal/` and `abnormal/` image folders
-- `scripts/gradcam_report.py`: Grad-CAM overlays and transparent heat-only summaries
+- `scripts/gradcam_report.py`: Grad-CAM overlays on trend images and transparent heat masks
 - `scripts/right_crop_postprocess_report.py`: FP/FN check for right-crop postprocess rules
 - `scripts/gradcam_normal_rescue_report.py`: FP/FN check for normal-prediction Grad-CAM rescue rules
 - `scripts/generate_log_history_report.py`: tables and plots from `logs/`

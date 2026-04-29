@@ -35,7 +35,7 @@ Outputs markdown, CSV tables, and PNG plots from `logs/*/history.json` and `best
 
 ## Analysis Helpers
 
-- `gradcam_report.py`: Grad-CAM overlays and transparent heat-only summaries for saved models
+- `gradcam_report.py`: Grad-CAM overlays on trend images plus transparent heat masks for saved models
 - `right_crop_postprocess_report.py`: test right-crop postprocess rules against labeled FP/FN
 - `gradcam_normal_rescue_report.py`: test normal-prediction Grad-CAM rescue rules against labeled FP/FN
 - `generate_strict_one_factor_report.py`

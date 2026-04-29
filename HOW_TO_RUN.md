@@ -132,10 +132,10 @@ python scripts/gradcam_report.py \
   --limit-per-class 5 \
   --save-heat-only \
   --heat-threshold 0.25 \
-  --gallery-out docs/gradcam_class_heat_only.png
+  --gallery-out docs/gradcam_class_overlay.png
 ```
 
-출력은 `gradcam.csv`, `summary.md`, `overlays/`, `heat_only/`입니다. `heat_only/`는 heat가 있는 부분만 RGBA로 칠하고 나머지는 투명입니다. Grad-CAM은 모델 근거 위치이지 실제 불량 위치가 아니므로 left/right 판정 룰로 바로 쓰지 않습니다.
+출력은 `gradcam.csv`, `summary.md`, `overlays/`, `heat_only/`, `cam_on_image/`입니다. `cam_on_image/`는 원본 trend 이미지 위에 heat가 있는 부분만 반투명으로 얹은 이미지입니다. `heat_only/`는 heat mask만 따로 저장한 파일입니다. Grad-CAM은 모델 근거 위치이지 실제 불량 위치가 아니므로 left/right 판정 룰로 바로 쓰지 않습니다.
 
 후처리 후보는 별도 FP/FN 리포트로 봅니다.
 

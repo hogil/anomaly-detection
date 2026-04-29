@@ -406,32 +406,45 @@ python scripts/server_batch_predict.py --model-run logs/<group>/<run>
 
 ## 7. 현업 CSV 가져왔을 때
 
-현업 `timeseries.csv` + `scenarios.csv` 두 개가 있다고 가정하고, 그걸로 추론까지 가는 **전체 흐름**:
+현업 데이터는 **`timeseries.csv` 한 개만** 있고 `scenarios.csv`는 없습니다(라벨 모름). production 흐름:
 
 ```bash
-# (1) 현업 CSV → 모델 입력 이미지 생성
+# (1) 현업 timeseries.csv → 모델 입력 이미지 생성
+#     scenarios.csv 없으므로 --scenarios 안 줌. 스크립트가 timeseries 의
+#     chart_id + (eqp_id|chamber|recipe) 로 자동 manifest 생성.
 python scripts/generate_inference_images.py \
   --timeseries fab_export/timeseries.csv \
-  --scenarios  fab_export/scenarios.csv \
   --out-dir    inference_inputs
 
-# 출력:
-#   inference_inputs/model_inputs/   <- 모델 입력용 이미지
-#   inference_inputs/display/        <- 사람 확인용
-#   inference_inputs/manifest.csv    <- chart_id ↔ 파일 매핑
+# 출력 폴더는 시각 prefix 자동 부여:
+#   <YYMMDD_HHMMSS>_inference_inputs/
+#     ├── model_inputs/         <- 224x224 모델 입력 이미지
+#     ├── display/              <- 사람 확인용
+#     ├── synthesized_scenarios.csv   <- 자동 생성한 scenarios
+#     └── manifest.csv          <- chart_id ↔ 파일 매핑
+```
 
+이미지가 만들어진 후 분류:
+
+```bash
 # (2) 학습된 모델로 분류 + 텍스트 리스트
 python inference.py \
   --model logs/<group>/<run>/best_model.pth \
-  --data_dir inference_inputs \
+  --data_dir <YYMMDD_HHMMSS>_inference_inputs \
+  --scenarios <YYMMDD_HHMMSS>_inference_inputs/synthesized_scenarios.csv \
   --output_dir fab_results
 
 # 출력 <YYMMDD_HHMMSS>_fab_results/:
-#   abnormal/  normal/  predictions.csv  predictions.txt
-#   abnormal_list.txt  normal_list.txt
+#   display/{normal,abnormal}/  <- 분류된 display 이미지
+#   abnormal_list.txt           <- CSV: device,step,item,target,p_abnormal,chart_id,image_file
+#   normal_list.txt             <- 같은 컬럼, p_abnormal 내림차순
+#   predictions.csv             <- 전 chart 통합
+#   predictions.txt             <- ABNORMAL 위 + NORMAL 아래 (CSV 형식)
 ```
 
-`generate_inference_images.py` 는 yaml에서 렌더 스타일만 읽고, 데이터 위치는 `--timeseries`, `--scenarios`, `--out-dir` 로 직접 받습니다. 즉 `dataset.yaml` 안 건드리고 현업 데이터 그대로 처리.
+> 합성 데이터(이미 만든 `scenarios.csv` 가 있는 경우)는 `--scenarios` 를 그대로 줘도 됩니다. production 의 핵심은 **scenarios.csv 가 없어도 timeseries 만으로 돌아간다**는 점.
+
+`generate_inference_images.py` 는 yaml에서 렌더 스타일만 읽고, 데이터 위치는 `--timeseries`, `--out-dir` 로 직접 받습니다. `dataset.yaml` 안 건드리고 현업 데이터 그대로 처리.
 
 ---
 

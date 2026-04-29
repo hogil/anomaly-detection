@@ -1,6 +1,12 @@
 #!/usr/bin/env python
 """Render inference images from existing trend CSV files.
 
+This is the **production entry point** for taking field timeseries.csv
+(unlabeled, no scenarios.csv) and turning it into model-input + display
+images plus a manifest. Synthetic data with scenarios.csv also works
+(passed via --scenarios) but for production the script auto-builds the
+scenarios info from timeseries columns.
+
 This is intentionally separate from generate_images.py:
 - generate_images.py builds train/val/test/class folders for training.
 - this script builds flat model-input images from existing trend data for inference.
@@ -12,6 +18,7 @@ import argparse
 import csv
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -102,15 +109,57 @@ def build_fleet_data(
     return fleet_data, highlighted_member
 
 
+def synthesize_scenarios(ts_df: pd.DataFrame) -> pd.DataFrame:
+    """Build a minimal scenarios DataFrame from a timeseries-only production CSV.
+
+    Production CSV does not ship with scenarios.csv. We auto-detect the legend
+    axis column (eqp_id / chamber / recipe / legend_axis) and emit one row per
+    (chart_id, member) so every member becomes a highlighted-target image.
+    """
+    candidates = ("eqp_id", "chamber", "recipe", "legend_axis")
+    axis_col = next((c for c in candidates if c in ts_df.columns), None)
+    if axis_col is None:
+        raise SystemExit(
+            "timeseries.csv has no legend axis column. "
+            f"Expected one of {candidates}. "
+            "Pass --scenarios <path> if you already have a scenarios CSV."
+        )
+    if "chart_id" not in ts_df.columns:
+        raise SystemExit("timeseries.csv must have a chart_id column")
+
+    rows: list[dict[str, Any]] = []
+    for chart_id, grp in ts_df.groupby("chart_id"):
+        member_ids = sorted(grp[axis_col].dropna().astype(str).unique())
+        if not member_ids:
+            continue
+        target_val = float(grp["value"].mean()) if "value" in grp.columns else 0.0
+        member_str = ",".join(member_ids)
+        for hm in member_ids:
+            rows.append(
+                {
+                    "chart_id": str(chart_id),
+                    "legend_axis": axis_col,
+                    "members": member_str,
+                    "highlighted_member": hm,
+                    "target": round(target_val, 4),
+                }
+            )
+    if not rows:
+        raise SystemExit("auto-build produced no scenarios; check timeseries.csv contents")
+    return pd.DataFrame(rows)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--timeseries", required=True, type=Path, help="timeseries.csv path")
-    parser.add_argument("--scenarios", required=True, type=Path, help="scenarios.csv or scenarios_per_member.csv path")
-    parser.add_argument("--out-dir", required=True, type=Path, help="output directory")
+    parser.add_argument("--scenarios", default=None, type=Path,
+                        help="optional. synthetic data: pass scenarios.csv. production: omit and the script auto-builds rows from timeseries.")
+    parser.add_argument("--out-dir", required=True, type=Path,
+                        help="output directory base name. The script prepends a YYMMDD_HHMMSS prefix.")
     parser.add_argument("--render-config", default="", help="YAML used only for image rendering style")
     parser.add_argument("--model-run", default="", help="optional logs/<run> directory; uses data_config_used.yaml if present")
     parser.add_argument("--x-col", default=None)
-    parser.add_argument("--split", default="", help="optional split filter")
+    parser.add_argument("--split", default="", help="optional split filter (synthetic only)")
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--no-display", action="store_true", help="only write model_inputs/")
     args = parser.parse_args()
@@ -122,8 +171,14 @@ def main() -> int:
     y_label = img_cfg.get("y_label", "Measurement Value")
 
     ts_df = pd.read_csv(args.timeseries)
-    sc_df = pd.read_csv(args.scenarios)
     x_col = detect_x_col(ts_df, args.x_col)
+    if args.scenarios is not None:
+        sc_df = pd.read_csv(args.scenarios)
+        scenarios_source = str(args.scenarios)
+    else:
+        print("[inference-images] no --scenarios given; auto-building from timeseries")
+        sc_df = synthesize_scenarios(ts_df)
+        scenarios_source = "<auto from timeseries>"
 
     if args.split:
         if "split" not in sc_df.columns:
@@ -134,11 +189,21 @@ def main() -> int:
 
     ts_grouped = {str(chart_id): group for chart_id, group in ts_df.groupby("chart_id")}
 
-    input_dir = args.out_dir / "model_inputs"
-    display_dir = args.out_dir / "display"
-    input_dir.mkdir(parents=True, exist_ok=True)
+    # output dir gets a timestamp prefix so reruns do not overwrite older results
+    raw_out = args.out_dir
+    stamp = datetime.now().strftime("%y%m%d_%H%M%S")
+    if raw_out.parent == Path("."):
+        out_dir = raw_out.with_name(f"{stamp}_{raw_out.name}")
+    else:
+        out_dir = raw_out.parent / f"{stamp}_{raw_out.name}"
+    out_dir.mkdir(parents=True, exist_ok=False)
+    print(f"[inference-images] output -> {out_dir} (scenarios source: {scenarios_source})")
+
+    input_dir = out_dir / "model_inputs"
+    display_dir = out_dir / "display"
+    input_dir.mkdir()
     if not args.no_display:
-        display_dir.mkdir(parents=True, exist_ok=True)
+        display_dir.mkdir()
 
     manifest_rows: list[dict[str, Any]] = []
     skipped = 0
@@ -183,7 +248,12 @@ def main() -> int:
             }
         )
 
-    manifest_path = args.out_dir / "manifest.csv"
+    if args.scenarios is None:
+        synth_path = out_dir / "synthesized_scenarios.csv"
+        sc_df.to_csv(synth_path, index=False)
+        print(f"[inference-images] wrote auto-scenarios: {synth_path}")
+
+    manifest_path = out_dir / "manifest.csv"
     with manifest_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(
             handle,

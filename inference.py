@@ -156,12 +156,18 @@ def run_inference(
 
     ts_grouped = {sid: grp for sid, grp in ts_df.groupby("chart_id")}
 
-    # output dirs
-    out_path = Path(output_dir)
-    if out_path.exists():
-        shutil.rmtree(out_path)
-    (out_path / "normal").mkdir(parents=True)
-    (out_path / "abnormal").mkdir(parents=True)
+    # output dirs — train.py와 동일하게 시각 prefix 자동 부여
+    # 사용자가 --output_dir my_run 으로 주면 my_run_YYMMDD_HHMMSS/ 로 만들어 덮어쓰기 방지
+    raw_out = Path(output_dir)
+    stamp = datetime.now().strftime("%y%m%d_%H%M%S")
+    if raw_out.parent == Path("."):
+        out_path = raw_out.with_name(f"{stamp}_{raw_out.name}")
+    else:
+        out_path = raw_out.parent / f"{stamp}_{raw_out.name}"
+    out_path.mkdir(parents=True, exist_ok=False)
+    print(f"Output: {out_path}")
+    (out_path / "normal").mkdir()
+    (out_path / "abnormal").mkdir()
     temp_dir = Path(tempfile.mkdtemp(prefix="infer_"))
 
     renderer = ImageRenderer(cfg)

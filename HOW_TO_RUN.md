@@ -371,15 +371,16 @@ python inference.py \
   --output_dir my_inference
 ```
 
-출력 (`my_inference/`):
+출력 폴더는 시각 prefix 자동 부여: `<YYMMDD_HHMMSS>_my_inference/` (덮어쓰기 방지, ls 시간순 정렬):
 
 ```
-abnormal/             <- 불량 판정 display 이미지
-normal/               <- 정상 판정 display 이미지
-predictions.csv       <- 모든 chart, p_abnormal, predicted, p_normal
-predictions.txt       <- 통합 텍스트 (ABNORMAL 위, NORMAL 아래)
-abnormal_list.txt     <- 불량 chart_id 목록만
-normal_list.txt       <- 정상 chart_id 목록만
+<YYMMDD_HHMMSS>_my_inference/
+├── abnormal/             <- 불량 판정 display 이미지
+├── normal/               <- 정상 판정 display 이미지
+├── predictions.csv       <- 모든 chart, p_abnormal, predicted, p_normal
+├── predictions.txt       <- 통합 텍스트 (ABNORMAL 위, NORMAL 아래)
+├── abnormal_list.txt     <- 불량 chart_id 목록만
+└── normal_list.txt       <- 정상 chart_id 목록만
 ```
 
 `abnormal_list.txt` / `normal_list.txt` 형식:
@@ -425,7 +426,7 @@ python inference.py \
   --data_dir inference_inputs \
   --output_dir fab_results
 
-# 출력 fab_results/:
+# 출력 <YYMMDD_HHMMSS>_fab_results/:
 #   abnormal/  normal/  predictions.csv  predictions.txt
 #   abnormal_list.txt  normal_list.txt
 ```

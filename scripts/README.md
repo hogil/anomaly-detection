@@ -185,7 +185,7 @@ python inference.py \
   --model logs/run_20260430_120000/<run>/best_model.pth \
   --output_dir my_inference
 ```
-출력 (`my_inference/`):
+출력 폴더는 시각 prefix 자동 부여 — `<YYMMDD_HHMMSS>_my_inference/` (덮어쓰기 방지):
 ```
 abnormal/             # 불량 판정 display 이미지
 normal/               # 정상 판정 display 이미지

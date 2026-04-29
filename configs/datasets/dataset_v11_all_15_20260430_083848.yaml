@@ -1,0 +1,265 @@
+# smoke variant (gitignored). 10/50 samples + count_range[4,6].
+seed: 42
+episode:
+  count_range:
+  - 4
+  - 6
+  length_range:
+  - 20
+  - 45
+  time_offset_range:
+  - 0
+  - 300
+  missing:
+    length_range:
+    - 8
+    - 100
+    max_count: 3
+  member_variation:
+    event_count_range:
+    - 0
+    - 3
+    event_length_range:
+    - 5
+    - 25
+    event_weights:
+      dropout: 0.3
+      thin: 0.4
+      densify: 0.3
+  region_weights:
+    dense: 0.28
+    sparse: 0.32
+    very_sparse: 0.18
+    thin: 0.12
+    missing: 0.1
+  region:
+    dense:
+      density_range:
+      - 0.7
+      - 1.0
+    sparse:
+      density_range:
+      - 0.4
+      - 0.7
+    very_sparse:
+      density_range:
+      - 0.2
+      - 0.35
+    thin:
+      density_range:
+      - 0.1
+      - 0.2
+    missing:
+      density: 0.0
+  noise:
+    gaussian:
+      sigma_range:
+      - 0.0345
+      - 0.07475
+    laplacian:
+      b_range:
+      - 0.0138
+      - 0.0345
+    correlated:
+      rho_range:
+      - 0.0
+      - 0.2
+      sigma_range:
+      - 0.00345
+      - 0.0092
+baseline:
+  value_range:
+  - -0.3
+  - 0.3
+  random_walk_step:
+  - 0.0005
+  - 0.0015
+  mean_revert_range:
+  - 0.2
+  - 0.4
+  center_spread: 0.8
+chart:
+  device:
+    ids:
+    - DEV_A
+    - DEV_B
+    - DEV_C
+    - DEV_D
+    - DEV_E
+  step:
+    ids:
+    - S01
+    - S02
+    - S03
+    - S04
+    - S05
+  item:
+    ids:
+    - CD1
+    - CD2
+    - CD3
+    - THK1
+    - THK2
+    - OVL1
+    - OVL2
+    - DEF1
+context:
+  columns:
+  - eqp_id
+  - chamber
+  - recipe
+  eqp_id:
+    ids:
+    - EQP_01
+    - EQP_02
+    - EQP_03
+    - EQP_04
+    - EQP_05
+    - EQP_06
+    - EQP_07
+    - EQP_08
+    count_range:
+    - 4
+    - 7
+  chamber:
+    ids:
+    - CH_A
+    - CH_B
+    - CH_C
+    - CH_D
+    - CH_E
+    count_range:
+    - 4
+    - 5
+  recipe:
+    ids:
+    - RCP_X1
+    - RCP_X2
+    - RCP_X3
+    - RCP_X4
+    - RCP_X5
+    - RCP_X6
+    count_range:
+    - 4
+    - 6
+  fleet_variation:
+    mean_range:
+    - 0.0005
+    - 0.003
+    std_range:
+    - 0.003
+    - 0.007
+  target_deviation:
+    mean_reference: between
+    mean_sigma_range:
+    - 2.0
+    - 3.2
+    mean_min_within_ratio: 1.8
+    std_reference: within
+    std_sigma_range:
+    - 2.0
+    - 3.2
+    std_range:
+    - 2.0
+    - 3.2
+    std_min_scale: 1.25
+    min_mean_nsigma: 2.0
+    min_std_nsigma: 2.0
+defect:
+  region_ratio_range:
+  - 0.14
+  - 0.3
+  mean_shift:
+    shift_sigma_range:
+    - 1.035
+    - 1.725
+    difficulty_scale_floor: 0.9
+  standard_deviation:
+    scale_range:
+    - 1.38
+    - 2.07
+  spike:
+    magnitude_sigma_range:
+    - 4.37
+    - 7.36
+    difficulty_scale_floor: 0.9
+    spike_ratio_range:
+    - 0.12
+    - 0.28
+    min_spikes: 10
+    min_magnitude_sigma: 4.37
+    region_ratio_range:
+    - 0.12
+    - 0.18
+  drift:
+    slope_sigma_range:
+    - 0.345
+    - 1.495
+    region_ratio_range:
+    - 0.2
+    - 0.375
+    visible_span_ratio_range:
+    - 0.12
+    - 0.18
+    min_max_drift_sigma: 1.265
+    visual_floor_sigma: 1.725
+    max_range_scale: 0.7
+    drift_method: index
+  enforcement:
+    mean_shift_floor_sigma: 1.5525
+    mean_shift_self_floor_sigma: 1.15
+    std_floor_ratio: 2.07
+    spike_floor_sigma: 8.625
+    drift_floor_sigma: 1.61
+    context_floor_sigma: 2.3
+    normal_max_right_dev_sigma: 0.5
+    normal_max_right_shift_sigma: 0.5
+    min_defect_points_range:
+    - 12
+    - 25
+image:
+  width: 224
+  height: 224
+  dpi: 100
+  background: white
+  outlier_sigma: 5
+  baseline_line: true
+  overlay:
+    fleet_color: '#B0B0B0'
+    fleet_alpha: 0.4
+    fleet_marker_size: 14
+    target_color: '#4878CF'
+    target_alpha: 0.75
+    target_marker_size: 16
+  title_columns:
+  - device
+  - step
+  - item
+  x_label: null
+  y_label: Measurement Value (nm)
+dataset:
+  version: v11_all_15
+  samples_per_class:
+    mean_shift: 10
+    standard_deviation: 10
+    spike: 10
+    drift: 10
+    context: 10
+    normal: 50
+  classes:
+  - mean_shift
+  - standard_deviation
+  - spike
+  - drift
+  - context
+  - normal
+  split:
+    train: 0.7
+    val: 0.15
+    test: 0.15
+  test_difficulty_scale: 0.8
+  val_difficulty_scale: 0.8
+output:
+  data_dir: data_smoke_dataset5_all_15
+  image_dir: images_smoke_dataset5_all_15
+  display_dir: display_smoke_dataset5_all_15

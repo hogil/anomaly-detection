@@ -129,10 +129,28 @@ python scripts/gradcam_report.py \
   --image-root images/test \
   --out-dir validations/gradcam_probe \
   --include-classes normal,mean_shift,standard_deviation,spike,drift,context \
-  --limit-per-class 5
+  --limit-per-class 5 \
+  --save-heat-only \
+  --heat-threshold 0.25 \
+  --gallery-out docs/gradcam_class_heat_only.png
 ```
 
-출력은 `gradcam.csv`, `summary.md`, `overlays/`입니다. `right_mass_30`은 Grad-CAM heat 중 오른쪽 30%에 있는 비율입니다. Binary 모델에서는 `abnormal` logit 기준으로 설명합니다.
+출력은 `gradcam.csv`, `summary.md`, `overlays/`, `heat_only/`입니다. `heat_only/`는 heat가 있는 부분만 RGBA로 칠하고 나머지는 투명입니다. Grad-CAM은 모델 근거 위치이지 실제 불량 위치가 아니므로 left/right 판정 룰로 바로 쓰지 않습니다.
+
+후처리 후보는 별도 FP/FN 리포트로 봅니다.
+
+```bash
+python scripts/right_crop_postprocess_report.py \
+  --model-run logs/<run> \
+  --split test \
+  --crop-ratio 0.4 \
+  --out-dir validations/right_crop_postprocess
+
+python scripts/gradcam_normal_rescue_report.py \
+  --model-run logs/<run> \
+  --split test \
+  --out-dir validations/gradcam_normal_rescue
+```
 
 ## 9. 현재 서버 실험 재개
 

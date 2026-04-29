@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Generate Grad-CAM overlays and left/right heat summaries for saved models."""
+"""Generate Grad-CAM overlays and heat summaries for saved models."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
-from PIL import Image
+from PIL import Image, ImageDraw
 from torchvision import transforms
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -157,6 +157,53 @@ def overlay_cam(image_path: Path, cam: np.ndarray, out_path: Path, title: str) -
     plt.close(fig)
 
 
+def save_heat_only_cam(cam: np.ndarray, out_path: Path, threshold: float) -> None:
+    """Save only the CAM heat as RGBA; non-heat pixels are transparent."""
+    cam = np.asarray(cam, dtype=np.float32)
+    threshold = float(np.clip(threshold, 0.0, 0.95))
+    alpha = np.clip((cam - threshold) / max(1.0 - threshold, 1e-6), 0.0, 1.0)
+    heat = plt.get_cmap("jet")(cam)
+    rgba = np.zeros((*cam.shape, 4), dtype=np.uint8)
+    rgba[..., :3] = np.clip(heat[..., :3] * 255.0, 0, 255).astype(np.uint8)
+    rgba[..., 3] = np.clip(alpha * 255.0, 0, 255).astype(np.uint8)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(rgba).save(out_path)
+
+
+def build_heat_only_gallery(rows: list[dict[str, Any]], out_path: Path) -> None:
+    """Build a class-level gallery from transparent heat-only PNGs."""
+    preferred = ["normal", "mean_shift", "standard_deviation", "spike", "drift", "context"]
+    selected: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        heat_path = str(row.get("heat_only", ""))
+        if heat_path and Path(heat_path).exists():
+            selected.setdefault(str(row["true_class"]), row)
+    if not selected:
+        return
+
+    class_order = [name for name in preferred if name in selected]
+    class_order.extend(sorted(name for name in selected if name not in class_order))
+    cell_w, cell_h = 224, 256
+    pad = 18
+    cols = min(3, len(class_order))
+    rows_n = int(np.ceil(len(class_order) / cols))
+    canvas_w = cols * cell_w + (cols + 1) * pad
+    canvas_h = rows_n * cell_h + (rows_n + 1) * pad
+    canvas = Image.new("RGBA", (canvas_w, canvas_h), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(canvas)
+
+    for idx, class_name in enumerate(class_order):
+        row = selected[class_name]
+        x = pad + (idx % cols) * (cell_w + pad)
+        y = pad + (idx // cols) * (cell_h + pad)
+        draw.text((x, y), class_name, fill=(0, 0, 0, 255))
+        heat = Image.open(str(row["heat_only"])).convert("RGBA").resize((224, 224))
+        canvas.alpha_composite(heat, (x, y + 28))
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(out_path)
+
+
 def summarize_rows(rows: list[dict[str, Any]]) -> str:
     by_class: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
@@ -181,7 +228,8 @@ def summarize_rows(rows: list[dict[str, Any]]) -> str:
             "Notes:",
             "- `right_mass_30` is the fraction of Grad-CAM heat in the rightmost 30% of the image.",
             "- For binary models, CAM is computed against the `abnormal` logit by default.",
-            "- Non-context defect classes are expected to concentrate more to the right if the model learned the generated right-side defect cue.",
+            "- CAM is model evidence location, not guaranteed anomaly location.",
+            "- Broad/generated defects can produce broad heat; local defects such as spikes often produce tighter heat.",
             "- `context` can be valid outside the right-side rule because it is a fleet-relative/global condition.",
         ]
     )
@@ -197,6 +245,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target-class", default="abnormal", help="class logit to explain, or 'predicted'")
     parser.add_argument("--include-classes", default="", help="comma-separated image folder classes")
     parser.add_argument("--limit-per-class", type=int, default=5)
+    parser.add_argument("--save-heat-only", action="store_true", help="also save transparent heat-only CAM PNGs")
+    parser.add_argument("--heat-threshold", type=float, default=0.20, help="alpha threshold for heat-only CAM PNGs")
+    parser.add_argument("--gallery-out", default=None, type=Path, help="optional class-level heat-only gallery PNG")
     parser.add_argument("--cpu", action="store_true")
     return parser.parse_args()
 
@@ -216,6 +267,7 @@ def main() -> int:
 
     rows: list[dict[str, Any]] = []
     overlay_dir = args.out_dir / "overlays"
+    heat_only_dir = args.out_dir / "heat_only"
     try:
         for image_path, true_class in images:
             image = Image.open(image_path).convert("RGB")
@@ -247,6 +299,11 @@ def main() -> int:
                 f"right={stats['right_mass_30']:.2f}"
             )
             overlay_cam(image_path, cam, overlay_path, title)
+            heat_only_path = ""
+            if args.save_heat_only or args.gallery_out is not None:
+                heat_path = heat_only_dir / out_name
+                save_heat_only_cam(cam, heat_path, args.heat_threshold)
+                heat_only_path = str(heat_path)
             rows.append(
                 {
                     "image": str(image_path),
@@ -255,6 +312,7 @@ def main() -> int:
                     "explained_class": explained_class,
                     "p_abnormal": p_abnormal,
                     "overlay": str(overlay_path),
+                    "heat_only": heat_only_path,
                     **stats,
                 }
             )
@@ -275,6 +333,7 @@ def main() -> int:
             "right_mass_30",
             "peak_x_norm",
             "overlay",
+            "heat_only",
         ]
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
@@ -282,9 +341,14 @@ def main() -> int:
 
     summary_path = args.out_dir / "summary.md"
     summary_path.write_text(summarize_rows(rows), encoding="utf-8")
+    if args.gallery_out is not None:
+        build_heat_only_gallery(rows, args.gallery_out)
+        print(f"[gradcam] gallery={args.gallery_out}")
     print(f"[gradcam] wrote {csv_path}")
     print(f"[gradcam] wrote {summary_path}")
     print(f"[gradcam] overlays={overlay_dir}")
+    if args.save_heat_only or args.gallery_out is not None:
+        print(f"[gradcam] heat_only={heat_only_dir}")
     return 0
 
 

@@ -56,17 +56,20 @@ _자동 갱신 시각: `2026-04-29T06:03:42+09:00`._
 
 즉 family 전체 이상 감지가 아니라, highlight 된 member 단위로 label을 부여하는 학습 예시입니다.
 
-## Grad-CAM Decision Example
+## Grad-CAM / Postprocess Check
 
-Binary 모델에서는 `abnormal`로 예측된 이미지의 Grad-CAM 위치를 추가 확인용으로 봅니다. 현재 운영 목적은 우측 최근 구간 불량이므로, non-context 불량에서 CAM이 좌측에 몰리면 최근 우측 불량 기준에서는 잘못된 근거로 봅니다. CAM이 우측에 몰리면 제대로 잡은 예시입니다. `context`는 전체 fleet 관계 불량이므로 우측 집중이 아니어도 전체/전역 CAM이면 맞게 본 예시입니다.
+Grad-CAM의 heat는 실제 anomaly 위치가 아니라 `abnormal` logit에 기여한 모델 근거 위치입니다. 넓은 불량은 heat도 넓게 퍼질 수 있고, `spike`처럼 국소 패턴은 더 좁게 잡히는 경향이 있습니다. 좌측 불량과 우측 정상의 대비 때문에 우측에 heat가 생길 수도 있어서, CAM 위치만으로 left/right defect를 판정하지 않습니다.
 
-![Grad-CAM decision examples](gradcam_decision_examples.png)
+![class Grad-CAM heat only](gradcam_class_heat_only.png)
 
-| case | interpretation |
-| --- | --- |
-| left CAM on non-context abnormal | 최근 우측 불량 기준에서는 wrong/review |
-| right CAM on non-context abnormal | 최근 우측 불량을 제대로 잡은 예시 |
-| global CAM on context abnormal | context는 전체 fleet 관계를 보는 class라 correct |
+| check | F1 macro | FN | FP | result |
+| --- | ---: | ---: | ---: | --- |
+| full image baseline | 0.9960 | 5 | 1 | 기준 |
+| right-crop rescue | 0.9378 | 0 | 93 | FN 5개는 모두 잡지만 FP가 너무 커짐 |
+| Grad-CAM normal rescue, best F1 | 0.9753 | 5 | 32 | FP만 늘고 FN rescue 없음 |
+| Grad-CAM normal rescue, best FN | 0.9344 | 0 | 98 | FN은 모두 잡지만 FP가 너무 커짐 |
+
+현재 결론은 Grad-CAM은 설명/검토용으로 두고, 후처리 룰은 바로 적용하지 않습니다. `full=abnormal, right_crop=normal`은 좌측/과거 불량 가능성 검토, `full=abnormal, right_crop=abnormal`은 최근 우측 불량 가능성 검토 정도로만 사용합니다.
 
 ## 남은 실험
 

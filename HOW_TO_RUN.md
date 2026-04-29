@@ -209,6 +209,82 @@ bash scripts/run_paper_server_all.sh \
   --skip-weights --skip-dataset --skip-refcheck --skip-round1
 ```
 
+### 데이터셋 변형 yaml 4종
+
+base + 3개 변형이 repo에 들어있습니다 (각 yaml의 `output.*_dir` 이 분리돼서 동시 생성도 안 부딪힘):
+
+| yaml | 변형 | 출력 폴더 |
+|---|---|---|
+| `dataset.yaml` | base | `data/`, `images/`, `display/` |
+| `dataset_noise.yaml` | **noise +30%** (gaussian/laplacian/correlated sigma 모두 ×1.3). anomaly는 그대로 | `data_noise/`, `images_noise/`, `display_noise/` |
+| `dataset_strong.yaml` | **anomaly +30%** (mean_shift/std/spike/drift sigma 범위 ×1.3, enforcement floor 도 같이 올림). noise는 그대로 | `data_strong/`, `images_strong/`, `display_strong/` |
+| `dataset_noise_strong.yaml` | noise +30% **and** anomaly +30% | `data_noise_strong/`, `images_noise_strong/`, `display_noise_strong/` |
+
+### 주말 한 GPU 순차 실행 (4개 yaml 자동)
+
+```bash
+ssh user@server
+tmux new -s weekend                                     # 분리 가능한 세션
+for cfg in dataset.yaml dataset_noise.yaml dataset_strong.yaml dataset_noise_strong.yaml; do
+  bash scripts/run_paper_server_all.sh --config "$cfg"
+done
+# 학습이 도는 동안 Ctrl+B 누르고 D 떼서 detach (SSH 끊어도 안 죽음)
+```
+
+월요일에 다시 들어와서 결과 보기:
+
+```bash
+ssh user@server
+tmux attach -t weekend                                  # 그 화면 그대로
+# 다 끝났으면
+tmux kill-session -t weekend
+```
+
+각 yaml 결과는 자동으로 분리된 폴더에:
+
+```
+validations/
+├── 20260502_120000_run_paper_dataset/
+├── 20260502_180000_run_paper_dataset_noise/
+├── 20260503_010000_run_paper_dataset_strong/
+└── 20260503_070000_run_paper_dataset_noise_strong/
+logs/
+├── 20260502_120000_run_paper_dataset/<run>/...
+├── 20260502_180000_run_paper_dataset_noise/<run>/...
+├── 20260503_010000_run_paper_dataset_strong/<run>/...
+└── 20260503_070000_run_paper_dataset_noise_strong/<run>/...
+```
+
+데이터셋별 group 폴더만 따로 정리해서 보고 싶으면:
+
+```bash
+python scripts/generate_group_report.py --group-dir logs/20260502_120000_run_paper_dataset
+python scripts/generate_group_report.py --group-dir logs/20260502_180000_run_paper_dataset_noise
+# ...
+```
+
+### tmux 핵심 4개
+
+| 동작 | 명령 |
+|---|---|
+| 새 세션 시작 | `tmux new -s 이름` |
+| 빠져나오기 | `Ctrl+B` → `D` |
+| 다시 들어가기 | `tmux attach -t 이름` |
+| 살아있는 세션 목록 | `tmux ls` |
+
+`tmux` 가 없으면 `nohup` 으로 대체:
+
+```bash
+nohup bash -c '
+for cfg in dataset.yaml dataset_noise.yaml dataset_strong.yaml dataset_noise_strong.yaml; do
+  bash scripts/run_paper_server_all.sh --config "$cfg"
+done
+' > /tmp/weekend.log 2>&1 &
+disown
+
+tail -f /tmp/weekend.log    # 진행 확인
+```
+
 ### 데이터셋 여러 개 **순차** 실행 (한 GPU 자동 자율 실행)
 
 가장 단순:

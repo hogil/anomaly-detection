@@ -209,6 +209,34 @@ bash scripts/run_paper_server_all.sh \
   --skip-weights --skip-dataset --skip-refcheck --skip-round1
 ```
 
+### 데이터셋 여러 개 병렬 (다른 yaml 동시에)
+
+`--config` 로 yaml을 따로 지정하면 됩니다. 기본 `LOG_DIR_GROUP`이 yaml 파일명을 자동으로 포함하므로 같은 초에 launch해도 group 폴더가 충돌하지 않습니다 (`<timestamp>_run_paper_dataset`, `<timestamp>_run_paper_dataset1`처럼).
+
+⚠️ 각 yaml의 `output.data_dir`/`image_dir`/`display_dir`이 **서로 달라야** 데이터 생성도 충돌하지 않습니다 (예: `dataset.yaml` → `data/`, `dataset1.yaml` → `data1/`).
+
+⚠️ 같은 GPU에 두 학습이 들어가면 OOM. GPU 카드별로 분리:
+
+```bash
+# GPU 0 → dataset.yaml
+CUDA_VISIBLE_DEVICES=0 bash scripts/run_paper_server_all.sh --config dataset.yaml &
+
+# GPU 1 → dataset1.yaml
+CUDA_VISIBLE_DEVICES=1 bash scripts/run_paper_server_all.sh --config dataset1.yaml &
+
+wait    # 둘 다 끝날 때까지 대기
+```
+
+각각 `validations/<timestamp>_run_paper_dataset/`, `validations/<timestamp>_run_paper_dataset1/` 에 결과가 분리되어 쌓입니다.
+
+GPU 카드가 2개 이상이면 nohup으로 백그라운드 + 로그 분리:
+
+```bash
+nohup env CUDA_VISIBLE_DEVICES=0 bash scripts/run_paper_server_all.sh --config dataset.yaml  > /tmp/run_ds0.log 2>&1 &
+nohup env CUDA_VISIBLE_DEVICES=1 bash scripts/run_paper_server_all.sh --config dataset1.yaml > /tmp/run_ds1.log 2>&1 &
+disown
+```
+
 ### 같은 group 으로 묶어 돌리기
 
 여러 명령을 한 묶음으로 보고 싶을 때 group 명을 직접 지정:

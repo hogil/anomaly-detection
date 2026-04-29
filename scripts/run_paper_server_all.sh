@@ -38,7 +38,7 @@ ROUND1_START_AFTER_CANDIDATE=""
 ROUND1_SKIP_COMPLETED=1
 DEFAULT_ROUND1_AXES="normal_ratio,per_class,lr,warmup,label_smoothing,stochastic_depth,focal_gamma,abnormal_weight,ema,allow_tie_save,color,gc"
 ROUND1_INCLUDE_AXES="$DEFAULT_ROUND1_AXES"
-LOG_DIR_GROUP="${LOG_DIR_GROUP:-$(date +%Y%m%d_%H%M%S)_run_paper}"
+LOG_DIR_GROUP="${LOG_DIR_GROUP:-}"
 
 usage() {
   cat <<'EOF'
@@ -96,6 +96,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Default group includes the config basename so parallel runs with different
+# yaml files (e.g. --config dataset.yaml vs --config dataset1.yaml) land in
+# distinct validations/<group>/ folders even if launched in the same second.
+if [[ -z "$LOG_DIR_GROUP" ]]; then
+  config_stem="$(basename "$CONFIG")"
+  config_stem="${config_stem%.yaml}"
+  config_stem="${config_stem%.yml}"
+  LOG_DIR_GROUP="$(date +%Y%m%d_%H%M%S)_run_paper_${config_stem}"
+fi
 VAL_DIR="validations/${LOG_DIR_GROUP}"
 mkdir -p "$VAL_DIR" logs docs
 LOG="${VAL_DIR}/run.log"

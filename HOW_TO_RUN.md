@@ -209,7 +209,42 @@ bash scripts/run_paper_server_all.sh \
   --skip-weights --skip-dataset --skip-refcheck --skip-round1
 ```
 
-### 데이터셋 여러 개 병렬 (다른 yaml 동시에)
+### 데이터셋 여러 개 **순차** 실행 (한 GPU 자동 자율 실행)
+
+가장 단순:
+
+```bash
+bash scripts/run_paper_server_all.sh --config dataset.yaml && \
+bash scripts/run_paper_server_all.sh --config dataset1.yaml && \
+bash scripts/run_paper_server_all.sh --config dataset2.yaml
+```
+
+`&&` = 앞이 성공해야 다음 실행. `;` 로 바꾸면 실패해도 계속.
+
+⚠️ `cmd1 & cmd2` 는 **순차 아님** — `&`는 백그라운드 실행이라 둘이 동시에 시작합니다. 한 GPU면 OOM.
+
+SSH 끊어도 끝까지 자동으로 돌리고 싶으면 `nohup` + 로그:
+
+```bash
+nohup bash -c '
+for cfg in dataset.yaml dataset1.yaml dataset2.yaml; do
+  bash scripts/run_paper_server_all.sh --config "$cfg"
+done
+' > /tmp/run_seq.log 2>&1 &
+disown
+```
+
+확인 / 종료:
+
+```bash
+tail -f /tmp/run_seq.log               # 실시간 진행
+ps -ef | grep run_paper                # 살아있나
+pkill -f run_paper_server_all.sh       # 종료
+```
+
+각 yaml 결과는 자동으로 `validations/<timestamp>_run_paper_<yaml-stem>/`에 분리되어 쌓입니다 (예: `validations/20260430_120000_run_paper_dataset/`, `validations/20260430_133000_run_paper_dataset1/`).
+
+### 데이터셋 여러 개 **병렬** (다른 yaml + 다른 GPU)
 
 `--config` 로 yaml을 따로 지정하면 됩니다. 기본 `LOG_DIR_GROUP`이 yaml 파일명을 자동으로 포함하므로 같은 초에 launch해도 group 폴더가 충돌하지 않습니다 (`<timestamp>_run_paper_dataset`, `<timestamp>_run_paper_dataset1`처럼).
 

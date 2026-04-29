@@ -5,6 +5,7 @@ import csv
 import json
 import re
 import shutil
+import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,13 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.data.schema import highlighted_member as read_highlighted_member  # noqa: E402
+from src.data.schema import legend_axis as read_legend_axis  # noqa: E402
+from src.data.schema import target as read_target  # noqa: E402
+
 LOGS = ROOT / "logs"
 RUN_DIR_RE = re.compile(r"^\d{6}_\d{6}_(?P<candidate>.+)_s(?P<seed>\d+)_F[0-9.]+_R[0-9.]+$")
 CHART_RE = re.compile(r"(ch_\d+)")
@@ -202,10 +210,10 @@ def build_rows(runs: list[RunSummary], scenarios: pd.DataFrame) -> list[dict[str
             "device": meta.get("device", ""),
             "step": meta.get("step", ""),
             "item": meta.get("item", ""),
-            "context_column": meta.get("context_column", ""),
-            "target": meta.get("target", ""),
+            "legend_axis": read_legend_axis(meta),
+            "highlighted_member": read_highlighted_member(meta) or "",
             "defect_start_idx": meta.get("defect_start_idx", ""),
-            "target_value": meta.get("target_value", ""),
+            "target": read_target(meta) if read_target(meta) is not None else "",
             "all_total": 0,
             "strong_total": 0,
             "all_wrong": 0,
@@ -388,10 +396,10 @@ def write_outputs(
         "device",
         "step",
         "item",
-        "context_column",
+        "legend_axis",
+        "highlighted_member",
         "target",
         "defect_start_idx",
-        "target_value",
     ]
     with csv_path.open("w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=csv_fields)

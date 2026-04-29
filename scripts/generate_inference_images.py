@@ -24,6 +24,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.data.image_renderer import ImageRenderer
+from src.data.schema import highlighted_member as read_highlighted_member
+from src.data.schema import legend_axis as read_legend_axis
+from src.data.schema import members as read_members
+from src.data.schema import target as read_target
 
 TQDM_DISABLE = not sys.stderr.isatty()
 
@@ -64,22 +68,6 @@ def load_render_config(args: argparse.Namespace) -> dict[str, Any]:
     return config
 
 
-def split_contexts(row: pd.Series, chart_ts: pd.DataFrame, context_column: str) -> list[str]:
-    raw = row.get("contexts")
-    if raw is not None and pd.notna(raw) and str(raw).strip():
-        return [part.strip() for part in str(raw).split(",") if part.strip()]
-    return [str(x) for x in chart_ts[context_column].dropna().unique().tolist()]
-
-
-def optional_float(value: Any) -> float | None:
-    if value is None or pd.isna(value):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def build_fleet_data(
     row: pd.Series,
     ts_grouped: dict[str, pd.DataFrame],
@@ -92,27 +80,26 @@ def build_fleet_data(
     if chart_ts is None or chart_ts.empty:
         return None
 
-    context_column = str(row.get("context_column", ""))
-    if not context_column or context_column not in chart_ts.columns:
-        raise SystemExit(f"context_column missing or invalid for chart {chart_id}: {context_column}")
+    axis = read_legend_axis(row)
+    if not axis or axis not in chart_ts.columns:
+        raise SystemExit(f"legend_axis missing or invalid for chart {chart_id}: {axis}")
 
-    target_id = row.get("target_member", row.get("target"))
-    if target_id is None or pd.isna(target_id):
+    highlighted_member = read_highlighted_member(row)
+    if not highlighted_member:
         return None
-    target_id = str(target_id)
 
     fleet_data: dict[str, tuple] = {}
-    for member_id in split_contexts(row, chart_ts, context_column):
-        member_ts = chart_ts[chart_ts[context_column].astype(str) == str(member_id)].sort_values(x_col)
+    for member_id in read_members(row, chart_ts=chart_ts, axis=axis):
+        member_ts = chart_ts[chart_ts[axis].astype(str) == str(member_id)].sort_values(x_col)
         if member_ts.empty:
             continue
         fleet_data[str(member_id)] = (
             member_ts[x_col].to_numpy(),
             member_ts["value"].to_numpy(),
         )
-    if target_id not in fleet_data:
+    if highlighted_member not in fleet_data:
         return None
-    return fleet_data, target_id
+    return fleet_data, highlighted_member
 
 
 def main() -> int:
@@ -160,12 +147,12 @@ def main() -> int:
         if built is None:
             skipped += 1
             continue
-        fleet_data, target_id = built
+        fleet_data, highlighted_member = built
         chart_id = str(row.get("chart_id"))
-        stem = f"{idx:06d}_{sanitize_part(chart_id)}_{sanitize_part(target_id)}"
+        stem = f"{idx:06d}_{sanitize_part(chart_id)}_{sanitize_part(highlighted_member)}"
         input_path = input_dir / f"{stem}.png"
-        target_value = optional_float(row.get("target_value"))
-        renderer.render_overlay(fleet_data, target_id, str(input_path), target_value=target_value)
+        target = read_target(row)
+        renderer.render_overlay(fleet_data, highlighted_member, str(input_path), target=target)
 
         display_path = ""
         if not args.no_display:
@@ -174,21 +161,21 @@ def main() -> int:
             display_file = display_dir / f"{stem}.png"
             renderer.render_overlay_display(
                 fleet_data,
-                target_id,
+                highlighted_member,
                 str(display_file),
                 anomalous_ids=[],
                 defect_start_idx=None,
                 title=title,
                 x_label=x_col,
                 y_label=y_label,
-                target_value=target_value,
+                target=target,
             )
             display_path = str(display_file)
 
         manifest_rows.append(
             {
                 "chart_id": chart_id,
-                "target_member": target_id,
+                "highlighted_member": highlighted_member,
                 "model_input": str(input_path),
                 "display": display_path,
                 "class": row.get("class", ""),
@@ -200,7 +187,7 @@ def main() -> int:
     with manifest_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(
             handle,
-            fieldnames=["chart_id", "target_member", "model_input", "display", "class", "split"],
+            fieldnames=["chart_id", "highlighted_member", "model_input", "display", "class", "split"],
         )
         writer.writeheader()
         writer.writerows(manifest_rows)

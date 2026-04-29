@@ -2,11 +2,11 @@
 데이터 생성 에이전트 (Tabular)
 
 Chart = device + step + item (고정)
-Context = eqp_id, chamber, recipe (fleet 비교)
+Legend axis = eqp_id, chamber, recipe (fleet 비교)
 
 출력:
     data/timeseries.csv   (chart_id, time_index, device, step, item, eqp_id, chamber, recipe, value)
-    data/scenarios.csv    (chart_id, class, device, step, item, context_column, target, contexts, ...)
+    data/scenarios.csv    (chart_id, class, device, step, item, legend_axis, highlighted_member, members, target, ...)
 
 병렬 처리:
     --workers 1   : 순차 (default, 노트북 기본)
@@ -17,8 +17,8 @@ Context = eqp_id, chamber, recipe (fleet 비교)
 순차 모드 결과와는 달라지지만, 같은 (config, seed, workers) 조합은 100% 재현.
 
 옵션:
-    --all_context_columns_per_chart
-        하나의 device/step/item family에 대해 eqp_id/chamber/recipe 3개 context 시나리오를
+    --all_legend_axes_per_group
+        하나의 device/step/item group에 대해 eqp_id/chamber/recipe 3개 legend axis 시나리오를
         모두 생성한다. 이후 per-member 확장을 사용하면 family 단위로
         eqp 수 + chamber 수 + recipe 수 만큼 이미지가 생성된다.
 """
@@ -118,16 +118,16 @@ def scale_config(config: dict, scale: float) -> dict:
     return cfg
 
 
-def _compute_target_value(result, sid: str, rng: np.random.Generator, cls: str) -> float:
+def _compute_target(result, sid: str, rng: np.random.Generator, cls: str) -> float:
     """수평 기준선 위치 계산 — fleet(정상 멤버) median.
 
     anomaly 를 제외한 정상 데이터의 중심을 보여준다.
-    모든 클래스 공통: fleet (target 제외) 의 median 사용.
+    모든 클래스 공통: fleet (highlighted_member 제외) 의 median 사용.
     """
     fleet_vals = [
         r["value"]
         for r in result.timeseries_rows
-        if r["chart_id"] == sid and r.get(result.context_column) != result.target
+        if r["chart_id"] == sid and r.get(result.legend_axis) != result.highlighted_member
     ]
     if fleet_vals:
         return float(np.median(fleet_vals))
@@ -138,6 +138,23 @@ def _compute_target_value(result, sid: str, rng: np.random.Generator, cls: str) 
         return float(np.median(all_vals))
 
     return 0.0
+
+
+def _scenario_row(result, family_id: str, chart_id: str, cls: str, target: float) -> dict:
+    return {
+        "family_id": family_id,
+        "chart_id": chart_id,
+        "class": cls,
+        "device": result.device,
+        "step": result.step,
+        "item": result.item,
+        "legend_axis": result.legend_axis,
+        "highlighted_member": result.highlighted_member,
+        "members": ",".join(result.members),
+        "defect_start_idx": result.defect_start_idx,
+        "defect_params": json.dumps(result.defect_params),
+        "target": round(float(target), 6),
+    }
 
 
 def _sample_chart_meta_for_family(config: dict, base_seed: int, family_idx: int) -> tuple[str, str, str]:
@@ -152,7 +169,7 @@ def _sample_chart_meta_for_family(config: dict, base_seed: int, family_idx: int)
 
 
 def generate_batch(config, classes, count_per_class, rng, start_id, label,
-                   all_context_columns_per_chart: bool = False):
+                   all_legend_axes_per_group: bool = False):
     """순차 생성 (기본). count_per_class: int 또는 dict {class: count}."""
     gen = ScenarioGenerator(config, rng=rng)
 
@@ -163,57 +180,31 @@ def generate_batch(config, classes, count_per_class, rng, start_id, label,
     for cls in classes:
         n = count_per_class[cls] if isinstance(count_per_class, dict) else count_per_class
         for i in tqdm(range(n), desc=f"{cls}({label})", disable=TQDM_DISABLE):
-            if all_context_columns_per_chart:
+            if all_legend_axes_per_group:
                 family_id = f"ch_{sc_id:05d}"
                 device, step, item = gen.sample_chart_meta()
-                for context_column in config["context"]["columns"]:
-                    sid = f"{family_id}_{context_column}"
+                for legend_axis in config["context"]["columns"]:
+                    sid = f"{family_id}_{legend_axis}"
                     result = gen.generate(
                         sid, cls,
-                        context_column=context_column,
+                        legend_axis=legend_axis,
                         device=device,
                         step=step,
                         item=item,
                     )
 
                     all_ts_rows.extend(result.timeseries_rows)
-                    tv = _compute_target_value(result, sid, rng, cls)
+                    target = _compute_target(result, sid, rng, cls)
 
-                    all_sc_rows.append({
-                        "family_id": family_id,
-                        "chart_id": sid,
-                        "class": cls,
-                        "device": result.device,
-                        "step": result.step,
-                        "item": result.item,
-                        "context_column": result.context_column,
-                        "target": result.target,
-                        "contexts": ",".join(result.contexts),
-                        "defect_start_idx": result.defect_start_idx,
-                        "defect_params": json.dumps(result.defect_params),
-                        "target_value": round(float(tv), 6),
-                    })
+                    all_sc_rows.append(_scenario_row(result, family_id, sid, cls, target))
             else:
                 sid = f"ch_{sc_id:05d}"
                 result = gen.generate(sid, cls)
 
                 all_ts_rows.extend(result.timeseries_rows)
-                tv = _compute_target_value(result, sid, rng, cls)
+                target = _compute_target(result, sid, rng, cls)
 
-                all_sc_rows.append({
-                    "family_id": sid,
-                    "chart_id": sid,
-                    "class": cls,
-                    "device": result.device,
-                    "step": result.step,
-                    "item": result.item,
-                    "context_column": result.context_column,
-                    "target": result.target,
-                    "contexts": ",".join(result.contexts),
-                    "defect_start_idx": result.defect_start_idx,
-                    "defect_params": json.dumps(result.defect_params),
-                    "target_value": round(float(tv), 6),
-                })
+                all_sc_rows.append(_scenario_row(result, sid, sid, cls, target))
             sc_id += 1
 
     return all_ts_rows, all_sc_rows, sc_id
@@ -238,7 +229,7 @@ def _gen_one(task):
 
     task supports two modes:
       - legacy tuple (sid_int, cls, batch_idx)
-      - dict with chart metadata for all-context family generation
+      - dict with chart metadata for all-legend-axis group generation
 
     재현성: SeedSequence([base_seed, sid_int, batch_idx]) → 같은 입력은 항상 같은 결과.
     sequential generate_batch와는 RNG 순서가 달라 결과 다름.
@@ -246,7 +237,7 @@ def _gen_one(task):
     if isinstance(task, tuple):
         sid_int, cls, batch_idx = task
         family_idx = sid_int
-        context_column = None
+        legend_axis = None
         chart_id = f"ch_{sid_int:05d}"
         device = step = item = None
         context_order_idx = 0
@@ -256,7 +247,7 @@ def _gen_one(task):
         cls = task["cls"]
         batch_idx = int(task["batch_idx"])
         family_idx = int(task.get("family_idx", sid_int))
-        context_column = task.get("context_column")
+        legend_axis = task.get("legend_axis")
         chart_id = task.get("chart_id", f"ch_{sid_int:05d}")
         device = task.get("device")
         step = task.get("step")
@@ -276,33 +267,20 @@ def _gen_one(task):
 
     result = gen.generate(
         chart_id, cls,
-        context_column=context_column,
+        legend_axis=legend_axis,
         device=device,
         step=step,
         item=item,
     )
-    target_value = _compute_target_value(result, chart_id, rng, cls)
+    target = _compute_target(result, chart_id, rng, cls)
 
-    sc_row = {
-        "family_id": family_id,
-        "chart_id": chart_id,
-        "class": cls,
-        "device": result.device,
-        "step": result.step,
-        "item": result.item,
-        "context_column": result.context_column,
-        "target": result.target,
-        "contexts": ",".join(result.contexts),
-        "defect_start_idx": result.defect_start_idx,
-        "defect_params": json.dumps(result.defect_params),
-        "target_value": round(float(target_value), 6),
-    }
+    sc_row = _scenario_row(result, family_id, chart_id, cls, target)
     return family_idx, context_order_idx, sid_int, sc_row, result.timeseries_rows
 
 
 def generate_batch_parallel(config, classes, count_per_class, base_seed,
                              start_id, label, num_workers, batch_idx,
-                             all_context_columns_per_chart: bool = False):
+                             all_legend_axes_per_group: bool = False):
     """병렬 생성. num_workers process pool 사용.
 
     재현성: (base_seed, sid_int, batch_idx) → SeedSequence → per-task RNG.
@@ -314,18 +292,18 @@ def generate_batch_parallel(config, classes, count_per_class, base_seed,
     for cls in classes:
         n = count_per_class[cls] if isinstance(count_per_class, dict) else count_per_class
         for _ in range(n):
-            if all_context_columns_per_chart:
+            if all_legend_axes_per_group:
                 family_id = f"ch_{sc_id:05d}"
                 device, step, item = _sample_chart_meta_for_family(config, base_seed, sc_id)
-                for context_order_idx, context_column in enumerate(config["context"]["columns"]):
+                for context_order_idx, legend_axis in enumerate(config["context"]["columns"]):
                     tasks.append({
                         "sid_int": sc_id,
                         "family_idx": sc_id,
                         "family_id": family_id,
-                        "chart_id": f"{family_id}_{context_column}",
+                        "chart_id": f"{family_id}_{legend_axis}",
                         "cls": cls,
                         "batch_idx": batch_idx,
-                        "context_column": context_column,
+                        "legend_axis": legend_axis,
                         "device": device,
                         "step": step,
                         "item": item,
@@ -389,7 +367,7 @@ def write_rows_csv(path: Path, rows: list[dict], chunk_size: int = 50_000) -> No
 
 
 def generate(config: dict, num_workers: int = 1,
-             all_context_columns_per_chart: bool = False):
+             all_legend_axes_per_group: bool = False):
     """전체 데이터 생성.
 
     num_workers:
@@ -431,8 +409,8 @@ def generate(config: dict, num_workers: int = 1,
 
     total_started = time.perf_counter()
     _log(f"\n  Workers: {nw} ({'parallel' if use_parallel else 'sequential'})")
-    if all_context_columns_per_chart:
-        _log("  Context family mode: all context columns per device/step/item family")
+    if all_legend_axes_per_group:
+        _log("  Legend-axis group mode: all legend axes per device/step/item group")
 
     # val_difficulty_scale != 1.0 이면 train/val 별도 생성
     if val_scale != 1.0:
@@ -448,12 +426,12 @@ def generate(config: dict, num_workers: int = 1,
             tr_ts, tr_sc, next_id = generate_batch_parallel(
                 config, classes, n_train_dict, seed, 0, "train",
                 num_workers=nw, batch_idx=0,
-                all_context_columns_per_chart=all_context_columns_per_chart,
+                all_legend_axes_per_group=all_legend_axes_per_group,
             )
         else:
             tr_ts, tr_sc, next_id = generate_batch(
                 config, classes, n_train_dict, rng, 0, "train",
-                all_context_columns_per_chart=all_context_columns_per_chart,
+                all_legend_axes_per_group=all_legend_axes_per_group,
             )
 
         val_config = scale_config(config, val_scale)
@@ -464,12 +442,12 @@ def generate(config: dict, num_workers: int = 1,
             va_ts, va_sc, next_id = generate_batch_parallel(
                 val_config, classes, n_val_dict, seed, next_id, "val",
                 num_workers=nw, batch_idx=1,
-                all_context_columns_per_chart=all_context_columns_per_chart,
+                all_legend_axes_per_group=all_legend_axes_per_group,
             )
         else:
             va_ts, va_sc, next_id = generate_batch(
                 val_config, classes, n_val_dict, rng, next_id, "val",
-                all_context_columns_per_chart=all_context_columns_per_chart,
+                all_legend_axes_per_group=all_legend_axes_per_group,
             )
 
         train_df = pd.DataFrame(tr_sc)
@@ -485,12 +463,12 @@ def generate(config: dict, num_workers: int = 1,
             tv_ts, tv_sc, next_id = generate_batch_parallel(
                 config, classes, n_trainval_dict, seed, 0, "train+val",
                 num_workers=nw, batch_idx=0,
-                all_context_columns_per_chart=all_context_columns_per_chart,
+                all_legend_axes_per_group=all_legend_axes_per_group,
             )
         else:
             tv_ts, tv_sc, next_id = generate_batch(
                 config, classes, n_trainval_dict, rng, 0, "train+val",
-                all_context_columns_per_chart=all_context_columns_per_chart,
+                all_legend_axes_per_group=all_legend_axes_per_group,
             )
         train_df = None  # split later
         val_df = None
@@ -503,12 +481,12 @@ def generate(config: dict, num_workers: int = 1,
         te_ts, te_sc, _ = generate_batch_parallel(
             test_config, classes, n_test_dict, seed, next_id, "test",
             num_workers=nw, batch_idx=1 if val_scale != 1.0 else 1,
-            all_context_columns_per_chart=all_context_columns_per_chart,
+            all_legend_axes_per_group=all_legend_axes_per_group,
         )
     else:
         te_ts, te_sc, _ = generate_batch(
             test_config, classes, n_test_dict, rng, next_id, "test",
-            all_context_columns_per_chart=all_context_columns_per_chart,
+            all_legend_axes_per_group=all_legend_axes_per_group,
         )
 
     te_df = pd.DataFrame(te_sc)
@@ -603,8 +581,8 @@ def main():
                         help="병렬 worker 수 (1=순차 default, 0=auto cpu_count-1, N>1=N process)")
     parser.add_argument("--no_snapshot", action="store_true",
                         help="configs/datasets/ 자동 snapshot 비활성")
-    parser.add_argument("--all_context_columns_per_chart", action="store_true",
-                        help="같은 device/step/item family에서 eqp_id/chamber/recipe 시나리오를 모두 생성")
+    parser.add_argument("--all_legend_axes_per_group", action="store_true",
+                        help="같은 device/step/item group에서 eqp_id/chamber/recipe 시나리오를 모두 생성")
     args = parser.parse_args()
     with open(args.config, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
@@ -612,8 +590,12 @@ def main():
     if not args.no_snapshot:
         _snapshot_config(config, Path(args.config))
 
-    family_mode = bool(args.all_context_columns_per_chart or config.get("dataset", {}).get("all_context_columns_per_chart", False))
-    generate(config, num_workers=args.workers, all_context_columns_per_chart=family_mode)
+    dataset_cfg = config.get("dataset", {})
+    group_mode = bool(
+        args.all_legend_axes_per_group
+        or dataset_cfg.get("all_legend_axes_per_group", False)
+    )
+    generate(config, num_workers=args.workers, all_legend_axes_per_group=group_mode)
 
 
 if __name__ == "__main__":

@@ -1,16 +1,16 @@
 """Design A: Per-member image rendering.
 
-실제 fab inference 방식 — 1 chart 에서 fleet 의 각 member 를 한 번씩 target 으로
+실제 fab inference 방식 — 1 chart 에서 fleet 의 각 member 를 한 번씩 highlighted member로
 이미지 N 장 생성 (N = fleet size).
 
 Labels:
-  - Non-anomaly member as target → 'normal'
-  - Anomaly injected member as target → original defect class
+  - Non-anomaly highlighted member → 'normal'
+  - Anomaly injected highlighted member → original defect class
 
 Output:
-  - images_per_member_{suffix}/train|val|test/{class}/ch_{id}_{target}.png
-  - display_per_member_{suffix}/train|val|test/{class}/ch_{id}_{target}.png
-  - data_per_member_{suffix}/scenarios.csv  — expanded (chart_id, target_member, class) rows
+  - images_per_member_{suffix}/train|val|test/{class}/ch_{id}_{member}.png
+  - display_per_member_{suffix}/train|val|test/{class}/ch_{id}_{member}.png
+  - data_per_member_{suffix}/scenarios.csv  — expanded (chart_id, highlighted_member, class) rows
 
 Usage:
   python scripts/generate_per_member_images.py --config dataset.yaml --suffix vd080 --workers 6
@@ -31,6 +31,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.data.image_renderer import ImageRenderer
+from src.data.schema import highlighted_member as read_highlighted_member
+from src.data.schema import legend_axis as read_legend_axis
+from src.data.schema import members as read_members
+from src.data.schema import target as read_target
 
 
 _worker_cache = {}
@@ -50,7 +54,7 @@ def _init_worker(ts_pickle_path, config, x_col, images_dir, display_dir):
 
 
 def _render_per_member(row_dict):
-    """1 chart → len(contexts) images. Returns per-image metadata rows."""
+    """1 chart → len(members) images. Returns per-image metadata rows."""
     ts_grouped = _worker_cache['ts_grouped']
     renderer = _worker_cache['renderer']
     images_dir = _worker_cache['images_dir']
@@ -63,9 +67,11 @@ def _render_per_member(row_dict):
     sid = row_dict['chart_id']
     chart_class = row_dict['class']
     split = row_dict['split']
-    anomaly_target = row_dict['target']  # original single target (anomaly injected member)
-    contexts = row_dict['contexts'].split(',')
-    ctx_col = row_dict['context_column']
+    anomaly_member = read_highlighted_member(row_dict)
+    members = read_members(row_dict)
+    legend_axis = read_legend_axis(row_dict)
+    if not anomaly_member or not members or not legend_axis:
+        return []
 
     raw_ds = row_dict.get('defect_start_idx', None)
     defect_start = None
@@ -84,8 +90,8 @@ def _render_per_member(row_dict):
         return []
 
     fleet_data = {}
-    for mid in contexts:
-        member_ts = sc_ts[sc_ts[ctx_col] == mid].sort_values(x_col)
+    for mid in members:
+        member_ts = sc_ts[sc_ts[legend_axis].astype(str) == str(mid)].sort_values(x_col)
         if member_ts.empty:
             continue
         x_vals = member_ts[x_col].to_numpy()
@@ -100,58 +106,52 @@ def _render_per_member(row_dict):
     title_parts = [str(row_dict[col]) for col in title_columns if col in row_dict and row_dict[col] is not None]
     chart_title = ' / '.join(title_parts) if title_parts else sid
 
-    target_value = row_dict.get('target_value', None)
-    if target_value is not None:
-        try:
-            target_value = float(target_value)
-        except (TypeError, ValueError):
-            target_value = None
+    target = read_target(row_dict)
 
-    # Render N images — one per fleet member as target
+    # Render N images — one per fleet member as highlighted_member
     outputs = []
-    for target_member in fleet_data.keys():
+    for highlighted_member in fleet_data.keys():
         # Determine per-image label
-        if target_member == anomaly_target and chart_class != 'normal':
+        if highlighted_member == anomaly_member and chart_class != 'normal':
             img_class = chart_class  # inherits defect type
-            anomalous_ids = [target_member]
+            anomalous_ids = [highlighted_member]
             disp_defect_start = defect_start if chart_class != 'context' else None
         else:
             img_class = 'normal'
             anomalous_ids = []
             disp_defect_start = None
 
-        filename = f"{sid}_{target_member}.png"
+        filename = f"{sid}_{highlighted_member}.png"
         train_path = images_dir / split / img_class / filename
         disp_path = display_dir / split / img_class / filename
         train_path.parent.mkdir(parents=True, exist_ok=True)
         disp_path.parent.mkdir(parents=True, exist_ok=True)
 
-        renderer.render_overlay(fleet_data, target_member, str(train_path),
-                                target_value=target_value)
+        renderer.render_overlay(fleet_data, highlighted_member, str(train_path),
+                                target=target)
         renderer.render_overlay_display(
-            fleet_data, target_member, str(disp_path),
+            fleet_data, highlighted_member, str(disp_path),
             anomalous_ids=anomalous_ids,
             defect_start_idx=disp_defect_start,
             title=chart_title,
             x_label=x_label,
             y_label=y_label,
-            target_value=target_value,
+            target=target,
         )
         outputs.append({
             'family_id': row_dict.get('family_id', sid),
             'chart_id': sid,
-            'target': target_member,
-            'target_member': target_member,
+            'highlighted_member': highlighted_member,
             'class': img_class,
             'split': split,
-            'context_column': ctx_col,
-            'contexts': row_dict.get('contexts'),
+            'legend_axis': legend_axis,
+            'members': ','.join(members),
             'defect_start_idx': row_dict.get('defect_start_idx'),
-            'target_value': row_dict.get('target_value'),
+            'target': target,
             'image_name': filename,
             'image_relpath': f"{split}/{img_class}/{filename}",
             'original_chart_class': chart_class,
-            'original_anomaly_target': anomaly_target,
+            'source_highlighted_member': anomaly_member,
             'device': row_dict.get('device'),
             'step': row_dict.get('step'),
             'item': row_dict.get('item'),

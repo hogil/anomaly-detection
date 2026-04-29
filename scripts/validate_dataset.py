@@ -2,6 +2,7 @@ import argparse
 import csv
 import json
 import shutil
+import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
@@ -10,14 +11,21 @@ from pathlib import Path
 import numpy as np
 import yaml
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.data.schema import highlighted_member as read_highlighted_member
+from src.data.schema import legend_axis as read_legend_axis
+
 
 @dataclass
 class ScenarioMeta:
     chart_id: str
     split: str
     cls: str
-    context_column: str
-    target: str
+    legend_axis: str
+    highlighted_member: str
     defect_start_idx: int
     defect_params: dict
 
@@ -84,8 +92,8 @@ def load_scenarios(path: Path) -> dict[str, ScenarioMeta]:
                 chart_id=row["chart_id"],
                 split=row["split"],
                 cls=row["class"],
-                context_column=row["context_column"],
-                target=row["target"],
+                legend_axis=read_legend_axis(row),
+                highlighted_member=read_highlighted_member(row) or "",
                 defect_start_idx=int(row["defect_start_idx"]),
                 defect_params=defect_params,
             )
@@ -98,8 +106,8 @@ def _append_row(chart_rows: list[dict], row: dict):
             "time_index": int(row["time_index"]),
             "value": float(row["value"]),
             "context_value": row.get("eqp_id")
-            if row["context_column"] == "eqp_id"
-            else row.get(row["context_column"], ""),
+            if row["legend_axis"] == "eqp_id"
+            else row.get(row["legend_axis"], ""),
         }
     )
 
@@ -142,10 +150,10 @@ def compute_metric(
     drift_span_floor_ratio: float,
 ) -> dict:
     target_rows = sorted(
-        [r for r in chart_rows if r["context_value"] == meta.target],
+        [r for r in chart_rows if r["context_value"] == meta.highlighted_member],
         key=lambda r: r["time_index"],
     )
-    fleet_rows = [r for r in chart_rows if r["context_value"] != meta.target]
+    fleet_rows = [r for r in chart_rows if r["context_value"] != meta.highlighted_member]
 
     fleet_groups: dict[str, list[float]] = defaultdict(list)
     for row in fleet_rows:
@@ -302,9 +310,9 @@ def process_timeseries(
     results: list[dict] = []
     current_chart_id = None
     current_rows: list[dict] = []
-    current_context_column = None
+    current_legend_axis = None
 
-    def finalize(chart_id: str, rows: list[dict], context_column: str):
+    def finalize(chart_id: str, rows: list[dict], legend_axis: str):
         if not chart_id or chart_id not in scenarios:
             return
         meta = scenarios[chart_id]
@@ -327,15 +335,15 @@ def process_timeseries(
         for raw in reader:
             chart_id = raw["chart_id"]
             if chart_id != current_chart_id:
-                finalize(current_chart_id, current_rows, current_context_column)
+                finalize(current_chart_id, current_rows, current_legend_axis)
                 current_chart_id = chart_id
                 current_rows = []
-                current_context_column = scenarios[chart_id].context_column if chart_id in scenarios else None
-            if current_context_column is None:
+                current_legend_axis = scenarios[chart_id].legend_axis if chart_id in scenarios else None
+            if current_legend_axis is None:
                 continue
-            raw["context_column"] = current_context_column
+            raw["legend_axis"] = current_legend_axis
             _append_row(current_rows, raw)
-        finalize(current_chart_id, current_rows, current_context_column)
+        finalize(current_chart_id, current_rows, current_legend_axis)
 
     return results
 

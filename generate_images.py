@@ -2,11 +2,11 @@
 이미지 생성 에이전트 (병렬 처리)
 
 data/timeseries.csv + data/scenarios.csv → 이미지 렌더링.
-모든 클래스가 overlay 포맷 (target 하이라이트 + fleet).
+모든 클래스가 overlay 포맷 (highlighted_member 하이라이트 + fleet).
 
 병렬 처리: multiprocessing.Pool 사용 (CPU 코어 수만큼 worker)
 
-images/: target=하이라이트 + fleet=회색
+images/: highlighted_member=하이라이트 + fleet=회색
 display/: 전체 멤버 색상 구분
 """
 
@@ -23,6 +23,10 @@ from multiprocessing import Pool, cpu_count
 from functools import partial
 
 from src.data.image_renderer import ImageRenderer
+from src.data.schema import highlighted_member as read_highlighted_member
+from src.data.schema import legend_axis as read_legend_axis
+from src.data.schema import members as read_members
+from src.data.schema import target as read_target
 
 DEFAULT_DATASET_CONFIG = "dataset.yaml"
 TQDM_DISABLE = not sys.stderr.isatty()
@@ -65,9 +69,11 @@ def _render_one(row_dict: dict):
     sid = row_dict["chart_id"]
     cls = row_dict["class"]
     split = row_dict["split"]
-    target_id = row_dict["target"]
-    contexts = row_dict["contexts"].split(",")
-    ctx_col = row_dict["context_column"]
+    highlighted_member = read_highlighted_member(row_dict)
+    members = read_members(row_dict)
+    legend_axis = read_legend_axis(row_dict)
+    if not highlighted_member or not members or not legend_axis:
+        return None
 
     # defect_start_idx: 연속 x 좌표 (numeric or datetime). NaN/None/-1 → 없음
     raw_ds = row_dict.get("defect_start_idx", None)
@@ -90,8 +96,8 @@ def _render_one(row_dict: dict):
     # fleet 구성: 멤버별 (x_vals, y_vals) pair
     # x_col은 numeric, datetime, 또는 다른 연속 좌표 가능
     fleet_data = {}
-    for mid in contexts:
-        member_ts = sc_ts[sc_ts[ctx_col] == mid].sort_values(x_col)
+    for mid in members:
+        member_ts = sc_ts[sc_ts[legend_axis].astype(str) == str(mid)].sort_values(x_col)
         if member_ts.empty:
             continue
         x_vals = member_ts[x_col].to_numpy()
@@ -114,33 +120,27 @@ def _render_one(row_dict: dict):
     train_path = images_dir / split / cls / filename
     disp_path = display_dir / split / cls / filename
 
-    # target_value: 수평 기준선 (scenarios.csv 에서)
-    target_value = row_dict.get("target_value", None)
-    if target_value is not None:
-        try:
-            target_value = float(target_value)
-        except (TypeError, ValueError):
-            target_value = None
+    target = read_target(row_dict)
 
-    # Stage 14: fleet_mode="context_only" → non-context class 에서는 fleet 제거 (target 만)
+    # Stage 14: fleet_mode="context_only" → non-context class 에서는 fleet 제거 (highlighted member만)
     fleet_mode = _worker_cache.get("fleet_mode", "always")
     if fleet_mode == "context_only" and cls != "context":
-        train_fleet_data = {target_id: fleet_data[target_id]} if target_id in fleet_data else fleet_data
+        train_fleet_data = {highlighted_member: fleet_data[highlighted_member]} if highlighted_member in fleet_data else fleet_data
     else:
         train_fleet_data = fleet_data
-    renderer.render_overlay(train_fleet_data, target_id, str(train_path),
-                            target_value=target_value)
+    renderer.render_overlay(train_fleet_data, highlighted_member, str(train_path),
+                            target=target)
 
-    anomalous_ids = [target_id] if cls != "normal" else []
+    anomalous_ids = [highlighted_member] if cls != "normal" else []
     disp_defect_start = defect_start if cls not in ("normal", "context") else None
     renderer.render_overlay_display(
-        fleet_data, target_id, str(disp_path),
+        fleet_data, highlighted_member, str(disp_path),
         anomalous_ids=anomalous_ids,
         defect_start_idx=disp_defect_start,
         title=chart_title,
         x_label=x_label,
         y_label=y_label,
-        target_value=target_value,
+        target=target,
     )
     return sid
 

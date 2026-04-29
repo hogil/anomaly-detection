@@ -31,6 +31,10 @@ from torchvision import transforms
 from datetime import datetime
 
 from src.data.image_renderer import ImageRenderer
+from src.data.schema import highlighted_member as read_highlighted_member
+from src.data.schema import legend_axis as read_legend_axis
+from src.data.schema import members as read_members
+from src.data.schema import target as read_target
 
 
 def _build_model(model_name: str, num_classes: int, dropout: float, device):
@@ -172,9 +176,11 @@ def run_inference(
     results = []
     for idx, row in sc_df.iterrows():
         sid = row["chart_id"]
-        ctx_col = row["context_column"]
-        contexts = row["contexts"].split(",")
-        target_id = row["target"]
+        legend_axis = read_legend_axis(row)
+        members = read_members(row)
+        highlighted_member = read_highlighted_member(row)
+        if not legend_axis or not members or not highlighted_member:
+            continue
 
         sc_ts = ts_grouped.get(sid)
         if sc_ts is None:
@@ -182,18 +188,19 @@ def run_inference(
 
         # fleet data 구성
         fleet_data = {}
-        for mid in contexts:
-            m = sc_ts[sc_ts[ctx_col] == mid].sort_values(x_col)
+        for mid in members:
+            m = sc_ts[sc_ts[legend_axis].astype(str) == str(mid)].sort_values(x_col)
             if m.empty:
                 continue
             fleet_data[mid] = (m[x_col].to_numpy(), m["value"].to_numpy())
 
-        if not fleet_data or target_id not in fleet_data:
+        if not fleet_data or highlighted_member not in fleet_data:
             continue
 
         # 1. training image (224x224) 생성 → 모델 입력
         train_img_path = temp_dir / f"{sid}.png"
-        renderer.render_overlay(fleet_data, target_id, str(train_img_path))
+        target = read_target(row)
+        renderer.render_overlay(fleet_data, highlighted_member, str(train_img_path), target=target)
 
         # 2. 예측
         img = Image.open(train_img_path).convert("RGB")
@@ -211,9 +218,9 @@ def run_inference(
             abn_idx = 1  # fallback
         p_abnormal = float(probs[abn_idx].item())
 
-        # 3. timestamp 추출 (target 멤버의 가장 오래된 x 값)
-        target_x = fleet_data[target_id][0]
-        earliest_x = target_x[0] if len(target_x) > 0 else None
+        # 3. timestamp 추출 (highlighted member의 가장 오래된 x 값)
+        member_x = fleet_data[highlighted_member][0]
+        earliest_x = member_x[0] if len(member_x) > 0 else None
         ts_str = _format_timestamp(earliest_x) if earliest_x is not None else "na"
 
         # 4. filename: p{pct}_{col1}_{col2}_{col3}_{yymmddhh24}.png
@@ -234,17 +241,18 @@ def run_inference(
         title_parts = [str(row.get(c, "")) for c in title_columns if row.get(c) is not None]
         title = " / ".join(title_parts) if title_parts else sid
         renderer.render_overlay_display(
-            fleet_data, target_id, str(disp_path),
+            fleet_data, highlighted_member, str(disp_path),
             anomalous_ids=[],             # production: label 없음
             defect_start_idx=None,         # 불량 marker 없음
             title=title,
             x_label=x_col,
+            target=target,
         )
 
         # 6. results
         result_row = {
             "chart_id": sid,
-            "target_member": target_id,
+            "highlighted_member": highlighted_member,
             "predicted": pred_class,
             "p_abnormal": round(p_abnormal, 4),
             "image_file": str(disp_path.relative_to(out_path)).replace("\\", "/"),

@@ -80,7 +80,7 @@ cfg = yaml.safe_load(Path(base_path).read_text(encoding="utf-8"))
 
 source = dict(cfg)
 source["dataset"] = dict(cfg.get("dataset", {}))
-source["dataset"]["all_context_columns_per_chart"] = True
+source["dataset"]["all_legend_axes_per_group"] = True
 source["output"] = dict(cfg.get("output", {}))
 source["output"]["data_dir"] = f"data_{suffix}"
 source["output"]["image_dir"] = f"images_{suffix}"
@@ -105,7 +105,7 @@ if [[ "$FORCE" -eq 1 || ! -f "$SOURCE_DATA_DIR/scenarios.csv" || ! -f "$SOURCE_D
   run_cmd "$PYTHON" generate_data.py \
     --config "$SOURCE_CONFIG" \
     --workers "$WORKERS" \
-    --all_context_columns_per_chart \
+    --all_legend_axes_per_group \
     --no_snapshot
 else
   echo "[skip] logical source data already exists: $SOURCE_DATA_DIR"

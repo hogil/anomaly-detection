@@ -4,6 +4,7 @@
 - `plots/`: summary plots
 - `sample_overview_train.png`: training image examples
 - `sample_overview_display.png`: display image examples
+- `sample_overview_legend_axis.png`: display image examples grouped by legend_axis
 - `logical_member_targets_ch09100.png`: logical member class example
 
 Server log report command:

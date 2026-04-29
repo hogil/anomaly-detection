@@ -2,8 +2,8 @@
 이미지 렌더러 (Overlay 통일)
 
 모든 클래스가 overlay 포맷:
-- 학습용: target=하이라이트색 + fleet=회색, 축 없음 (224x224)
-- display: target=빨강(불량)/파랑(정상) + fleet=연한 고유색, 축/legend
+- 학습용: highlighted_member=하이라이트색 + fleet=회색, 축 없음 (224x224)
+- display: highlighted_member=빨강(불량)/파랑(정상) + fleet=연한 고유색, 축/legend
 
 fleet_data 포맷: {member_id: (x_vals, y_vals)}
   - x_vals: numpy array of int/float/datetime (연속 x 좌표)
@@ -60,11 +60,11 @@ def _is_datetime_x(x_val) -> bool:
     return False
 
 
-def _filter_outliers(fleet_data, sigma=5, target_id=None):
+def _filter_outliers(fleet_data, sigma=5, highlighted_member=None):
     """fleet 멤버의 y값 mean ± sigma*std 밖의 점 제거 (시각화 정리용).
 
-    ⚠️ target_id 는 절대 filter 하지 않음 — spike defect 의 핵심 신호가
-    outlier 자체이므로 target 만큼은 그대로 보존해야 함.
+    ⚠️ highlighted_member 는 절대 filter 하지 않음 — spike defect 의 핵심 신호가
+    outlier 자체이므로 highlighted_member 만큼은 그대로 보존해야 함.
     (이전 버그: outlier_sigma=5 가 spike 점들을 잘라먹어 모델/사람 모두 못 봤음)
     """
     if sigma <= 0 or not fleet_data:
@@ -72,7 +72,7 @@ def _filter_outliers(fleet_data, sigma=5, target_id=None):
     # mean/std 계산도 fleet (target 제외) 기준으로
     all_y = []
     for mid, (x, y) in fleet_data.items():
-        if mid == target_id:
+        if mid == highlighted_member:
             continue
         if len(y) > 0:
             all_y.append(np.asarray(y, dtype=float))
@@ -90,8 +90,8 @@ def _filter_outliers(fleet_data, sigma=5, target_id=None):
     upper = mean + sigma * std
     filtered = {}
     for mid, (x, y) in fleet_data.items():
-        if mid == target_id:
-            # target 은 그대로 (spike 보존)
+        if mid == highlighted_member:
+            # highlighted member는 그대로 (spike 보존)
             filtered[mid] = (x, y)
             continue
         if len(y) == 0:
@@ -158,20 +158,20 @@ class ImageRenderer:
         self.baseline_line = bool(img_cfg.get("baseline_line", True))
 
     # ================================================================
-    # 학습용 (target=하이라이트 + fleet=회색, 축 없음)
+    # 학습용 (highlighted_member=하이라이트 + fleet=회색, 축 없음)
     # ================================================================
 
-    def render_overlay(self, fleet_data: dict, target_id: str, save_path: str,
-                       target_value: float = None):
-        # outlier filtering (mean ± N*std 밖의 점 제거) — target 은 보존
-        fleet_data = _filter_outliers(fleet_data, sigma=self.outlier_sigma, target_id=target_id)
+    def render_overlay(self, fleet_data: dict, highlighted_member: str, save_path: str,
+                       target: float = None):
+        # outlier filtering (mean ± N*std 밖의 점 제거) — highlighted member는 보존
+        fleet_data = _filter_outliers(fleet_data, sigma=self.outlier_sigma, highlighted_member=highlighted_member)
         fig, ax = self._create_figure()
         vmin, vmax = self._fleet_minmax(fleet_data)
         val_range = vmax - vmin if vmax - vmin > 1e-10 else 1.0
 
         # Fleet (회색)
         for mid, (x_vals, y_vals) in fleet_data.items():
-            if mid == target_id:
+            if mid == highlighted_member:
                 continue
             if len(x_vals) > 0:
                 y_norm = (y_vals - vmin) / val_range
@@ -179,22 +179,22 @@ class ImageRenderer:
                            s=self.fleet_marker, c=self.fleet_color,
                            alpha=self.fleet_alpha, edgecolors="none", zorder=1)
 
-        # Target (하이라이트)
-        if target_id in fleet_data:
-            x_vals, y_vals = fleet_data[target_id]
+        # Highlighted member
+        if highlighted_member in fleet_data:
+            x_vals, y_vals = fleet_data[highlighted_member]
             if len(x_vals) > 0:
                 y_norm = (y_vals - vmin) / val_range
                 ax.scatter(x_vals, y_norm,
                            s=self.target_marker, c=self.target_color,
                            alpha=self.target_alpha, edgecolors="none", zorder=2)
 
-        # 수평 기준선 (target_value 또는 fleet_median) — 연한 회색
+        # 수평 기준선 (target 또는 fleet_median) — 연한 회색
         if self.baseline_line:
-            line_val = target_value
+            line_val = target
             if line_val is None:
                 fleet_y_all = []
                 for mid, (_, yv) in fleet_data.items():
-                    if mid != target_id and len(yv) > 0:
+                    if mid != highlighted_member and len(yv) > 0:
                         fleet_y_all.append(yv)
                 if fleet_y_all:
                     line_val = float(np.median(np.concatenate(fleet_y_all)))
@@ -213,17 +213,17 @@ class ImageRenderer:
     # Display (전체 멤버 색상 구분)
     # ================================================================
 
-    def render_overlay_display(self, fleet_data: dict, target_id: str,
+    def render_overlay_display(self, fleet_data: dict, highlighted_member: str,
                                save_path: str, anomalous_ids: list = None,
                                defect_start_idx=None, title: str = None,
                                x_label: str = "Sample Index",
                                y_label: str = "Measurement Value (nm)",
-                               target_value: float = None):
+                               target: float = None):
         if anomalous_ids is None:
             anomalous_ids = []
 
-        # outlier filtering (mean ± N*std 밖의 점 제거) — target 은 보존
-        fleet_data = _filter_outliers(fleet_data, sigma=self.outlier_sigma, target_id=target_id)
+        # outlier filtering (mean ± N*std 밖의 점 제거) — highlighted member는 보존
+        fleet_data = _filter_outliers(fleet_data, sigma=self.outlier_sigma, highlighted_member=highlighted_member)
 
         fig, ax = self._create_figure_display()
 
@@ -240,11 +240,11 @@ class ImageRenderer:
                            zorder=1, label=mid)
                 color_idx += 1
 
-        # 불량 멤버 (진한 빨강) 또는 정상 target (파랑)
-        if target_id in fleet_data:
-            x_vals, y_vals = fleet_data[target_id]
+        # 불량 멤버 (진한 빨강) 또는 정상 highlighted member (파랑)
+        if highlighted_member in fleet_data:
+            x_vals, y_vals = fleet_data[highlighted_member]
             if len(x_vals) > 0:
-                if target_id in anomalous_ids:
+                if highlighted_member in anomalous_ids:
                     # 불량: 빨강
                     if _is_valid_defect_start(defect_start_idx):
                         # 개별 불량: 경계선 전후 색 분리
@@ -259,12 +259,12 @@ class ImageRenderer:
                             ax.scatter(x_vals[normal_m], y_vals[normal_m],
                                        s=DISPLAY_MARKER_TARGET, c=COLOR_NORMAL,
                                        alpha=0.65, edgecolors="white", linewidths=0.3,
-                                       zorder=2, label=f"{target_id} (normal)")
+                                       zorder=2, label=f"{highlighted_member} (normal)")
                         if anomaly_m.any():
                             ax.scatter(x_vals[anomaly_m], y_vals[anomaly_m],
                                        s=DISPLAY_MARKER_TARGET, c=COLOR_ANOMALY,
                                        alpha=0.75, edgecolors="white", linewidths=0.3,
-                                       zorder=3, label=f"* {target_id} (anomaly)")
+                                       zorder=3, label=f"* {highlighted_member} (anomaly)")
                         try:
                             ax.axvline(x=defect_start_idx, color="#CCCCCC",
                                        linestyle="--", linewidth=0.8, zorder=1)
@@ -275,21 +275,21 @@ class ImageRenderer:
                         ax.scatter(x_vals, y_vals,
                                    s=DISPLAY_MARKER_TARGET, c=COLOR_ANOMALY,
                                    alpha=0.75, edgecolors="white", linewidths=0.3,
-                                   zorder=2, label=f"* {target_id}")
+                                   zorder=2, label=f"* {highlighted_member}")
                 else:
                     # 정상: 파랑
                     ax.scatter(x_vals, y_vals,
                                s=DISPLAY_MARKER_TARGET, c=COLOR_NORMAL,
                                alpha=0.65, edgecolors="white", linewidths=0.3,
-                               zorder=2, label=target_id)
+                               zorder=2, label=highlighted_member)
 
-        # 수평 기준선 (target_value 또는 fleet_median) — 검은색
+        # 수평 기준선 (target 또는 fleet_median) — 검은색
         if self.baseline_line:
-            line_val_disp = target_value
+            line_val_disp = target
             if line_val_disp is None:
                 fleet_y_all_disp = []
                 for mid, (_, yv) in fleet_data.items():
-                    if mid != target_id and len(yv) > 0:
+                    if mid != highlighted_member and len(yv) > 0:
                         fleet_y_all_disp.append(yv)
                 if fleet_y_all_disp:
                     line_val_disp = float(np.median(np.concatenate(fleet_y_all_disp)))

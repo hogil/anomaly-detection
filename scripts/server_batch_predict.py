@@ -46,6 +46,10 @@ if str(ROOT) not in sys.path:
 
 from inference import _detect_x_col, _format_timestamp, _load_model_from_best_info  # noqa: E402
 from src.data.image_renderer import ImageRenderer  # noqa: E402
+from src.data.schema import highlighted_member as read_highlighted_member  # noqa: E402
+from src.data.schema import legend_axis as read_legend_axis  # noqa: E402
+from src.data.schema import members as read_members  # noqa: E402
+from src.data.schema import target as read_target  # noqa: E402
 
 
 SKIP_SCAN_NAMES = {
@@ -167,25 +171,25 @@ def discover_dataset_dirs(input_roots: Iterable[Path], explicit_dirs: Iterable[P
 
 
 def build_output_stem(row: pd.Series, title_columns: list[str], p_abnormal: float) -> str:
-    target = sanitize_part(row.get("target_member", row.get("target", "target")))
+    highlighted_member = sanitize_part(read_highlighted_member(row) or "member")
     chart_id = sanitize_part(row.get("chart_id", "chart"))
     title_parts = [sanitize_part(row.get(col, "na")) for col in title_columns]
     ts_val = row.get("_timestamp_string", "na")
     p_part = f"p{int(round(p_abnormal * 100)):03d}"
-    return "_".join([p_part, *title_parts, chart_id, target, sanitize_part(ts_val)])
+    return "_".join([p_part, *title_parts, chart_id, highlighted_member, sanitize_part(ts_val)])
 
 
 def render_display_image(
     renderer: ImageRenderer,
     fleet_data: dict[str, tuple],
-    target_id: str,
+    highlighted_member: str,
     display_path: Path,
     row: pd.Series,
     x_col: str,
     title_columns: list[str],
 ) -> None:
     true_label = true_binary_label(row)
-    anomalous_ids = [target_id] if true_label == "abnormal" else []
+    anomalous_ids = [highlighted_member] if true_label == "abnormal" else []
     defect_start_idx = row.get("defect_start_idx")
     if true_label != "abnormal":
         defect_start_idx = None
@@ -193,37 +197,22 @@ def render_display_image(
     title_parts = [str(row.get(col, "")) for col in title_columns if pd.notna(row.get(col))]
     title = " / ".join(title_parts) if title_parts else str(row.get("chart_id", "chart"))
 
-    target_value = row.get("target_value")
-    if pd.notna(target_value):
-        try:
-            target_value = float(target_value)
-        except (TypeError, ValueError):
-            target_value = None
-    else:
-        target_value = None
+    target = read_target(row)
 
     renderer.render_overlay_display(
         fleet_data,
-        target_id,
+        highlighted_member,
         str(display_path),
         anomalous_ids=anomalous_ids,
         defect_start_idx=defect_start_idx,
         title=title,
         x_label=x_col,
-        target_value=target_value,
+        target=target,
     )
 
 
-def render_model_input(renderer: ImageRenderer, fleet_data: dict[str, tuple], target_id: str, row: pd.Series, path: Path) -> None:
-    target_value = row.get("target_value")
-    if pd.notna(target_value):
-        try:
-            target_value = float(target_value)
-        except (TypeError, ValueError):
-            target_value = None
-    else:
-        target_value = None
-    renderer.render_overlay(fleet_data, target_id, str(path), target_value=target_value)
+def render_model_input(renderer: ImageRenderer, fleet_data: dict[str, tuple], highlighted_member: str, row: pd.Series, path: Path) -> None:
+    renderer.render_overlay(fleet_data, highlighted_member, str(path), target=read_target(row))
 
 
 def infer_dataset(
@@ -280,30 +269,30 @@ def infer_dataset(
         for _, row in tqdm(sc_df.iterrows(), total=len(sc_df), desc=f"predict:{dataset_dir.name}"):
             row = row.copy()
             sid = row["chart_id"]
-            target_id = row.get("target_member", row.get("target"))
-            ctx_col = row["context_column"]
-            contexts = str(row["contexts"]).split(",")
+            highlighted_member = read_highlighted_member(row)
+            legend_axis = read_legend_axis(row)
+            members = read_members(row)
             sc_ts = ts_grouped.get(sid)
-            if sc_ts is None or not target_id:
+            if sc_ts is None or not highlighted_member or not legend_axis or not members:
                 continue
 
             fleet_data: dict[str, tuple] = {}
-            for member_id in contexts:
-                member_ts = sc_ts[sc_ts[ctx_col] == member_id].sort_values(x_col)
+            for member_id in members:
+                member_ts = sc_ts[sc_ts[legend_axis].astype(str) == str(member_id)].sort_values(x_col)
                 if member_ts.empty:
                     continue
                 fleet_data[member_id] = (member_ts[x_col].to_numpy(), member_ts["value"].to_numpy())
 
-            if target_id not in fleet_data:
+            if highlighted_member not in fleet_data:
                 continue
 
-            target_x = fleet_data[target_id][0]
-            ts_string = _format_timestamp(target_x[0] if len(target_x) else "na")
+            member_x = fleet_data[highlighted_member][0]
+            ts_string = _format_timestamp(member_x[0] if len(member_x) else "na")
             row["_timestamp_string"] = ts_string
 
-            input_name = f"{sanitize_part(sid)}_{sanitize_part(target_id)}.png"
+            input_name = f"{sanitize_part(sid)}_{sanitize_part(highlighted_member)}.png"
             temp_input = temp_dir / input_name
-            render_model_input(renderer, fleet_data, target_id, row, temp_input)
+            render_model_input(renderer, fleet_data, highlighted_member, row, temp_input)
 
             img = Image.open(temp_input).convert("RGB")
             x_tensor = transform(img).unsqueeze(0).to(device)
@@ -321,7 +310,7 @@ def infer_dataset(
 
             stem = build_output_stem(row, title_columns, p_abnormal)
             pred_path = pred_root / pred_class / f"{stem}.png"
-            render_display_image(renderer, fleet_data, target_id, pred_path, row, x_col, title_columns)
+            render_display_image(renderer, fleet_data, highlighted_member, pred_path, row, x_col, title_columns)
 
             if save_model_inputs:
                 input_dir = output_dir / "model_inputs" / (row.get("split") or "all")
@@ -347,6 +336,9 @@ def infer_dataset(
                 {
                     "dataset_dir": str(dataset_dir),
                     "scenarios_file": str(scenarios_path),
+                    "legend_axis": legend_axis,
+                    "highlighted_member": highlighted_member,
+                    "target": read_target(row),
                     "predicted": pred_class,
                     "true_binary": truth,
                     "p_abnormal": round(p_abnormal, 6),

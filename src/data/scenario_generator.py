@@ -3,15 +3,15 @@
 
 구조:
 - Chart = device + step + item (고정, 1 chart 정의)
-- Context = eqp_id, chamber, recipe (fleet 비교 대상)
-- 1 chart당 context 컬럼별 fleet을 생성
+- Legend axis = eqp_id, chamber, recipe (fleet 비교 대상)
+- 1 chart당 legend axis별 fleet을 생성
 - 학습: 불량 멤버 하이라이트 이미지 = 1 학습 샘플
-- 추론: context 컬럼별 × 종류별 이미지 전부 생성
+- 추론: legend axis별 × 종류별 이미지 전부 생성
 
 모든 클래스가 overlay 포맷:
-- normal: target에 불량 없음
-- mean_shift/std/spike/drift: target 시계열 오른쪽 끝에 불량 주입
-- context: target 전체 시계열이 fleet 대비 유의차
+- normal: highlighted member에 불량 없음
+- mean_shift/std/spike/drift: highlighted member 시계열 오른쪽 끝에 불량 주입
+- context: highlighted member 전체 시계열이 fleet 대비 유의차
 """
 
 import numpy as np
@@ -30,10 +30,10 @@ class ScenarioResult:
     device: str
     step: str
     item: str
-    # context 정보
-    context_column: str             # eqp_id, chamber, recipe
-    contexts: List[str]             # fleet 전체 멤버
-    target: str                     # 하이라이트 대상
+    # legend/member 정보
+    legend_axis: str                # eqp_id, chamber, recipe
+    members: List[str]              # fleet 전체 멤버
+    highlighted_member: str         # 하이라이트 대상
     # 불량 정보
     defect_start_idx: int
     defect_params: dict
@@ -51,7 +51,7 @@ class ScenarioGenerator:
         self.chart_cfg = config["chart"]
         self.ctx_cfg = config["context"]
 
-        # context 컬럼별 pool과 count_range
+        # legend axis별 pool과 count_range
         self._ctx_pool = {}
         self._ctx_count = {}
         for col in self.ctx_cfg["columns"]:
@@ -66,7 +66,7 @@ class ScenarioGenerator:
         return device, step, item
 
     def generate(self, chart_id: str, cls: str,
-                 context_column: str = None,
+                 legend_axis: str = None,
                  device: str = None,
                  step: str = None,
                  item: str = None) -> ScenarioResult:
@@ -75,33 +75,33 @@ class ScenarioGenerator:
         Args:
             chart_id: chart ID
             cls: 클래스
-            context_column: context 컬럼 강제 지정 (None이면 랜덤)
+            legend_axis: legend axis 강제 지정 (None이면 랜덤)
         """
         # 1) Chart 정의: device + step + item 랜덤 선택
         if device is None or step is None or item is None:
             device, step, item = self.sample_chart_meta()
 
-        # 2) Context 컬럼 선택
-        if context_column is None:
-            context_column = str(self.rng.choice(self.ctx_cfg["columns"]))
+        # 2) Legend axis 선택
+        if legend_axis is None:
+            legend_axis = str(self.rng.choice(self.ctx_cfg["columns"]))
 
-        # 3) Context 멤버 선택
-        pool = self._ctx_pool[context_column]
-        lo, hi = self._ctx_count[context_column]
+        # 3) Member 선택
+        pool = self._ctx_pool[legend_axis]
+        lo, hi = self._ctx_count[legend_axis]
         count = self.rng.integers(lo, min(hi, len(pool)) + 1)
-        contexts = [str(m) for m in self.rng.choice(pool, size=count, replace=False)]
+        members = [str(m) for m in self.rng.choice(pool, size=count, replace=False)]
 
-        # 4) Target 선택
-        target = str(self.rng.choice(contexts))
+        # 4) Highlighted member 선택
+        target = str(self.rng.choice(members))
 
         # 5) 공유 에피소드 구조 생성
         ref_values, shared_mask, shared_episodes = self.baseline_gen.generate()
 
-        # 6) 각 context 멤버: 멤버별 mask 변동 + 독립 값
+        # 6) 각 member: 멤버별 mask 변동 + 독립 값
         context_data = {}
         fleet_means = []
 
-        for mid in contexts:
+        for mid in members:
             member_mask = self.baseline_gen.generate_member_mask(shared_mask, shared_episodes)
             values = self.baseline_gen.generate_on_shared_mask(member_mask, shared_episodes)
             context_data[mid] = (values, member_mask)
@@ -115,9 +115,9 @@ class ScenarioGenerator:
         # 멤버 수가 늘수록 거의 2배까지 벌어져 시각적으로 너무 넓어졌다.
         fleet_center = np.mean(fleet_means) if fleet_means else 0.0
         fleet_var = self.ctx_cfg["fleet_variation"]
-        target_offsets = self._sample_centered_offsets(len(contexts), fleet_var["mean_range"])
+        target_offsets = self._sample_centered_offsets(len(members), fleet_var["mean_range"])
 
-        for mid, offset in zip(contexts, target_offsets):
+        for mid, offset in zip(members, target_offsets):
             values, mask = context_data[mid]
             valid = np.where(mask)[0]
             if len(valid) > 0:
@@ -131,11 +131,11 @@ class ScenarioGenerator:
         defect_params = {}
 
         if cls == "normal":
-            self._normalize_normal_target(context_data, contexts, target)
+            self._normalize_normal_target(context_data, members, target)
         elif cls == "context":
-            defect_params = self._inject_context(context_data, contexts, target)
+            defect_params = self._inject_context(context_data, members, target)
             # 사후 검증: context는 전체 평균이 fleet 평균에서 floor 이상 이격
-            self._enforce_context_floor(context_data, contexts, target)
+            self._enforce_context_floor(context_data, members, target)
         else:
             # 불량 영역에 유효 포인트 최소 보장 (config의 enforcement.min_defect_points_range)
             enf = self.cfg.get("defect", {}).get("enforcement", {})
@@ -156,7 +156,7 @@ class ScenarioGenerator:
 
             # === Fleet visible range + std 계산 ===
             all_fleet_vals = []
-            for mid in contexts:
+            for mid in members:
                 if mid == target:
                     continue
                 fv, fm = context_data[mid]
@@ -203,7 +203,7 @@ class ScenarioGenerator:
 
             # 사후 검증: defect 영역 강도 floor 강제 (fleet_std 기준)
             self._enforce_defect_floor(
-                context_data, contexts, target, cls,
+                context_data, members, target, cls,
                 info.start_idx, info.end_idx
             )
 
@@ -219,11 +219,11 @@ class ScenarioGenerator:
         # 비context 컬럼의 고정값
         other_ctx_fixed = {}
         for other_col in self.ctx_cfg["columns"]:
-            if other_col != context_column:
+            if other_col != legend_axis:
                 other_ctx_fixed[other_col] = str(self.rng.choice(self._ctx_pool[other_col]))
 
         rows = []
-        for mid in contexts:
+        for mid in members:
             values, mask = context_data[mid]
             valid_indices = np.where(mask)[0]
 
@@ -236,8 +236,8 @@ class ScenarioGenerator:
                     "item": item,
                     "value": float(values[t]),
                 }
-                # context 컬럼
-                row[context_column] = mid
+                # legend axis 컬럼
+                row[legend_axis] = mid
                 for other_col, other_val in other_ctx_fixed.items():
                     row[other_col] = other_val
                 rows.append(row)
@@ -248,9 +248,9 @@ class ScenarioGenerator:
             device=device,
             step=step,
             item=item,
-            context_column=context_column,
-            contexts=contexts,
-            target=target,
+            legend_axis=legend_axis,
+            members=members,
+            highlighted_member=target,
             defect_start_idx=defect_start_idx,
             defect_params=defect_params,
             timeseries_rows=rows,
@@ -288,7 +288,7 @@ class ScenarioGenerator:
 
         return raw * (band / raw_range)
 
-    def _normalize_normal_target(self, context_data, contexts, target):
+    def _normalize_normal_target(self, context_data, members, target):
         """Normal 클래스에서 target이 fleet 대비 이상해 보이지 않도록 강제 보정.
 
         Floor 기준 (config.defect.enforcement):
@@ -303,7 +303,7 @@ class ScenarioGenerator:
         fleet_all_vals = []
         fleet_member_means = []  # 각 멤버의 평균 (between-member spread 계산용)
         fleet_within_stds = []   # 각 멤버의 내부 std (within-member noise)
-        for mid in contexts:
+        for mid in members:
             if mid == target:
                 continue
             v, m = context_data[mid]
@@ -353,7 +353,7 @@ class ScenarioGenerator:
 
         # fleet 우측 평균
         fleet_right_vals = []
-        for mid in contexts:
+        for mid in members:
             if mid == target:
                 continue
             v, m = context_data[mid]
@@ -393,7 +393,7 @@ class ScenarioGenerator:
 
         context_data[target] = (tv, tm)
 
-    def _enforce_defect_floor(self, context_data, contexts, target, cls,
+    def _enforce_defect_floor(self, context_data, members, target, cls,
                               defect_start: int, defect_end: int):
         """Defect 주입 후 fleet_std 기준으로 강도 floor 강제.
 
@@ -419,7 +419,7 @@ class ScenarioGenerator:
         fleet_all_vals = []
         fleet_defect_vals = []
         fleet_within_stds = []
-        for mid in contexts:
+        for mid in members:
             if mid == target:
                 continue
             v, m = context_data[mid]
@@ -542,7 +542,7 @@ class ScenarioGenerator:
 
         context_data[target] = (tv, tm)
 
-    def _enforce_context_floor(self, context_data, contexts, target):
+    def _enforce_context_floor(self, context_data, members, target):
         """Context: |target_mean - fleet_mean| / fleet_std >= floor"""
         enf = self.cfg.get("defect", {}).get("enforcement", {})
         floor = enf.get("context_floor_sigma", 1.8)
@@ -553,7 +553,7 @@ class ScenarioGenerator:
             return
 
         fleet_vals = []
-        for mid in contexts:
+        for mid in members:
             if mid == target:
                 continue
             v, m = context_data[mid]
@@ -576,7 +576,7 @@ class ScenarioGenerator:
 
         context_data[target] = (tv, tm)
 
-    def _inject_context(self, context_data, contexts, target):
+    def _inject_context(self, context_data, members, target):
         """Context anomaly: target의 전체 평균을 fleet 대비 이동 + 산포 증가.
 
         reference 모드 (config target_deviation.reference):
@@ -596,7 +596,7 @@ class ScenarioGenerator:
         fleet_all = []
         fleet_member_means = []
         fleet_member_stds = []
-        for mid in contexts:
+        for mid in members:
             if mid == target:
                 continue
             fv, fm = context_data[mid]
@@ -689,8 +689,9 @@ class ScenarioGenerator:
         for _enforce_iter in range(3):  # 최대 3회 반복
             # 현재 fleet between_std 재계산 (fleet 값은 안 변하므로 동일하지만 명시적)
             _fm_means = []
-            for mid in contexts:
-                if mid == target: continue
+            for mid in members:
+                if mid == target:
+                    continue
                 fv, fm_mask = context_data[mid]
                 fvi = np.where(fm_mask)[0]
                 if len(fvi) > 0:
@@ -707,7 +708,7 @@ class ScenarioGenerator:
             # 추가: 가장 가까운 fleet 멤버보다 fleet_within_std 이상 떨어져야 함
             _closest_fleet = min(_fm_means, key=lambda m: abs(m - post_target_mean))
             _gap_from_closest = abs(post_target_mean - _closest_fleet)
-            _fleet_within_avg = float(np.mean([ms_val for mid, ms_val in zip(contexts, fleet_member_stds) if mid != target])) if fleet_member_stds else 0.01
+            _fleet_within_avg = float(np.mean([ms_val for mid, ms_val in zip(members, fleet_member_stds) if mid != target])) if fleet_member_stds else 0.01
             _min_gap = _fleet_within_avg * float(dev_cfg.get("mean_min_within_ratio", 1.5))
 
             need_boost = False

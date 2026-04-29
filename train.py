@@ -39,6 +39,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 from src.models.focal_loss import FocalLoss
+from src.data.schema import highlighted_member as read_highlighted_member
 
 TQDM_DISABLE = False
 
@@ -198,15 +199,21 @@ class ChartImageDataset(Dataset):
             cls = row["class"]
             split = row["split"]
             chart_id = row["chart_id"]
-            image_name = None
+            candidate_names = []
             if "image_name" in row and pd.notna(row["image_name"]):
-                image_name = str(row["image_name"])
-            elif "target_member" in row and pd.notna(row["target_member"]):
-                image_name = f"{chart_id}_{row['target_member']}.png"
-            else:
-                image_name = f"{chart_id}.png"
-            img_path = image_dir / split / cls / image_name
-            if not img_path.exists():
+                candidate_names.append(str(row["image_name"]))
+            highlighted_member = read_highlighted_member(row)
+            if highlighted_member:
+                candidate_names.append(f"{chart_id}_{highlighted_member}.png")
+            candidate_names.append(f"{chart_id}.png")
+
+            img_path = None
+            for image_name in candidate_names:
+                candidate_path = image_dir / split / cls / image_name
+                if candidate_path.exists():
+                    img_path = candidate_path
+                    break
+            if img_path is None:
                 continue
 
             if mode == "binary":

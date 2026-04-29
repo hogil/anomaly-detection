@@ -83,16 +83,25 @@ python train.py \
 | `--filter_nonfinite_loss` | NaN/Inf loss 샘플 step skip | `--filter_nonfinite_loss` |
 | `--log_dir_group` | `logs/<group>/<run>/` 형식으로 묶음 | `--log_dir_group run_20260430_120000` |
 
-출력:
+출력 폴더 (자동으로 시작 시각과 best F1/Recall이 붙음):
 
 ```
-logs/<group?>/<run>/
-  best_model.pth, best_info.json, history.json
-  confusion_matrix.png, training_curves.png
-  data_config_used.yaml   <- 이 run이 본 데이터셋 정의
-  train_config_used.yaml  <- 이 run의 학습 인자 전부
-  predictions/
+logs/                                                       # 단일 학습 (그룹 없음)
+└── <YYMMDD_HHMMSS>_<topic>_F<f1>_R<recall>/
+       best_model.pth, best_info.json, history.json
+       confusion_matrix.png, training_curves.png
+       data_config_used.yaml   <- 이 run이 본 데이터셋 정의
+       train_config_used.yaml  <- 이 run의 학습 인자 전부
+       predictions/
+
+logs/                                                       # 00_all.sh / batch 실행
+└── run_<YYYYMMDD_HHMMSS>/                                  #   group 폴더
+        ├── <YYMMDD_HHMMSS>_<topic>_F<f1>_R<recall>/
+        ├── <YYMMDD_HHMMSS>_<topic>_F<f1>_R<recall>/
+        └── ...
 ```
+
+`--log_dir`로 넣는 값은 **topic(조건명)** 이고, 폴더명에 들어가는 시각·F1/Recall은 train.py가 자동으로 붙입니다 (best 갱신 시마다 F/R 숫자 갱신).
 
 BKM combined 한 번 돌리는 단일 명령 예시 (`05_bkm_combined`와 같은 조합):
 
@@ -143,7 +152,7 @@ GPU 메모리·CPU 수로 자동 프로필 결정:
 
 `--num-workers`, `--prefetch-factor`, `--max-launched`, `--log-dir-group` 직접 지정하면 위 자동값 덮어씀.
 
-`00_all.sh` 시작할 때 `LOG_DIR_GROUP=run_<timestamp>` 한 번 만들어서 모든 stage가 `logs/run_<timestamp>/<run>/` 아래로 모입니다.
+`00_all.sh` 시작할 때 `LOG_DIR_GROUP=run_<YYYYMMDD_HHMMSS>` 한 번 만들어서 모든 stage가 `logs/run_<YYYYMMDD_HHMMSS>/<YYMMDD_HHMMSS>_<topic>_F<f1>_R<recall>/` 아래로 모입니다.
 
 ---
 
@@ -346,7 +355,6 @@ python scripts/gradcam_report.py \
 CAM 은 모델 근거 위치를 보여주는 것이지 실제 anomaly 위치가 아닙니다. 후처리 룰로는 쓰지 않음.
 
 FP/FN만 따로 보고 싶으면 `gradcam_error_report.py`.
-후처리 검증은 `right_crop_postprocess_report.py` 또는 `gradcam_normal_rescue_report.py`.
 
 ---
 

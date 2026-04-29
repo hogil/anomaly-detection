@@ -40,9 +40,8 @@ Outputs markdown, CSV tables, and PNG plots from `logs/*/history.json` and `best
 
 - `gradcam_report.py`: Grad-CAM overlays on trend images plus transparent heat masks for saved models
 - `gradcam_error_report.py`: Grad-CAM overlays for FP/FN samples
-- `right_crop_postprocess_report.py`: test right-crop postprocess rules against labeled FP/FN
-- `gradcam_normal_rescue_report.py`: test normal-prediction Grad-CAM rescue rules against labeled FP/FN
 - `generate_strict_one_factor_report.py`: build the strict one-factor markdown + axis plots
-- `update_live_summary_doc.py`: refresh `docs/summary.md` from the live results
+- `generate_stage_comparison.py`: comparison .md + bar plot for backbone / BKM-combined / sample-skip stages
+- `generate_group_report.py`: build a candidate table + plots from a single `logs/<group>/` folder (CLI)
 - `collect_instability_cases.py`: scan logs for collapse / oscillation / spike instabilities
 - `analyze_prediction_trends.py`: FN/FP trend tables across high-F1 candidates

@@ -16,7 +16,7 @@
 | batch inference | `python scripts/server_batch_predict.py --model-run logs/<run>` | server inference outputs |
 | Grad-CAM | `python scripts/gradcam_report.py --model-run logs/<run> --image-root images/test --out-dir validations/gradcam_probe --save-heat-only` | trend+CAM overlays, transparent heat masks, heat CSV |
 | FP/FN Grad-CAM | `python scripts/gradcam_error_report.py --model-run logs/<run> --error-type fp` | CAM overlays for false positives or false negatives |
-| postprocess check | `python scripts/right_crop_postprocess_report.py --model-run logs/<run> --split test` | FP/FN table for right-crop rules |
+| group report | `python scripts/generate_group_report.py --group-dir logs/run_YYYYMMDD_HHMMSS` | per-group candidate table + F1/val curves |
 | log report | `python scripts/generate_log_history_report.py --logs-dir logs --out-prefix validations/log_history_report --contains rawbase` | markdown, CSV, PNG plots |
 
 ## Main Files
@@ -31,8 +31,6 @@
 - `scripts/add_training_from_folders.py`: fine-tune a best model from `normal/` and `abnormal/` image folders
 - `scripts/gradcam_report.py`: Grad-CAM overlays on trend images and transparent heat masks
 - `scripts/gradcam_error_report.py`: Grad-CAM overlays for FP/FN samples
-- `scripts/right_crop_postprocess_report.py`: FP/FN check for right-crop postprocess rules
-- `scripts/gradcam_normal_rescue_report.py`: FP/FN check for normal-prediction Grad-CAM rescue rules
 - `scripts/generate_log_history_report.py`: tables and plots from flat or grouped `logs/**/`
 - `scripts/sweeps_server/00_all.sh`: current paper experiment pipeline, ending with color -> sample_skip -> backbone -> logical_train -> gc -> BKM combined
 - `docs/summary.md`: current experiment summary

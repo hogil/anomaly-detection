@@ -63,12 +63,14 @@ done
 
 run_cmd() { echo; echo "+ $*"; "$@"; }
 
-QUEUE=validations/04_backbone_queue.json
-ACTIVE=validations/04_backbone_active.json
-SUMMARY=validations/04_backbone_results.json
-MARKDOWN=validations/04_backbone_results.md
+VAL_DIR="validations/${LOG_DIR_GROUP}"
+mkdir -p "$VAL_DIR"
+QUEUE="${VAL_DIR}/04_backbone_queue.json"
+ACTIVE="${VAL_DIR}/04_backbone_active.json"
+SUMMARY="${VAL_DIR}/04_backbone_results.json"
+MARKDOWN="${VAL_DIR}/04_backbone_results.md"
 
-echo "== paper stage: backbone =="
+echo "== paper stage: backbone (output: $VAL_DIR) =="
 
 run_cmd "$PYTHON" - "$QUEUE" "$SEEDS" "$NUM_WORKERS" "$PREFETCH_FACTOR" <<'PY'
 import json
@@ -176,6 +178,7 @@ run_cmd "${cmd[@]}"
 # Build comparison .md + bar plot vs baseline.
 run_cmd "$PYTHON" scripts/generate_stage_comparison.py \
   --results "$SUMMARY" \
-  --out-md validations/04_backbone_results.md \
-  --out-plot validations/04_backbone_plot.png \
+  --baseline "${VAL_DIR}/01_baseline_results.json" \
+  --out-md "${VAL_DIR}/04_backbone_results.md" \
+  --out-plot "${VAL_DIR}/04_backbone_plot.png" \
   --title "Backbone sweep"

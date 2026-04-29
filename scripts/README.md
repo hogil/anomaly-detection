@@ -35,20 +35,40 @@ logs/<YYMMDD_HHMMSS>_<topic>_F_R/     # 단일 python train.py (group 없음)
 
 `--log-dir-group my_run` 으로 직접 지정하면 그 이름이 그대로 쓰임.
 
-### `validations/` 결과 (성능 표 + plot + 종합 .md)
+### `validations/<group>/` 결과 (성능 표 + plot + 종합 .md)
 
-stage가 끝날 때마다 controller가 매 run 결과를 `*_results.json`/`*_results.md`에 누적 갱신합니다. postprocess stage가 끝나면 종합 리포트와 축별 plot이 추가로 만들어집니다.
+template 입력 큐(`01_baseline_queue.json`, `02_sweep_queue.json`, `03_sample_skip_queue.json`)는 모든 batch가 공유하므로 `validations/` 루트에 둡니다. **출력은 batch마다 분리**돼서 `validations/<LOG_DIR_GROUP>/` 하위에 쌓입니다(예: `validations/20260430_120000_run_paper/`). 여러 번 돌려도 서로 안 덮어씀.
+
+```
+validations/
+├── 01_baseline_queue.json                  # template (공유)
+├── 02_sweep_queue.json                     # template (공유)
+├── 03_sample_skip_queue.json               # template (공유)
+└── 20260430_120000_run_paper/              # 한 batch의 모든 출력
+    ├── 01_baseline_active.json, _results.{json,md}
+    ├── 02_sweep_active.json, _results.{json,md}
+    ├── 02_sweep_report.md, 02_sweep_plots/<axis>.png ×14
+    ├── 03_sample_skip_active.json, _results.{json,md}, _plot.png
+    ├── 04_backbone_queue.json, _active.json, _results.{json,md}, _plot.png
+    ├── 05_bkm_combined_queue.json, _active.json, _results.{json,md}, _plot.png
+    ├── 15_logical_train_queue.json, _results.{json,md}
+    ├── instability_cases.{csv,json,md}
+    ├── prediction_trend_latest.{csv,json,md}
+    └── run.log
+```
 
 | stage | 진행 중 (live) | 끝나고 (요약) |
 |---|---|---|
-| 01 baseline | `01_baseline_results.{json,md}` | (별도 plot 없음) |
-| 02~12, 16 axes | `02_sweep_results.{json,md}` | postprocess가 `02_sweep_report.md` + `02_sweep_plots/<axis>.png` 14개 |
-| 13 sample_skip | `03_sample_skip_results.{json,md}` | stage가 `03_sample_skip_plot.png` |
-| 14 backbone | `04_backbone_results.{json,md}` | stage가 `04_backbone_plot.png` |
-| 15 logical_train | `server_paper_logical_member_v11_train_summary.{json,md}` | (별도 plot 없음) |
-| 17 bkm_combined | `05_bkm_combined_results.{json,md}` | stage가 `05_bkm_combined_plot.png` |
-| postprocess | `instability_cases.{csv,json,md}`, `prediction_trend_latest.{csv,json,md}` | 종합 |
-| 전체 | `run.log` (run_paper_server_all.sh stdout) | |
+| 01 baseline | `<group>/01_baseline_results.{json,md}` | (별도 plot 없음) |
+| 02~12, 16 axes | `<group>/02_sweep_results.{json,md}` | postprocess가 `<group>/02_sweep_report.md` + `<group>/02_sweep_plots/<axis>.png` 14개 |
+| 13 sample_skip | `<group>/03_sample_skip_results.{json,md}` | stage가 `<group>/03_sample_skip_plot.png` |
+| 14 backbone | `<group>/04_backbone_results.{json,md}` | stage가 `<group>/04_backbone_plot.png` |
+| 15 logical_train | `<group>/15_logical_train_results.{json,md}` | (별도 plot 없음) |
+| 17 bkm_combined | `<group>/05_bkm_combined_results.{json,md}` | stage가 `<group>/05_bkm_combined_plot.png` |
+| postprocess | `<group>/instability_cases.{csv,json,md}`, `<group>/prediction_trend_latest.{csv,json,md}` | 종합 |
+| 전체 | `<group>/run.log` (run_paper_server_all.sh stdout) | |
+
+여기서 `<group>` = `validations/<LOG_DIR_GROUP>` = `validations/<YYYYMMDD_HHMMSS>_run_paper` (00_all.sh 기본값).
 
 ### 한 group 폴더만 정리해서 보고 싶을 때
 
@@ -65,11 +85,11 @@ candidate 평균 표 + per-run 표 + F1 막대 plot + val_f1 곡선 plot.
 
 ### 어디를 보면 한 눈에 볼 수 있나
 
-- 한 batch 결과만: `logs/<group>/group_report.md` (위 명령으로 생성)
-- 모든 logs 통합 표/plot: `validations/log_history_report_rawbase.md` + `*_candidate_f1.png`, `*_val_f1_curves.png`, `*_grad_p99_curves.png` (실행: `python scripts/generate_log_history_report.py --logs-dir logs --out-prefix validations/log_history_report_rawbase --contains rawbase`)
-- 축별 strict 비교 + 표/plot: `validations/02_sweep_report.md` + `02_sweep_plots/<axis>.png` (postprocess 자동)
-- BKM combined 한 줄짜리 비교: `validations/05_bkm_combined_results.md` + `05_bkm_combined_plot.png`
-- backbone 비교: `validations/04_backbone_results.md` + `04_backbone_plot.png`
+- 한 batch 결과만 (group 폴더): `logs/<group>/group_report.md` (위 명령으로 생성)
+- 모든 logs 통합 표/plot: `validations/<group>/log_history_report_*.md`+PNG (실행: `python scripts/generate_log_history_report.py --logs-dir logs --out-prefix validations/<group>/log_history_report --contains <group>`)
+- 축별 strict 비교 + 표/plot: `validations/<group>/02_sweep_report.md` + `<group>/02_sweep_plots/<axis>.png` (postprocess 자동)
+- BKM combined 한 줄짜리 비교: `validations/<group>/05_bkm_combined_results.md` + `<group>/05_bkm_combined_plot.png`
+- backbone 비교: `validations/<group>/04_backbone_results.md` + `<group>/04_backbone_plot.png`
 
 ---
 

@@ -96,8 +96,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-mkdir -p validations logs docs
-LOG="validations/run.log"
+VAL_DIR="validations/${LOG_DIR_GROUP}"
+mkdir -p "$VAL_DIR" logs docs
+LOG="${VAL_DIR}/run.log"
 
 run_cmd() { echo; echo "+ $*"; "$@"; }
 
@@ -193,32 +194,32 @@ main() {
   if [[ "$SKIP_REFCHECK" -eq 0 ]]; then
     prepare_queue \
       validations/01_baseline_queue.json \
-      validations/01_baseline_active.json
+      "${VAL_DIR}/01_baseline_active.json"
     run_controller \
-      validations/01_baseline_active.json \
-      validations/01_baseline_results.json \
-      validations/01_baseline_results.md \
+      "${VAL_DIR}/01_baseline_active.json" \
+      "${VAL_DIR}/01_baseline_results.json" \
+      "${VAL_DIR}/01_baseline_results.md" \
       "baseline_recheck"
   fi
 
   if [[ "$SKIP_ROUND1" -eq 0 ]]; then
     skip_summary=""
     if [[ "$ROUND1_SKIP_COMPLETED" -eq 1 && "$FORCE" -eq 0 ]]; then
-      skip_summary="validations/02_sweep_results.json"
+      skip_summary="${VAL_DIR}/02_sweep_results.json"
     fi
     prepare_queue \
       validations/02_sweep_queue.json \
-      validations/02_sweep_active.json \
+      "${VAL_DIR}/02_sweep_active.json" \
       "$ROUND1_START_AFTER_AXIS" \
       "$ROUND1_START_AFTER_CANDIDATE" \
       "$skip_summary" \
       "$ROUND1_INCLUDE_AXES"
-    ROUND1_COUNT="$(queue_run_count validations/02_sweep_active.json)"
+    ROUND1_COUNT="$(queue_run_count "${VAL_DIR}/02_sweep_active.json")"
     if [[ "$ROUND1_COUNT" -gt 0 ]]; then
       run_controller \
-        validations/02_sweep_active.json \
-        validations/02_sweep_results.json \
-        validations/02_sweep_results.md \
+        "${VAL_DIR}/02_sweep_active.json" \
+        "${VAL_DIR}/02_sweep_results.json" \
+        "${VAL_DIR}/02_sweep_results.md" \
         "axis_sweep"
     else
       echo "[skip] axis_sweep queue is empty"
@@ -226,23 +227,21 @@ main() {
   fi
 
   if [[ "$SKIP_POST" -eq 0 ]]; then
-    run_cmd "$PYTHON" scripts/collect_instability_cases.py
+    run_cmd "$PYTHON" scripts/collect_instability_cases.py \
+      --out-md "${VAL_DIR}/instability_cases_report.md" \
+      --out-csv "${VAL_DIR}/instability_cases.csv" \
+      --out-json "${VAL_DIR}/instability_cases.json"
     run_cmd "$PYTHON" scripts/analyze_prediction_trends.py \
       --config "$CONFIG" \
       --candidate-prefix "$CANDIDATE_PREFIX" \
       --min-f1 "$MIN_F1" \
-      --out-prefix validations/prediction_trend_latest \
+      --out-prefix "${VAL_DIR}/prediction_trend_latest" \
       --report-label "$CANDIDATE_PREFIX"
     run_cmd "$PYTHON" scripts/generate_strict_one_factor_report.py \
-      --strict-summary validations/02_sweep_results.json \
-      --markdown-out validations/02_sweep_results.md \
-      --report-out validations/02_sweep_report.md \
-      --plots-dir validations/02_sweep_plots
-    run_cmd "$PYTHON" scripts/generate_strict_one_factor_report.py \
-      --strict-summary validations/02_sweep_results.json \
-      --markdown-out docs/summary.md \
-      --report-out docs/summary.md \
-      --plots-dir docs/plots
+      --strict-summary "${VAL_DIR}/02_sweep_results.json" \
+      --markdown-out "${VAL_DIR}/02_sweep_results.md" \
+      --report-out "${VAL_DIR}/02_sweep_report.md" \
+      --plots-dir "${VAL_DIR}/02_sweep_plots"
   fi
 
   echo "== run completed: $(date -Is) =="

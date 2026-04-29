@@ -65,12 +65,14 @@ done
 
 run_cmd() { echo; echo "+ $*"; "$@"; }
 
-QUEUE=validations/05_bkm_combined_queue.json
-ACTIVE=validations/05_bkm_combined_active.json
-SUMMARY=validations/05_bkm_combined_results.json
-MARKDOWN=validations/05_bkm_combined_results.md
+VAL_DIR="validations/${LOG_DIR_GROUP}"
+mkdir -p "$VAL_DIR"
+QUEUE="${VAL_DIR}/05_bkm_combined_queue.json"
+ACTIVE="${VAL_DIR}/05_bkm_combined_active.json"
+SUMMARY="${VAL_DIR}/05_bkm_combined_results.json"
+MARKDOWN="${VAL_DIR}/05_bkm_combined_results.md"
 
-echo "== paper stage: bkm_combined =="
+echo "== paper stage: bkm_combined (output: $VAL_DIR) =="
 
 run_cmd "$PYTHON" - "$QUEUE" "$SEEDS" "$NUM_WORKERS" "$PREFETCH_FACTOR" <<'PY'
 import json
@@ -156,6 +158,7 @@ run_cmd "${cmd[@]}"
 
 run_cmd "$PYTHON" scripts/generate_stage_comparison.py \
   --results "$SUMMARY" \
-  --out-md validations/05_bkm_combined_results.md \
-  --out-plot validations/05_bkm_combined_plot.png \
+  --baseline "${VAL_DIR}/01_baseline_results.json" \
+  --out-md "${VAL_DIR}/05_bkm_combined_results.md" \
+  --out-plot "${VAL_DIR}/05_bkm_combined_plot.png" \
   --title "BKM combined vs baseline"

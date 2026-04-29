@@ -49,20 +49,23 @@ done
 
 run_cmd() { echo; echo "+ $*"; "$@"; }
 
-echo "== paper stage: sample_skip =="
+VAL_DIR="validations/${LOG_DIR_GROUP}"
+mkdir -p "$VAL_DIR"
+
+echo "== paper stage: sample_skip (output: $VAL_DIR) =="
 
 run_cmd "$PYTHON" scripts/prepare_server_queue.py \
   --src validations/03_sample_skip_queue.json \
-  --dst validations/03_sample_skip_active.json \
+  --dst "${VAL_DIR}/03_sample_skip_active.json" \
   --config "$CONFIG" \
   --num-workers "$NUM_WORKERS" \
   --prefetch-factor "$PREFETCH_FACTOR"
 
 cmd=(
   "$PYTHON" scripts/adaptive_experiment_controller.py
-  --queue validations/03_sample_skip_active.json
-  --summary validations/03_sample_skip_results.json
-  --markdown validations/03_sample_skip_results.md
+  --queue "${VAL_DIR}/03_sample_skip_active.json"
+  --summary "${VAL_DIR}/03_sample_skip_results.json"
+  --markdown "${VAL_DIR}/03_sample_skip_results.md"
   --target-min 5
   --target-max 15
   --stop-mode never
@@ -77,7 +80,8 @@ cmd=(
 run_cmd "${cmd[@]}"
 
 run_cmd "$PYTHON" scripts/generate_stage_comparison.py \
-  --results validations/03_sample_skip_results.json \
-  --out-md validations/03_sample_skip_results.md \
-  --out-plot validations/03_sample_skip_plot.png \
+  --results "${VAL_DIR}/03_sample_skip_results.json" \
+  --baseline "${VAL_DIR}/01_baseline_results.json" \
+  --out-md "${VAL_DIR}/03_sample_skip_results.md" \
+  --out-plot "${VAL_DIR}/03_sample_skip_plot.png" \
   --title "Sample-skip probe vs baseline"

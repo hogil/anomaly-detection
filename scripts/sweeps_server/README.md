@@ -45,15 +45,23 @@ bash scripts/sweeps_server/00_all.sh
 
 ## 입출력 (validations/)
 
-| 파일 | 역할 |
-|---|---|
-| `01_baseline_queue.json` / `01_baseline_active.json` / `01_baseline_results.{json,md}` | baseline stage |
-| `02_sweep_queue.json` / `02_sweep_active.json` / `02_sweep_results.{json,md}` | 02~12 + 16 axes 통합 결과 (controller live) |
-| `02_sweep_report.md` / `02_sweep_plots/` | postprocess 종합 리포트 + 축별 plot |
-| `03_sample_skip_queue.json` / `03_sample_skip_results.{json,md}` / `03_sample_skip_plot.png` | 13단계 결과 + 비교 plot |
-| `04_backbone_queue.json` / `04_backbone_results.{json,md}` / `04_backbone_plot.png` | 14단계 결과 + 비교 plot |
-| `05_bkm_combined_queue.json` / `05_bkm_combined_results.{json,md}` / `05_bkm_combined_plot.png` | 17단계 결과 + 비교 plot |
-| `run.log` | 통합 실행 로그 |
+template 큐(`01_baseline_queue.json`, `02_sweep_queue.json`, `03_sample_skip_queue.json`)는 batch가 공유하니 `validations/` 루트. 출력은 batch마다 `validations/<group>/`로 격리됩니다.
+
+```
+validations/
+├── 01_baseline_queue.json, 02_sweep_queue.json, 03_sample_skip_queue.json
+└── <YYYYMMDD_HHMMSS>_run_paper/
+    ├── 01_baseline_active.json, _results.{json,md}
+    ├── 02_sweep_active.json, _results.{json,md}, _report.md, _plots/<axis>.png
+    ├── 03_sample_skip_active.json, _results.{json,md}, _plot.png
+    ├── 04_backbone_queue.json, _active.json, _results.{json,md}, _plot.png
+    ├── 05_bkm_combined_queue.json, _active.json, _results.{json,md}, _plot.png
+    ├── 15_logical_train_queue.json, _results.{json,md}
+    ├── instability_cases.{csv,json,md}, prediction_trend_latest.{csv,json,md}
+    └── run.log
+```
+
+여러 번 돌리면 group 폴더가 따로 만들어져서 결과를 안 덮어씁니다.
 
 ## logs/ 그룹화
 

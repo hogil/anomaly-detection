@@ -371,12 +371,26 @@ FP/FN만 따로 보고 싶으면 `gradcam_error_report.py`.
 
 ## 결과 파일 (`validations/`)
 
+template 큐는 batch끼리 공유하므로 root에:
+
 | 파일 | 뜻 |
 |---|---|
-| `01_baseline_queue.json` / `_active.json` / `_results.{json,md}` | baseline 5-seed |
-| `02_sweep_queue.json` / `_active.json` / `_results.{json,md}` | 축별 sweep |
-| `02_sweep_report.md` / `02_sweep_plots/` | postprocess 리포트 + 축별 plot |
-| `03_sample_skip_queue.json` / `_active.json` / `_results.{json,md}` / `_plot.png` | sample_skip + 비교 plot |
-| `04_backbone_queue.json` / `_active.json` / `_results.{json,md}` / `_plot.png` | backbone sweep + 비교 plot |
+| `validations/01_baseline_queue.json` | baseline 5-seed 입력 |
+| `validations/02_sweep_queue.json` | 축별 sweep 입력 |
+| `validations/03_sample_skip_queue.json` | sample-skip 1-run 입력 |
+
+**출력은 batch마다 분리**돼서 `validations/<group>/` (group = `<YYYYMMDD_HHMMSS>_run_paper`):
+
+| 파일 (`<group>/` 안) | 뜻 |
+|---|---|
+| `01_baseline_active.json` / `_results.{json,md}` | baseline 실행 큐 + 결과 |
+| `02_sweep_active.json` / `_results.{json,md}` | sweep 실행 큐 + live 결과 |
+| `02_sweep_report.md` / `02_sweep_plots/` | postprocess 종합 리포트 + 축별 plot |
+| `03_sample_skip_active.json` / `_results.{json,md}` / `_plot.png` | sample-skip + 비교 plot |
+| `04_backbone_queue.json` / `_active.json` / `_results.{json,md}` / `_plot.png` | backbone + 비교 plot |
 | `05_bkm_combined_queue.json` / `_active.json` / `_results.{json,md}` / `_plot.png` | BKM combined + 비교 plot |
-| `run.log` | 통합 실행 로그 |
+| `15_logical_train_queue.json` / `_results.{json,md}` | logical train |
+| `instability_cases.{csv,json,md}` / `prediction_trend_latest.*` | postprocess 분석 |
+| `run.log` | 이 batch 의 통합 실행 로그 |
+
+여러 번 `00_all.sh` 돌리면 group 폴더가 시간순으로 정렬되고 서로 안 덮어씁니다.

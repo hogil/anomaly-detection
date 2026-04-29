@@ -66,11 +66,13 @@ PM_DATA_DIR="data_per_member_${SUFFIX}"
 PM_IMAGE_DIR="images_per_member_${SUFFIX}"
 PM_DISPLAY_DIR="display_per_member_${SUFFIX}"
 PM_SCENARIOS="${PM_DATA_DIR}/scenarios_per_member.csv"
-QUEUE="validations/server_paper_${SUFFIX}_train_queue.json"
-SUMMARY="validations/server_paper_${SUFFIX}_train_summary.json"
-MARKDOWN="validations/server_paper_${SUFFIX}_train_summary.md"
+VAL_DIR="validations/${LOG_DIR_GROUP}"
+mkdir -p "$VAL_DIR"
+QUEUE="${VAL_DIR}/15_logical_train_queue.json"
+SUMMARY="${VAL_DIR}/15_logical_train_results.json"
+MARKDOWN="${VAL_DIR}/15_logical_train_results.md"
 
-echo "== paper stage: logical_train =="
+echo "== paper stage: logical_train (output: $VAL_DIR) =="
 
 run_cmd "$PYTHON" - "$CONFIG" "$SOURCE_CONFIG" "$TRAIN_CONFIG" "$SUFFIX" <<'PY'
 import sys

@@ -155,66 +155,66 @@ context:
   target_deviation:
     mean_reference: between
     mean_sigma_range:
-    - 3.0
-    - 5.0
-    mean_min_within_ratio: 2.5
+    - 2.0
+    - 3.2
+    mean_min_within_ratio: 1.8
     std_reference: within
     std_sigma_range:
-    - 3.0
-    - 5.0
+    - 2.0
+    - 3.2
     std_range:
-    - 3.0
-    - 5.0
-    std_min_scale: 1.5
-    min_mean_nsigma: 3.0
-    min_std_nsigma: 3.0
+    - 2.0
+    - 3.2
+    std_min_scale: 1.25
+    min_mean_nsigma: 2.0
+    min_std_nsigma: 2.0
 defect:
   region_ratio_range:
   - 0.14
   - 0.3
   mean_shift:
     shift_sigma_range:
-    - 1.4
-    - 2.1
+    - 0.9
+    - 1.5
     difficulty_scale_floor: 0.9
   standard_deviation:
     scale_range:
-    - 1.5
-    - 2.5
+    - 1.2
+    - 1.8
   spike:
     magnitude_sigma_range:
-    - 3.2
-    - 5.8
+    - 3.8
+    - 6.4
     difficulty_scale_floor: 0.9
     spike_ratio_range:
-    - 0.07
-    - 0.18
-    min_spikes: 6
-    min_magnitude_sigma: 3.2
+    - 0.12
+    - 0.28
+    min_spikes: 10
+    min_magnitude_sigma: 3.8
     region_ratio_range:
     - 0.12
     - 0.18
   drift:
     slope_sigma_range:
-    - 0.5
-    - 2.0
+    - 0.3
+    - 1.3
     region_ratio_range:
     - 0.2
     - 0.375
     visible_span_ratio_range:
     - 0.12
     - 0.18
-    min_max_drift_sigma: 1.5
-    visual_floor_sigma: 2.2
+    min_max_drift_sigma: 1.1
+    visual_floor_sigma: 1.5
     max_range_scale: 0.7
     drift_method: index
   enforcement:
-    mean_shift_floor_sigma: 1.65
-    mean_shift_self_floor_sigma: 1.2
-    std_floor_ratio: 2.4
-    spike_floor_sigma: 7.0
-    drift_floor_sigma: 1.8
-    context_floor_sigma: 2.5
+    mean_shift_floor_sigma: 1.35
+    mean_shift_self_floor_sigma: 1.0
+    std_floor_ratio: 1.8
+    spike_floor_sigma: 7.5
+    drift_floor_sigma: 1.4
+    context_floor_sigma: 2.0
     normal_max_right_dev_sigma: 0.5
     normal_max_right_shift_sigma: 0.5
     min_defect_points_range:

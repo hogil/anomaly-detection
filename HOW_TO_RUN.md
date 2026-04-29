@@ -216,16 +216,16 @@ base + 3개 변형이 repo에 들어있습니다 (각 yaml의 `output.*_dir` 이
 | yaml | 변형 | 출력 폴더 |
 |---|---|---|
 | `dataset.yaml` | base | `data/`, `images/`, `display/` |
-| `dataset_noise.yaml` | **noise +30%** (gaussian/laplacian/correlated sigma 모두 ×1.3). anomaly는 그대로 | `data_noise/`, `images_noise/`, `display_noise/` |
-| `dataset_strong.yaml` | **anomaly +30%** (mean_shift/std/spike/drift sigma 범위 ×1.3, enforcement floor 도 같이 올림). noise는 그대로 | `data_strong/`, `images_strong/`, `display_strong/` |
-| `dataset_noise_strong.yaml` | noise +30% **and** anomaly +30% | `data_noise_strong/`, `images_noise_strong/`, `display_noise_strong/` |
+| `dataset1.yaml` | **noise +30%** (gaussian/laplacian/correlated sigma 모두 ×1.3). anomaly는 그대로 | `data_noise/`, `images_noise/`, `display_noise/` |
+| `dataset2.yaml` | **anomaly +30%** (mean_shift/std/spike/drift sigma 범위 ×1.3, enforcement floor 도 같이 올림). noise는 그대로 | `data_strong/`, `images_strong/`, `display_strong/` |
+| `dataset3.yaml` | noise +30% **and** anomaly +30% | `data_noise_strong/`, `images_noise_strong/`, `display_noise_strong/` |
 
 ### 주말 한 GPU 순차 실행 (4개 yaml 자동)
 
 ```bash
 ssh user@server
 tmux new -s weekend                                     # 분리 가능한 세션
-for cfg in dataset.yaml dataset_noise.yaml dataset_strong.yaml dataset_noise_strong.yaml; do
+for cfg in dataset.yaml dataset1.yaml dataset2.yaml dataset3.yaml; do
   bash scripts/run_paper_server_all.sh --config "$cfg"
 done
 # 학습이 도는 동안 Ctrl+B 누르고 D 떼서 detach (SSH 끊어도 안 죽음)
@@ -245,21 +245,21 @@ tmux kill-session -t weekend
 ```
 validations/
 ├── 20260502_120000_run_paper_dataset/
-├── 20260502_180000_run_paper_dataset_noise/
-├── 20260503_010000_run_paper_dataset_strong/
-└── 20260503_070000_run_paper_dataset_noise_strong/
+├── 20260502_180000_run_paper_dataset1/
+├── 20260503_010000_run_paper_dataset2/
+└── 20260503_070000_run_paper_dataset3/
 logs/
 ├── 20260502_120000_run_paper_dataset/<run>/...
-├── 20260502_180000_run_paper_dataset_noise/<run>/...
-├── 20260503_010000_run_paper_dataset_strong/<run>/...
-└── 20260503_070000_run_paper_dataset_noise_strong/<run>/...
+├── 20260502_180000_run_paper_dataset1/<run>/...
+├── 20260503_010000_run_paper_dataset2/<run>/...
+└── 20260503_070000_run_paper_dataset3/<run>/...
 ```
 
 데이터셋별 group 폴더만 따로 정리해서 보고 싶으면:
 
 ```bash
 python scripts/generate_group_report.py --group-dir logs/20260502_120000_run_paper_dataset
-python scripts/generate_group_report.py --group-dir logs/20260502_180000_run_paper_dataset_noise
+python scripts/generate_group_report.py --group-dir logs/20260502_180000_run_paper_dataset1
 # ...
 ```
 
@@ -276,7 +276,7 @@ python scripts/generate_group_report.py --group-dir logs/20260502_180000_run_pap
 
 ```bash
 nohup bash -c '
-for cfg in dataset.yaml dataset_noise.yaml dataset_strong.yaml dataset_noise_strong.yaml; do
+for cfg in dataset.yaml dataset1.yaml dataset2.yaml dataset3.yaml; do
   bash scripts/run_paper_server_all.sh --config "$cfg"
 done
 ' > /tmp/weekend.log 2>&1 &

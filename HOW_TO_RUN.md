@@ -129,13 +129,14 @@ python scripts/gradcam_report.py \
   --image-root images/test \
   --out-dir validations/gradcam_probe \
   --include-classes normal,mean_shift,standard_deviation,spike,drift,context \
-  --limit-per-class 5 \
+  --limit-per-class 6 \
   --save-heat-only \
-  --heat-threshold 0.25 \
+  --heat-threshold 0.0 \
+  --heat-min-alpha 0.18 \
   --gallery-out docs/gradcam_class_overlay.png
 ```
 
-출력은 `gradcam.csv`, `summary.md`, `overlays/`, `heat_only/`, `cam_on_image/`입니다. `cam_on_image/`는 원본 trend 이미지 위에 heat가 있는 부분만 반투명으로 얹은 이미지입니다. `heat_only/`는 heat mask만 따로 저장한 파일입니다. Grad-CAM은 모델 근거 위치이지 실제 불량 위치가 아니므로 left/right 판정 룰로 바로 쓰지 않습니다.
+출력은 `gradcam.csv`, `summary.md`, `overlays/`, `heat_only/`, `cam_on_image/`입니다. `cam_on_image/`는 원본 trend 이미지 위에 CAM colormap을 반투명으로 얹은 이미지입니다. `--heat-threshold 0.0 --heat-min-alpha 0.18`을 쓰면 빨강 high heat뿐 아니라 파랑 low heat 영역도 보입니다. Grad-CAM은 모델 근거 위치이지 실제 불량 위치가 아니므로 left/right 판정 룰로 바로 쓰지 않습니다.
 
 후처리 후보는 별도 FP/FN 리포트로 봅니다.
 
@@ -150,6 +151,19 @@ python scripts/gradcam_normal_rescue_report.py \
   --model-run logs/<run> \
   --split test \
   --out-dir validations/gradcam_normal_rescue
+```
+
+FP/FN만 따로 CAM을 보고 싶으면:
+
+```bash
+python scripts/gradcam_error_report.py \
+  --model-run logs/<run> \
+  --split test \
+  --error-type fp \
+  --out-dir validations/gradcam_fp_analysis \
+  --heat-threshold 0.0 \
+  --heat-min-alpha 0.18 \
+  --gallery-out docs/gradcam_fp_examples.png
 ```
 
 ## 9. 현재 서버 실험 재개

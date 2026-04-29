@@ -160,14 +160,16 @@ def overlay_cam(image_path: Path, cam: np.ndarray, out_path: Path, title: str) -
 def save_heat_only_cam(cam: np.ndarray, out_path: Path, threshold: float) -> None:
     """Save only the CAM heat as RGBA; non-heat pixels are transparent."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(cam_to_rgba(cam, threshold)).save(out_path)
+    Image.fromarray(cam_to_rgba(cam, threshold, min_alpha=0.0)).save(out_path)
 
 
-def cam_to_rgba(cam: np.ndarray, threshold: float) -> np.ndarray:
+def cam_to_rgba(cam: np.ndarray, threshold: float, min_alpha: float = 0.0) -> np.ndarray:
     """Convert normalized CAM to RGBA with transparent low-heat pixels."""
     cam = np.asarray(cam, dtype=np.float32)
     threshold = float(np.clip(threshold, 0.0, 0.95))
+    min_alpha = float(np.clip(min_alpha, 0.0, 0.95))
     alpha = np.clip((cam - threshold) / max(1.0 - threshold, 1e-6), 0.0, 1.0)
+    alpha = np.where(alpha > 0.0, min_alpha + alpha * (1.0 - min_alpha), 0.0)
     heat = plt.get_cmap("jet")(cam)
     rgba = np.zeros((*cam.shape, 4), dtype=np.uint8)
     rgba[..., :3] = np.clip(heat[..., :3] * 255.0, 0, 255).astype(np.uint8)
@@ -175,44 +177,44 @@ def cam_to_rgba(cam: np.ndarray, threshold: float) -> np.ndarray:
     return rgba
 
 
-def save_cam_on_image(image_path: Path, cam: np.ndarray, out_path: Path, threshold: float) -> None:
-    """Overlay only high CAM heat on top of the original trend image."""
+def save_cam_on_image(image_path: Path, cam: np.ndarray, out_path: Path, threshold: float, min_alpha: float) -> None:
+    """Overlay thresholded CAM heat on top of the original trend image."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     base = Image.open(image_path).convert("RGBA").resize((224, 224))
-    heat = Image.fromarray(cam_to_rgba(cam, threshold)).resize((224, 224))
+    heat = Image.fromarray(cam_to_rgba(cam, threshold, min_alpha=min_alpha)).resize((224, 224))
     base.alpha_composite(heat)
     base.save(out_path)
 
 
 def build_cam_overlay_gallery(rows: list[dict[str, Any]], out_path: Path) -> None:
-    """Build a class-level gallery from trend images with sparse CAM overlay."""
+    """Build a class-row gallery from trend images with CAM overlay."""
     preferred = ["normal", "mean_shift", "standard_deviation", "spike", "drift", "context"]
-    selected: dict[str, dict[str, Any]] = {}
+    by_class: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         overlay_path = str(row.get("cam_overlay", ""))
         if overlay_path and Path(overlay_path).exists():
-            selected.setdefault(str(row["true_class"]), row)
-    if not selected:
+            by_class.setdefault(str(row["true_class"]), []).append(row)
+    if not by_class:
         return
 
-    class_order = [name for name in preferred if name in selected]
-    class_order.extend(sorted(name for name in selected if name not in class_order))
-    cell_w, cell_h = 224, 256
-    pad = 18
-    cols = min(3, len(class_order))
-    rows_n = int(np.ceil(len(class_order) / cols))
-    canvas_w = cols * cell_w + (cols + 1) * pad
-    canvas_h = rows_n * cell_h + (rows_n + 1) * pad
-    canvas = Image.new("RGBA", (canvas_w, canvas_h), (255, 255, 255, 0))
+    class_order = [name for name in preferred if name in by_class]
+    class_order.extend(sorted(name for name in by_class if name not in class_order))
+    cols = max(len(by_class[name]) for name in class_order)
+    label_w, cell_w, cell_h = 150, 224, 252
+    pad = 14
+    canvas_w = label_w + cols * cell_w + (cols + 1) * pad
+    canvas_h = len(class_order) * cell_h + (len(class_order) + 1) * pad
+    canvas = Image.new("RGBA", (canvas_w, canvas_h), "WHITE")
     draw = ImageDraw.Draw(canvas)
 
-    for idx, class_name in enumerate(class_order):
-        row = selected[class_name]
-        x = pad + (idx % cols) * (cell_w + pad)
-        y = pad + (idx // cols) * (cell_h + pad)
-        draw.text((x, y), class_name, fill=(0, 0, 0, 255))
-        overlay = Image.open(str(row["cam_overlay"])).convert("RGBA").resize((224, 224))
-        canvas.alpha_composite(overlay, (x, y + 28))
+    for row_idx, class_name in enumerate(class_order):
+        y = pad + row_idx * (cell_h + pad)
+        draw.text((pad, y + 104), class_name, fill=(0, 0, 0, 255))
+        for col_idx, row in enumerate(by_class[class_name]):
+            x = label_w + pad + col_idx * (cell_w + pad)
+            draw.text((x, y), Path(str(row["image"])).stem, fill=(0, 0, 0, 255))
+            overlay = Image.open(str(row["cam_overlay"])).convert("RGBA").resize((224, 224))
+            canvas.alpha_composite(overlay, (x, y + 24))
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(out_path)
@@ -261,6 +263,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit-per-class", type=int, default=5)
     parser.add_argument("--save-heat-only", action="store_true", help="also save transparent heat-only CAM PNGs")
     parser.add_argument("--heat-threshold", type=float, default=0.20, help="alpha threshold for heat-only CAM PNGs")
+    parser.add_argument("--heat-min-alpha", type=float, default=0.0, help="minimum alpha for visible CAM pixels")
     parser.add_argument("--gallery-out", default=None, type=Path, help="optional class-level trend+CAM gallery PNG")
     parser.add_argument("--cpu", action="store_true")
     return parser.parse_args()
@@ -321,7 +324,7 @@ def main() -> int:
                 save_heat_only_cam(cam, heat_path, args.heat_threshold)
                 heat_only_path = str(heat_path)
                 sparse_overlay_path = cam_overlay_dir / out_name
-                save_cam_on_image(image_path, cam, sparse_overlay_path, args.heat_threshold)
+                save_cam_on_image(image_path, cam, sparse_overlay_path, args.heat_threshold, args.heat_min_alpha)
                 cam_overlay_path = str(sparse_overlay_path)
             rows.append(
                 {

@@ -612,6 +612,24 @@ def main() -> int:
                 }
                 continue
             if code != 0:
+                existing = find_completed_run_dir(run["tag"])
+                if existing is not None:
+                    print(
+                        f"[controller] train.py exited with code {code}, "
+                        f"but completed artifacts exist for {run['tag']}; continuing",
+                        flush=True,
+                    )
+                    summary["runs"][run["tag"]] = parse_metrics(existing, run, args.target_min, args.target_max)
+                    summary["runs"][run["tag"]]["exit_code"] = code
+                    summary["runs"][run["tag"]]["recovered_from_nonzero_exit"] = True
+                    update_aggregates(summary)
+                    summary["decision"] = "continue"
+                    save_json(args.summary, summary)
+                    write_markdown(args.markdown, summary)
+                    update_live_summary_doc(args.update_live_summary)
+                    if args.max_launched > 0 and launched >= args.max_launched:
+                        break
+                    continue
                 summary["runs"][run["tag"]] = {
                     "tag": run["tag"],
                     "candidate": candidate,

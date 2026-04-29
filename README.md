@@ -33,7 +33,7 @@
 - `scripts/right_crop_postprocess_report.py`: FP/FN check for right-crop postprocess rules
 - `scripts/gradcam_normal_rescue_report.py`: FP/FN check for normal-prediction Grad-CAM rescue rules
 - `scripts/generate_log_history_report.py`: tables and plots from `logs/`
-- `scripts/sweeps_server/00_all.sh`: current server experiment resume
+- `scripts/sweeps_server/00_all.sh`: current server experiment resume, ending with color -> sample_skip -> logical_train -> gc
 - `docs/summary.md`: current experiment summary
 
 Generated folders such as `data/`, `images/`, `display/`, `logs/`, `weights/`, and `validations/` are gitignored.

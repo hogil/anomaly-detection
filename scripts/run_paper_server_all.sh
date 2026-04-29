@@ -22,7 +22,8 @@ MAX_LAUNCHED=0
 ROUND1_START_AFTER_AXIS=""
 ROUND1_START_AFTER_CANDIDATE=""
 ROUND1_SKIP_COMPLETED=1
-ROUND1_INCLUDE_AXES=""
+DEFAULT_ROUND1_AXES="normal_ratio,per_class,lr,warmup,label_smoothing,stochastic_depth,focal_gamma,abnormal_weight,ema,allow_tie_save,color,gc"
+ROUND1_INCLUDE_AXES="$DEFAULT_ROUND1_AXES"
 
 usage() {
   cat <<'EOF'
@@ -31,7 +32,8 @@ Usage:
 
 Runs the paper experiment pipeline in one command:
   weights check/download -> dataset/image generation if needed -> refcheck ->
-  strict one-factor round1 -> select/run round2 -> instability/trend/report.
+  strict one-factor round1 (GC last) -> select/run round2 ->
+  instability/trend/report.
 
 For the current server needed-only resume, use:
   bash scripts/sweeps_server/00_all.sh
@@ -46,8 +48,8 @@ Options:
   --min-f1 FLOAT          Minimum F1 for strong-run trend analysis (default: 0.99)
   --force                 Re-run completed tags
   --max-launched N        Stop controller after launching N new runs (debug/resume)
-  --round1-after-gc       Start strict round1 after the GC block
-  --round1-include-gc     Include the 5-condition GC block when running full round1
+  --round1-after-gc       Legacy resume helper for old queues where GC was first
+  --round1-include-gc     Legacy no-op; GC is already last in default round1 order
   --round1-start-after-candidate STR
                           Start strict round1 after this candidate's last queued seed
   --round1-include-axes CSV
@@ -200,10 +202,30 @@ run_controller() {
   run_cmd "$PYTHON" "${args[@]}"
 }
 
+queue_run_count() {
+  local queue="$1"
+  "$PYTHON" - "$queue" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+if not path.exists():
+    print(0)
+    raise SystemExit
+payload = json.loads(path.read_text(encoding="utf-8"))
+if isinstance(payload, list):
+    print(len(payload))
+else:
+    print(len(payload.get("runs", [])))
+PY
+}
+
 main() {
   exec > >(tee -a "$LOG") 2>&1
   echo "== paper server run started: $(date -Is) =="
   echo "config=$CONFIG workers=$WORKERS num_workers=$NUM_WORKERS prefetch=$PREFETCH_FACTOR"
+  echo "round1_axes=$ROUND1_INCLUDE_AXES"
 
   DATA_DIR="$(config_path output.data_dir)"
   IMAGE_DIR="$(config_path output.image_dir)"
@@ -255,11 +277,16 @@ main() {
       "$ROUND1_START_AFTER_CANDIDATE" \
       "$round1_skip_completed_summary" \
       "$ROUND1_INCLUDE_AXES"
-    run_controller \
-      validations/server_paper_rawbase_strict_single_factor_queue.json \
-      validations/server_paper_rawbase_strict_single_factor_summary.json \
-      validations/server_paper_rawbase_strict_single_factor_summary.md \
-      "strict_round1"
+    ROUND1_COUNT="$(queue_run_count validations/server_paper_rawbase_strict_single_factor_queue.json)"
+    if [[ "$ROUND1_COUNT" -gt 0 ]]; then
+      run_controller \
+        validations/server_paper_rawbase_strict_single_factor_queue.json \
+        validations/server_paper_rawbase_strict_single_factor_summary.json \
+        validations/server_paper_rawbase_strict_single_factor_summary.md \
+        "strict_round1"
+    else
+      echo "[skip] strict_round1 queue is empty"
+    fi
   fi
 
   if [[ "$SKIP_ROUND2" -eq 0 ]]; then
@@ -281,11 +308,16 @@ PY
         prepare_queue \
           validations/server_paper_rawbase_strict_single_factor_round2_queue.json \
           validations/server_paper_rawbase_strict_single_factor_round2_queue.prepared.json
-        run_controller \
-          validations/server_paper_rawbase_strict_single_factor_round2_queue.prepared.json \
-          validations/server_paper_rawbase_strict_single_factor_round2_summary.json \
-          validations/server_paper_rawbase_strict_single_factor_round2_summary.md \
-          "strict_round2"
+        ROUND2_PREPARED_COUNT="$(queue_run_count validations/server_paper_rawbase_strict_single_factor_round2_queue.prepared.json)"
+        if [[ "$ROUND2_PREPARED_COUNT" -gt 0 ]]; then
+          run_controller \
+            validations/server_paper_rawbase_strict_single_factor_round2_queue.prepared.json \
+            validations/server_paper_rawbase_strict_single_factor_round2_summary.json \
+            validations/server_paper_rawbase_strict_single_factor_round2_summary.md \
+            "strict_round2"
+        else
+          echo "[skip] prepared round2 queue is empty"
+        fi
       else
         echo "[skip] round2 queue is empty"
       fi

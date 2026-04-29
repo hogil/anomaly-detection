@@ -219,7 +219,7 @@ def build_status(args: argparse.Namespace) -> list[str]:
     lines = [
         "",
         "- 이 블록은 `scripts/update_live_summary_doc.py`가 controller artifact에서 갱신합니다.",
-        "- 서버 rawbase queue 정책: summary 축 기준으로 `lr`, `warmup`, `normal_ratio`, `per_class`, `label_smoothing`, `stochastic_depth`, `focal_gamma`, `abnormal_weight`, `ema`, `color`, `allow_tie_save`를 먼저 실행하고 `gc`는 마지막에 실행합니다. GC는 5조건만 유지하고 sample-skip은 main sweep과 분리합니다.",
+        "- 서버 rawbase queue 정책: core 축을 먼저 실행하고 후속 평가는 `color`, `sample_skip`, `logical_train` 순서로 분리한 뒤 `gc`를 마지막에 실행합니다. GC는 5조건만 유지합니다.",
     ]
     if raw_agg:
         lines.append(
@@ -262,7 +262,7 @@ def build_status(args: argparse.Namespace) -> list[str]:
             f"FN `{sample_latest.get('fn')}`, FP `{sample_latest.get('fp')}`."
         )
     else:
-        lines.append("- sample-skip: 별도 queue `bash scripts/sweeps_server/06_sample_skip.sh`로 실행합니다.")
+        lines.append("- sample-skip/logical-train: `bash scripts/sweeps_server/06_sample_skip.sh`, `bash scripts/sweeps_server/50_logical_train.sh` 순서로 별도 실행합니다.")
     lines.extend(
         [
             "- NT 평가는 selected threshold만 남겼고 reporting default는 `NT=0.9`입니다.",
@@ -297,7 +297,7 @@ def build_overview(args: argparse.Namespace) -> list[str]:
             f"`{raw_agg.get('complete', 0)}/5`, F1 `{fmt_num(raw_agg.get('f1_mean'))}`, "
             f"FN `{fmt_num(raw_agg.get('fn_mean'), 3)}`, FP `{fmt_num(raw_agg.get('fp_mean'), 3)}`."
         )
-    lines.append("- Server queue policy: rawbase round1 keeps only 5 GC conditions and runs sample-skip separately via `scripts/sweeps_server/06_sample_skip.sh`.")
+    lines.append("- Server queue policy: rawbase follow-up runs `color`, `sample_skip`, `logical_train`, then the final 5-condition GC block.")
     if rawbase_agg:
         lines.append(
             "- Live rawbase artifact: "

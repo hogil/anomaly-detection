@@ -2,12 +2,13 @@
 
 ## Server Experiments
 
-- `sweeps_server/00_all.sh`: current needed-only server resume
+- `sweeps_server/00_all.sh`: current needed-only server resume in core -> color -> sample_skip -> logical_train -> gc order
 - `run_paper_server_all.sh`: lower-level server pipeline runner
 - `prepare_server_queue.py`: server queue preparation
 - `adaptive_experiment_controller.py`: sequential train runner
 - `watch_refcheck_then_round1.py`: Windows/local watcher
 - `sweeps_server/06_sample_skip.sh`: separate sample-skip pilot
+- `sweeps_server/50_logical_train.sh`: per-member logical train follow-up
 
 ## Reports From Logs
 

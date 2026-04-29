@@ -163,6 +163,8 @@ python scripts/gradcam_error_report.py \
   --out-dir validations/gradcam_fp_analysis \
   --heat-threshold 0.0 \
   --heat-min-alpha 0.18 \
+  --limit 6 \
+  --fill-hard-normal \
   --gallery-out docs/gradcam_fp_examples.png
 ```
 
@@ -172,7 +174,7 @@ python scripts/gradcam_error_report.py \
 bash scripts/sweeps_server/00_all.sh
 ```
 
-현재 서버 queue는 `lr`, `warmup`, `normal_ratio`, `per_class`, regularization/loss 축, `color`, `allow_tie_save` 순서로 실행하고 `gc`는 마지막에 실행합니다. 축별로는 `scripts/sweeps_server/10_lr.sh`, `11_warmup.sh`, `20_normal_ratio.sh`, `90_gc.sh`처럼 따로 실행할 수 있습니다.
+현재 서버 queue는 core 축을 먼저 실행한 뒤 `color`, `sample_skip`, `logical_train` 순서로 후속 평가를 진행하고, `gc`는 마지막에 실행합니다. 축별로는 `scripts/sweeps_server/10_lr.sh`, `40_color.sh`, `06_sample_skip.sh`, `50_logical_train.sh`, `90_gc.sh`처럼 따로 실행할 수 있습니다.
 
 ref 자체의 LR/warmup을 바꾸려면 `validations/paper_refcheck_raw_queue.json`에서 각 seed의 아래 값을 바꿉니다.
 

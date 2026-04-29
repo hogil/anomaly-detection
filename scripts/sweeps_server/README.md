@@ -1,66 +1,75 @@
-# Server Sweeps
+# `sweeps_server/`
 
-This folder is the active server entrypoint for the paper experiment pipeline.
+논문 실험 sweep을 stage 단위로 실행하는 wrapper 모음. `_common.sh`가 GPU 메모리·CPU 수를 보고 `server` / `pc` / `minimal` 프로필을 자동 선택합니다. 서버용·PC용 스크립트를 따로 두지 않습니다.
 
-Current server default:
-
-```bash
-bash scripts/sweeps_server/00_all.sh
-```
-
-This runs the still-needed rawbase round1 axes used by `docs/summary.md`. It skips weights, dataset generation, refcheck, round2, and post-processing.
-
-## Commands
+## 한 번에 다 돌리기
 
 ```bash
 bash scripts/sweeps_server/00_all.sh
-bash scripts/sweeps_server/01_refcheck.sh
-bash scripts/sweeps_server/10_lr.sh
-bash scripts/sweeps_server/11_warmup.sh
-bash scripts/sweeps_server/20_normal_ratio.sh
-bash scripts/sweeps_server/21_per_class.sh
-bash scripts/sweeps_server/30_label_smoothing.sh
-bash scripts/sweeps_server/31_stochastic_depth.sh
-bash scripts/sweeps_server/32_focal_gamma.sh
-bash scripts/sweeps_server/33_abnormal_weight.sh
-bash scripts/sweeps_server/34_ema.sh
-bash scripts/sweeps_server/40_color.sh
-bash scripts/sweeps_server/41_allow_tie_save.sh
-bash scripts/sweeps_server/06_sample_skip.sh
-bash scripts/sweeps_server/50_logical_train.sh
-bash scripts/sweeps_server/90_gc.sh
 ```
 
-Axis wrappers pass options through to `scripts/run_paper_server_all.sh`. `00_all.sh` also forwards common options such as `--python`, `--config`, `--num-workers`, `--prefetch-factor`, `--force`, and `--max-launched` to the separate `sample_skip` and `logical_train` stages.
+순서: baseline 재확인 → core 축들 → `color` → `sample_skip` → `backbone` → `logical_train` → `gc` → `bkm_combined` → postprocess.
 
-Useful resume/debug examples:
+## 파일 7개
+
+| 파일 | 역할 |
+|---|---|
+| `00_all.sh` | 위 순서대로 모든 stage 호출 |
+| `axis.sh <axis>` | 한 축만 실행. `axis.sh baseline`은 baseline 5-seed 재확인만. |
+| `sample_skip.sh` | `--filter_nonfinite_loss=true` 안전 실험 1-seed |
+| `backbone.sh` | `weights/`에 있는 모든 `*.pth` (단, `best_model.pth`와 `*.fp16.pth` 제외)를 자동 검출해서 한 번씩 학습. 개수·이름 hardcoded 아님. |
+| `logical_train.sh` | member별 logical 데이터셋 생성 + 학습 |
+| `bkm_combined.sh` | BKM 값을 한 번에 쌓은 조합 candidate 실행 |
+| `_common.sh` | env auto-detect + 공통 헬퍼 (다른 sh가 source) |
+
+## `axis.sh` 사용 가능한 축
+
+`lr, warmup, normal_ratio, per_class, label_smoothing, stochastic_depth, focal_gamma, abnormal_weight, ema, color, allow_tie_save, gc, baseline`
 
 ```bash
-bash scripts/sweeps_server/00_all.sh --max-launched 1
-bash scripts/sweeps_server/06_sample_skip.sh
-bash scripts/sweeps_server/50_logical_train.sh
+bash scripts/sweeps_server/axis.sh lr                  # lr 축 sweep
+bash scripts/sweeps_server/axis.sh gc --max-launched 1 # gc 축 1 run만
+bash scripts/sweeps_server/axis.sh baseline            # baseline 5-seed
 ```
 
-Defaults are inherited from `run_paper_server_all.sh`: data/image generation workers `24`, training DataLoader workers `24`, and prefetch factor `4`.
+## 환경 자동 감지 (`_common.sh::detect_profile`)
 
-The active server baseline is raw: `grad_clip=0.0`, `smooth_window=1`, `smooth_method=median`. Prepared server queues rewrite run tags with `fresh0412_v11_rawbase_...` so old GC/smoothed logs are not reused. GC is limited to 5 conditions by `scripts/prepare_server_queue.py`.
+| 프로필 | 조건 | num_workers | prefetch | max_launched |
+|---|---|---:|---:|---:|
+| `server` | GPU ≥ 40 GB | 24 | 4 | 0 (무제한) |
+| `pc` | GPU ≥ 12 GB | 2 | 2 | 1 |
+| `minimal` | 그 외 / GPU 없음 | 0 | 1 | 1 |
 
-Round1 queue preparation removes tags already marked `complete` or `skipped` in `validations/server_paper_rawbase_strict_single_factor_summary.json` by default. The current `00_all.sh` order is core axes first, then `color`, then the separate `sample_skip` safety run, then `logical_train`, with `gc` held to the final stage. Use `--round1-keep-completed` only when intentionally rebuilding the full prepared queue.
+`num_workers`는 `cpus-2`로 cap. CLI 플래그(`--num-workers`, `--prefetch-factor`, `--max-launched`)로 항상 덮어쓸 수 있습니다.
 
-Main regularization/loss axes use 5 candidate conditions each: `label_smoothing`, `stochastic_depth`, `focal_gamma`, `abnormal_weight`, and `ema`.
+## 입출력 (validations/)
 
-`50_logical_train.sh` builds a separate per-member logical dataset. It writes `configs/datasets/logical_member_v11_source.yaml`, `configs/datasets/logical_member_v11_train.yaml`, `data_logical_member_v11/`, `data_per_member_logical_member_v11/`, `images_per_member_logical_member_v11/`, and a one-seed logical baseline queue by default. Set `LOGICAL_SEEDS=42,1,2,3,4` or pass `--seeds 42,1,2,3,4` when promoting it from smoke follow-up to a full evidence run.
+| 파일 | 역할 |
+|---|---|
+| `01_baseline_queue.json` | baseline 5-seed 재확인 명세 (template) |
+| `01_baseline_active.json` / `01_baseline_results.{json,md}` | 위 stage 실행 큐 + 결과 |
+| `02_sweep_queue.json` | 축별 sweep 명세 (template, 313 run) |
+| `02_sweep_active.json` / `02_sweep_results.{json,md}` | 서버 실행 큐 + live 결과 |
+| `02_sweep_report.md` / `02_sweep_plots/` | postprocess 종합 리포트 + 축별 plot |
+| `03_sample_skip_queue.json` | sample-skip 1-run 명세 |
+| `03_sample_skip_active.json` / `03_sample_skip_results.{json,md}` | 위 실행 큐 + 결과 |
+| `04_backbone_queue.json` | backbone sweep 명세 (`backbone.sh`가 자동 생성) |
+| `04_backbone_active.json` / `04_backbone_results.{json,md}` | 위 실행 큐 + 결과 |
+| `05_bkm_combined_queue.json` | BKM combined 명세 (`bkm_combined.sh`가 자동 생성) |
+| `05_bkm_combined_active.json` / `05_bkm_combined_results.{json,md}` | 위 실행 큐 + 결과 |
+| `run.log` | 통합 실행 로그 |
 
-For local/Windows chaining without bash, use:
+## logs/ 그룹화
 
-```powershell
-python scripts\watch_refcheck_then_round1.py
-```
+batch 실행은 `--log-dir-group <name>`으로 모든 train.py 출력을 `logs/<name>/<run>/` 아래에 모읍니다 (기본값 `run_<timestamp>`). 단일 학습은 그대로 `logs/<run>/` 아래.
 
-It waits for `validations/server_paper_refcheck_raw_summary.json` to finish 5 raw refcheck runs, prepares `validations/server_paper_rawbase_strict_single_factor_queue.json`, and launches the rawbase round1 remainder. Use `00_all.sh` for the full follow-up order including `sample_skip`, `logical_train`, and final `gc`. In controller or `tee` logs, `train.py` disables tqdm bars automatically so progress updates do not become one line per refresh.
+`prepare_server_queue.py`가 template(`*_queue.json`)을 읽고 → tag에 `rawbase_` 붙이고 → 활성 축 외엔 baseline 강제 → 이미 끝난 tag 제외 → `*_active.json`을 만듭니다.
 
-To build summary-style tables and plots directly from run histories:
+## logs에서 표·plot
 
 ```bash
-python scripts/generate_log_history_report.py --logs-dir logs --out-prefix validations/log_history_report --contains fresh0412_v11
+python scripts/generate_log_history_report.py \
+  --logs-dir logs \
+  --out-prefix validations/log_history_report_rawbase \
+  --contains fresh0412_v11
 ```

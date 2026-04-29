@@ -21,6 +21,20 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def iter_run_dirs(logs_dir: Path, pattern: str):
+    if not logs_dir.exists():
+        return
+    for history_path in sorted(logs_dir.glob("**/history.json"), key=lambda p: p.stat().st_mtime):
+        run_dir = history_path.parent
+        rel_name = str(run_dir.relative_to(logs_dir)).replace("\\", "/")
+        if run_dir.match(pattern) or any(part.match(pattern) for part in run_dir.parents if part != logs_dir):
+            if (run_dir / "best_info.json").exists():
+                yield run_dir
+            continue
+        if Path(rel_name).match(pattern) and (run_dir / "best_info.json").exists():
+            yield run_dir
+
+
 def now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
@@ -415,9 +429,7 @@ def main() -> int:
     args = parser.parse_args()
 
     rows: list[dict[str, Any]] = []
-    for run_dir in sorted((ROOT / "logs").glob(args.pattern), key=lambda p: p.stat().st_mtime):
-        if not run_dir.is_dir():
-            continue
+    for run_dir in iter_run_dirs(ROOT / "logs", args.pattern):
         row = summarize_run(run_dir)
         if row:
             rows.append(row)

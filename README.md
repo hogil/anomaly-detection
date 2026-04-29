@@ -9,6 +9,7 @@
 | data | `python generate_data.py --config dataset.yaml --workers 24` | `data/timeseries.csv`, `data/scenarios.csv` |
 | images | `python generate_images.py --config dataset.yaml --workers 24` | `images/`, `display/` |
 | train | `python train.py --config dataset.yaml --log_dir my_run` | `logs/<run>/best_model.pth`, `best_info.json`, `history.json` |
+| grouped train | `python train.py --config dataset.yaml --log_dir my_run --log_dir_group run_YYYYMMDD_HHMMSS` | `logs/<group>/<run>/best_model.pth`, grouped paper-run logs |
 | inference images | `python scripts/generate_inference_images.py --timeseries data/timeseries.csv --scenarios data/scenarios.csv --out-dir inference_inputs` | flat model-input images and manifest |
 | inference | `python inference.py --model logs/<run>/best_model.pth` | predictions/metrics |
 | add training | `python scripts/add_training_from_folders.py --model-run logs/<run> --image-root extra_images` | fine-tuned `logs/addtrain_*/best_model.pth` |
@@ -32,8 +33,8 @@
 - `scripts/gradcam_error_report.py`: Grad-CAM overlays for FP/FN samples
 - `scripts/right_crop_postprocess_report.py`: FP/FN check for right-crop postprocess rules
 - `scripts/gradcam_normal_rescue_report.py`: FP/FN check for normal-prediction Grad-CAM rescue rules
-- `scripts/generate_log_history_report.py`: tables and plots from `logs/`
-- `scripts/sweeps_server/00_all.sh`: current server experiment resume, ending with color -> sample_skip -> logical_train -> gc
+- `scripts/generate_log_history_report.py`: tables and plots from flat or grouped `logs/**/`
+- `scripts/sweeps_server/00_all.sh`: current paper experiment pipeline, ending with color -> sample_skip -> backbone -> logical_train -> gc -> BKM combined
 - `docs/summary.md`: current experiment summary
 
 Generated folders such as `data/`, `images/`, `display/`, `logs/`, `weights/`, and `validations/` are gitignored.

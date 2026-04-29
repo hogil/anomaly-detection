@@ -28,6 +28,15 @@ RUN_DIR_RE = re.compile(r"^\d{6}_\d{6}_(?P<candidate>.+)_s(?P<seed>\d+)_F[0-9.]+
 CHART_RE = re.compile(r"(ch_\d+)")
 
 
+def iter_run_dirs(logs_dir: Path):
+    if not logs_dir.exists():
+        return
+    for best_path in sorted(logs_dir.glob("**/best_info.json")):
+        run_dir = best_path.parent
+        if (run_dir / "predictions").exists():
+            yield run_dir
+
+
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Analyze per-sample FP/FN trends across runs")
     ap.add_argument("--config", required=True, help="Dataset config used by the active experiment family")
@@ -125,9 +134,7 @@ class RunSummary:
 
 def collect_runs(prefix: str, min_f1: float) -> list[RunSummary]:
     runs: list[RunSummary] = []
-    for path in sorted(LOGS.iterdir()):
-        if not path.is_dir():
-            continue
+    for path in iter_run_dirs(LOGS):
         m = RUN_DIR_RE.match(path.name)
         if not m:
             continue

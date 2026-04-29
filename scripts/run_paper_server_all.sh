@@ -1,68 +1,69 @@
 #!/usr/bin/env bash
+# Paper experiment runner. Auto-detects the runtime profile (server vs PC vs
+# minimal) from GPU memory + CPU count, then runs:
+#   weights -> dataset/images -> baseline recheck -> single-axis sweep -> post.
+#
+# Inputs (validations/):
+#   01_baseline_queue.json       baseline 5-seed recheck input
+#   02_sweep_queue.json          per-axis sweep input (template)
+#   03_sample_skip_queue.json    one-off "filter nonfinite-loss samples" probe
+# Outputs (validations/):
+#   02_sweep_active.json         server-prep of 02_sweep_queue.json
+#   02_sweep_results.json/.md    live results updated each run
+#   run.log                      combined stdout
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
+source "$ROOT_DIR/scripts/sweeps_server/_common.sh"
 
 PYTHON="${PYTHON:-python}"
-CONFIG="dataset.yaml"
-WORKERS=24
-NUM_WORKERS=24
-PREFETCH_FACTOR=4
+CONFIG="${CONFIG:-dataset.yaml}"
+detect_profile
+WORKERS="${WORKERS:-$PROFILE_NUM_WORKERS}"
+NUM_WORKERS="${NUM_WORKERS:-$PROFILE_NUM_WORKERS}"
+PREFETCH_FACTOR="${PREFETCH_FACTOR:-$PROFILE_PREFETCH}"
+MAX_LAUNCHED="${MAX_LAUNCHED:-$PROFILE_MAX_LAUNCHED}"
 CANDIDATE_PREFIX="fresh0412_v11"
 MIN_F1="0.99"
 SKIP_WEIGHTS=0
 SKIP_DATASET=0
 SKIP_REFCHECK=0
 SKIP_ROUND1=0
-SKIP_ROUND2=0
+SKIP_ROUND2=1   # round2 deprecated; kept as inert flag
 SKIP_POST=0
 FORCE=0
-MAX_LAUNCHED=0
 ROUND1_START_AFTER_AXIS=""
 ROUND1_START_AFTER_CANDIDATE=""
 ROUND1_SKIP_COMPLETED=1
 DEFAULT_ROUND1_AXES="normal_ratio,per_class,lr,warmup,label_smoothing,stochastic_depth,focal_gamma,abnormal_weight,ema,allow_tie_save,color,gc"
 ROUND1_INCLUDE_AXES="$DEFAULT_ROUND1_AXES"
+LOG_DIR_GROUP="${LOG_DIR_GROUP:-run_$(date +%Y%m%d_%H%M%S)}"
 
 usage() {
   cat <<'EOF'
 Usage:
   bash scripts/run_paper_server_all.sh [options]
 
-Runs the paper experiment pipeline in one command:
-  weights check/download -> dataset/image generation if needed -> refcheck ->
-  strict one-factor round1 (GC last) -> select/run round2 ->
-  instability/trend/report.
-
-For the current server needed-only resume, use:
-  bash scripts/sweeps_server/00_all.sh
+Stages: weights -> dataset/images -> baseline recheck -> single-axis sweep -> post.
+Auto-detects runtime profile (server/pc/minimal) from GPU memory + CPU count.
 
 Options:
-  --python PATH           Python executable (default: python or $PYTHON)
-  --config PATH           Dataset config used on this server (default: dataset.yaml)
-  --workers N             Data/image generation workers (default: 24)
-  --num-workers N         train.py DataLoader workers in all queues (default: 24)
-  --prefetch-factor N     train.py prefetch factor in all queues (default: 4)
-  --candidate-prefix STR  Prefix for prediction trend analysis (default: fresh0412_v11)
-  --min-f1 FLOAT          Minimum F1 for strong-run trend analysis (default: 0.99)
-  --force                 Re-run completed tags
-  --max-launched N        Stop controller after launching N new runs (debug/resume)
-  --round1-after-gc       Legacy resume helper for old queues where GC was first
-  --round1-include-gc     Legacy no-op; GC is already last in default round1 order
-  --round1-start-after-candidate STR
-                          Start strict round1 after this candidate's last queued seed
+  --python PATH          python executable
+  --config PATH          dataset config (default dataset.yaml)
+  --workers N            data/image generation workers
+  --num-workers N        train.py DataLoader workers
+  --prefetch-factor N    train.py prefetch factor
+  --max-launched N       stop controller after launching N runs (0 = unlimited)
+  --candidate-prefix STR prefix for prediction trend analysis
+  --min-f1 FLOAT         min F1 for strong-run trend analysis
+  --force                re-run completed tags
   --round1-include-axes CSV
-                          Only keep these round1 axes when preparing the queue
-  --round1-skip-completed Omit completed/skipped tags from the existing round1 summary (default)
-  --round1-keep-completed Keep completed/skipped tags in the prepared round1 queue
-  --skip-weights          Do not run download.py when weights are missing
-  --skip-dataset          Do not auto-generate data/images
-  --skip-refcheck         Skip previous-state reference rerun
-  --skip-round1           Skip strict round1 queue
-  --skip-round2           Skip round2 selection/queue
-  --skip-post             Skip instability/trend/report generation
-  -h, --help              Show this help
+  --round1-skip-completed / --round1-keep-completed
+  --round1-start-after-candidate STR
+  --skip-weights / --skip-dataset / --skip-refcheck / --skip-round1 / --skip-post
+  --log-dir-group NAME   group all train.py runs under logs/<NAME>/ (default: run_<timestamp>)
+  -h, --help             show this help
 EOF
 }
 
@@ -89,142 +90,81 @@ while [[ $# -gt 0 ]]; do
     --skip-round1) SKIP_ROUND1=1; shift ;;
     --skip-round2) SKIP_ROUND2=1; shift ;;
     --skip-post) SKIP_POST=1; shift ;;
+    --log-dir-group) LOG_DIR_GROUP="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
   esac
 done
 
 mkdir -p validations logs docs
+LOG="validations/run.log"
 
-LOG="validations/paper_server_all.log"
-STATE="validations/paper_server_all_state.json"
-
-run_cmd() {
-  echo
-  echo "+ $*"
-  "$@"
-}
-
-write_state() {
-  local status="$1"
-  local stage="$2"
-  local message="${3:-}"
-  "$PYTHON" - "$STATE" "$status" "$stage" "$message" "$CONFIG" "$NUM_WORKERS" <<'PY'
-import json
-import sys
-from datetime import datetime
-from pathlib import Path
-
-path, status, stage, message, config, num_workers = sys.argv[1:]
-payload = {
-    "updated_at": datetime.now().isoformat(timespec="seconds"),
-    "status": status,
-    "stage": stage,
-    "message": message,
-    "config": config,
-    "num_workers": int(num_workers),
-}
-Path(path).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-PY
-}
+run_cmd() { echo; echo "+ $*"; "$@"; }
 
 config_path() {
   local key="$1"
   "$PYTHON" - "$CONFIG" "$key" <<'PY'
 import sys
 from pathlib import Path
-
 import yaml
-
-config_path, dotted_key = sys.argv[1:]
-payload = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
-value = payload
-for part in dotted_key.split("."):
-    value = value[part]
-print(value)
+cfg, dotted = sys.argv[1:]
+v = yaml.safe_load(Path(cfg).read_text(encoding="utf-8"))
+for part in dotted.split("."):
+    v = v[part]
+print(v)
 PY
 }
 
 prepare_queue() {
-  local src="$1"
-  local dst="$2"
-  local start_after_axis="${3:-}"
-  local start_after_candidate="${4:-}"
-  local skip_completed_summary="${5:-}"
-  local include_axes="${6:-}"
+  local src="$1" dst="$2"
+  local start_after_axis="${3:-}" start_after_candidate="${4:-}"
+  local skip_completed_summary="${5:-}" include_axes="${6:-}"
   local args=(
     scripts/prepare_server_queue.py
-    --src "$src"
-    --dst "$dst"
+    --src "$src" --dst "$dst"
     --config "$CONFIG"
     --num-workers "$NUM_WORKERS"
     --prefetch-factor "$PREFETCH_FACTOR"
   )
-  if [[ -n "$start_after_axis" ]]; then
-    args+=(--start-after-axis "$start_after_axis")
-  fi
-  if [[ -n "$start_after_candidate" ]]; then
-    args+=(--start-after-candidate "$start_after_candidate")
-  fi
-  if [[ -n "$skip_completed_summary" ]]; then
-    args+=(--skip-completed-summary "$skip_completed_summary")
-  fi
-  if [[ -n "$include_axes" ]]; then
-    args+=(--include-axes "$include_axes")
-  fi
+  [[ -n "$start_after_axis" ]] && args+=(--start-after-axis "$start_after_axis")
+  [[ -n "$start_after_candidate" ]] && args+=(--start-after-candidate "$start_after_candidate")
+  [[ -n "$skip_completed_summary" ]] && args+=(--skip-completed-summary "$skip_completed_summary")
+  [[ -n "$include_axes" ]] && args+=(--include-axes "$include_axes")
   run_cmd "$PYTHON" "${args[@]}"
 }
 
 run_controller() {
-  local queue="$1"
-  local summary="$2"
-  local markdown="$3"
-  local stage="$4"
+  local queue="$1" summary="$2" markdown="$3" stage="$4"
   local args=(
     scripts/adaptive_experiment_controller.py
-    --queue "$queue"
-    --summary "$summary"
-    --markdown "$markdown"
-    --target-min 5
-    --target-max 15
-    --stop-mode never
-    --candidate-min-runs-before-skip 0
-    --completion-exit-grace 15
+    --queue "$queue" --summary "$summary" --markdown "$markdown"
+    --target-min 5 --target-max 15 --stop-mode never
+    --candidate-min-runs-before-skip 0 --completion-exit-grace 15
     --update-live-summary
   )
-  if [[ "$FORCE" -eq 1 ]]; then
-    args+=(--force)
-  fi
-  if [[ "$MAX_LAUNCHED" -gt 0 ]]; then
-    args+=(--max-launched "$MAX_LAUNCHED")
-  fi
-  write_state "running" "$stage" "$queue"
+  [[ "$FORCE" -eq 1 ]] && args+=(--force)
+  [[ "$MAX_LAUNCHED" -gt 0 ]] && args+=(--max-launched "$MAX_LAUNCHED")
+  [[ -n "$LOG_DIR_GROUP" ]] && args+=(--log-dir-group "$LOG_DIR_GROUP")
+  echo "[stage] $stage"
   run_cmd "$PYTHON" "${args[@]}"
 }
 
 queue_run_count() {
-  local queue="$1"
-  "$PYTHON" - "$queue" <<'PY'
-import json
-import sys
+  "$PYTHON" - "$1" <<'PY'
+import json, sys
 from pathlib import Path
-
-path = Path(sys.argv[1])
-if not path.exists():
-    print(0)
-    raise SystemExit
-payload = json.loads(path.read_text(encoding="utf-8"))
-if isinstance(payload, list):
-    print(len(payload))
-else:
-    print(len(payload.get("runs", [])))
+p = Path(sys.argv[1])
+if not p.exists():
+    print(0); raise SystemExit
+d = json.loads(p.read_text(encoding="utf-8"))
+print(len(d) if isinstance(d, list) else len(d.get("runs", [])))
 PY
 }
 
 main() {
   exec > >(tee -a "$LOG") 2>&1
-  echo "== paper server run started: $(date -Is) =="
-  echo "config=$CONFIG workers=$WORKERS num_workers=$NUM_WORKERS prefetch=$PREFETCH_FACTOR"
+  echo "== run started: $(date -Is) =="
+  echo "config=$CONFIG profile=$PROFILE_NAME workers=$WORKERS num_workers=$NUM_WORKERS prefetch=$PREFETCH_FACTOR max_launched=$MAX_LAUNCHED log_dir_group=$LOG_DIR_GROUP"
   echo "round1_axes=$ROUND1_INCLUDE_AXES"
 
   DATA_DIR="$(config_path output.data_dir)"
@@ -232,16 +172,12 @@ main() {
   DISPLAY_DIR="$(config_path output.display_dir)"
   echo "dataset=$DATA_DIR images=$IMAGE_DIR display=$DISPLAY_DIR"
 
-  write_state "running" "start" "server paper pipeline started"
-
   if [[ "$SKIP_WEIGHTS" -eq 0 && ! -f weights/convnextv2_tiny.fcmae_ft_in22k_in1k.pth ]]; then
-    write_state "running" "weights" "downloading pretrained weights"
     run_cmd "$PYTHON" download.py
   fi
 
   if [[ "$SKIP_DATASET" -eq 0 ]]; then
     if [[ ! -f "$DATA_DIR/scenarios.csv" || ! -f "$DATA_DIR/timeseries.csv" || ! -d "$IMAGE_DIR" ]]; then
-      write_state "running" "dataset" "generating dataset and images"
       run_cmd "$PYTHON" generate_data.py --config "$CONFIG" --workers "$WORKERS"
       run_cmd "$PYTHON" generate_images.py --config "$CONFIG" --workers "$WORKERS"
       run_cmd "$PYTHON" scripts/validate_dataset.py \
@@ -256,76 +192,40 @@ main() {
 
   if [[ "$SKIP_REFCHECK" -eq 0 ]]; then
     prepare_queue \
-      validations/paper_refcheck_raw_queue.json \
-      validations/server_paper_refcheck_raw_queue.json
+      validations/01_baseline_queue.json \
+      validations/01_baseline_active.json
     run_controller \
-      validations/server_paper_refcheck_raw_queue.json \
-      validations/server_paper_refcheck_raw_summary.json \
-      validations/server_paper_refcheck_raw_summary.md \
-      "refcheck_raw"
+      validations/01_baseline_active.json \
+      validations/01_baseline_results.json \
+      validations/01_baseline_results.md \
+      "baseline_recheck"
   fi
 
   if [[ "$SKIP_ROUND1" -eq 0 ]]; then
-    round1_skip_completed_summary=""
+    skip_summary=""
     if [[ "$ROUND1_SKIP_COMPLETED" -eq 1 && "$FORCE" -eq 0 ]]; then
-      round1_skip_completed_summary="validations/server_paper_rawbase_strict_single_factor_summary.json"
+      skip_summary="validations/02_sweep_results.json"
     fi
     prepare_queue \
-      validations/paper_strict_single_factor_queue.json \
-      validations/server_paper_rawbase_strict_single_factor_queue.json \
+      validations/02_sweep_queue.json \
+      validations/02_sweep_active.json \
       "$ROUND1_START_AFTER_AXIS" \
       "$ROUND1_START_AFTER_CANDIDATE" \
-      "$round1_skip_completed_summary" \
+      "$skip_summary" \
       "$ROUND1_INCLUDE_AXES"
-    ROUND1_COUNT="$(queue_run_count validations/server_paper_rawbase_strict_single_factor_queue.json)"
+    ROUND1_COUNT="$(queue_run_count validations/02_sweep_active.json)"
     if [[ "$ROUND1_COUNT" -gt 0 ]]; then
       run_controller \
-        validations/server_paper_rawbase_strict_single_factor_queue.json \
-        validations/server_paper_rawbase_strict_single_factor_summary.json \
-        validations/server_paper_rawbase_strict_single_factor_summary.md \
-        "strict_round1"
+        validations/02_sweep_active.json \
+        validations/02_sweep_results.json \
+        validations/02_sweep_results.md \
+        "axis_sweep"
     else
-      echo "[skip] strict_round1 queue is empty"
-    fi
-  fi
-
-  if [[ "$SKIP_ROUND2" -eq 0 ]]; then
-    write_state "running" "select_round2" "selecting round2 from server round1 summary"
-    run_cmd "$PYTHON" scripts/select_strict_single_factor_refinements.py \
-      --summary validations/server_paper_rawbase_strict_single_factor_summary.json \
-      --out-queue validations/server_paper_rawbase_strict_single_factor_round2_queue.json \
-      --decision-md validations/server_paper_rawbase_strict_single_factor_round2_decision.md
-
-    if [[ -f validations/server_paper_rawbase_strict_single_factor_round2_queue.json ]]; then
-      ROUND2_COUNT="$("$PYTHON" - <<'PY'
-import json
-from pathlib import Path
-p = Path("validations/server_paper_rawbase_strict_single_factor_round2_queue.json")
-print(len(json.loads(p.read_text(encoding="utf-8")).get("runs", [])))
-PY
-)"
-      if [[ "$ROUND2_COUNT" -gt 0 ]]; then
-        prepare_queue \
-          validations/server_paper_rawbase_strict_single_factor_round2_queue.json \
-          validations/server_paper_rawbase_strict_single_factor_round2_queue.prepared.json
-        ROUND2_PREPARED_COUNT="$(queue_run_count validations/server_paper_rawbase_strict_single_factor_round2_queue.prepared.json)"
-        if [[ "$ROUND2_PREPARED_COUNT" -gt 0 ]]; then
-          run_controller \
-            validations/server_paper_rawbase_strict_single_factor_round2_queue.prepared.json \
-            validations/server_paper_rawbase_strict_single_factor_round2_summary.json \
-            validations/server_paper_rawbase_strict_single_factor_round2_summary.md \
-            "strict_round2"
-        else
-          echo "[skip] prepared round2 queue is empty"
-        fi
-      else
-        echo "[skip] round2 queue is empty"
-      fi
+      echo "[skip] axis_sweep queue is empty"
     fi
   fi
 
   if [[ "$SKIP_POST" -eq 0 ]]; then
-    write_state "running" "postprocess" "collecting instability, trends, and report"
     run_cmd "$PYTHON" scripts/collect_instability_cases.py
     run_cmd "$PYTHON" scripts/analyze_prediction_trends.py \
       --config "$CONFIG" \
@@ -334,17 +234,18 @@ PY
       --out-prefix validations/prediction_trend_latest \
       --report-label "$CANDIDATE_PREFIX"
     run_cmd "$PYTHON" scripts/generate_strict_one_factor_report.py \
-      --strict-summary validations/server_paper_rawbase_strict_single_factor_summary.json \
-      --round2-summary validations/server_paper_rawbase_strict_single_factor_round2_summary.json \
-      --round2-queue validations/server_paper_rawbase_strict_single_factor_round2_queue.prepared.json \
-      --state validations/paper_server_all_state.json \
-      --markdown-out validations/server_paper_rawbase_strict_single_factor_summary.md \
-      --report-out validations/server_paper_rawbase_strict_single_factor_report.md \
-      --plots-dir validations/server_paper_rawbase_strict_single_factor_plots
+      --strict-summary validations/02_sweep_results.json \
+      --markdown-out validations/02_sweep_results.md \
+      --report-out validations/02_sweep_report.md \
+      --plots-dir validations/02_sweep_plots
+    run_cmd "$PYTHON" scripts/generate_strict_one_factor_report.py \
+      --strict-summary validations/02_sweep_results.json \
+      --markdown-out docs/summary.md \
+      --report-out docs/summary.md \
+      --plots-dir docs/plots
   fi
 
-  write_state "complete" "done" "server paper pipeline completed"
-  echo "== paper server run completed: $(date -Is) =="
+  echo "== run completed: $(date -Is) =="
 }
 
 main

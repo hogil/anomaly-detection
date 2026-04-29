@@ -277,19 +277,27 @@ def run_inference(
     csv_path = out_path / "predictions.csv"
     results_df.to_csv(csv_path, index=False)
 
-    # txt 간단 리스트 (ABNORMAL 상단: p_abnormal 높은 순, NORMAL 하단: 낮은 순)
+    # txt 리스트 — 통합본 + abnormal/normal 분리본 3종.
     txt_path = out_path / "predictions.txt"
+    abn_df = results_df[results_df["predicted"] == "abnormal"].sort_values("p_abnormal", ascending=False)
+    nor_df = results_df[results_df["predicted"] == "normal"].sort_values("p_abnormal", ascending=True)
     with open(txt_path, "w", encoding="utf-8") as f:
-        abn_df = results_df[results_df["predicted"] == "abnormal"].sort_values("p_abnormal", ascending=False)
-        nor_df = results_df[results_df["predicted"] == "normal"].sort_values("p_abnormal", ascending=True)
-
         f.write(f"=== ABNORMAL ({len(abn_df)}) — sorted by severity (high→low) ===\n")
         for _, r in abn_df.iterrows():
             f.write(f"  p_abn={r['p_abnormal']:.4f}  {r['chart_id']}  {r['image_file']}\n")
-
         f.write(f"\n=== NORMAL ({len(nor_df)}) — sorted by safety (low→high p_abn) ===\n")
         for _, r in nor_df.iterrows():
             f.write(f"  p_abn={r['p_abnormal']:.4f}  {r['chart_id']}  {r['image_file']}\n")
+
+    abn_path = out_path / "abnormal_list.txt"
+    with open(abn_path, "w", encoding="utf-8") as f:
+        for _, r in abn_df.iterrows():
+            f.write(f"{r['chart_id']}\tp_abn={r['p_abnormal']:.4f}\t{r['image_file']}\n")
+
+    nor_path = out_path / "normal_list.txt"
+    with open(nor_path, "w", encoding="utf-8") as f:
+        for _, r in nor_df.iterrows():
+            f.write(f"{r['chart_id']}\tp_abn={r['p_abnormal']:.4f}\t{r['image_file']}\n")
 
     # 요약
     n_total = len(results_df)
@@ -306,7 +314,9 @@ def run_inference(
     print(f"    normal/      : {n_normal} images")
     print(f"    abnormal/    : {n_abnormal} images")
     print(f"    predictions.csv")
-    print(f"    predictions.txt")
+    print(f"    predictions.txt   (combined)")
+    print(f"    abnormal_list.txt ({n_abnormal} items)")
+    print(f"    normal_list.txt   ({n_normal} items)")
 
     # ground truth 있으면 accuracy 표시 (합성 데이터)
     if "true_class" in results_df.columns:

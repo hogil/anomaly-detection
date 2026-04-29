@@ -169,15 +169,19 @@ def run_dir_matches_tag(path: Path, tag: str) -> bool:
 
 
 def find_completed_run_dir(tag: str) -> Path | None:
-    matches = [
-        path
-        for path in LOGS_DIR.glob(f"*_{tag}*")
-        if path.is_dir() and (path / "best_info.json").exists() and run_dir_matches_tag(path, tag)
-    ]
+    # Search both logs/ and logs/<group>/ subdirectories so older flat runs and
+    # new grouped runs are both visible.
+    matches: list[Path] = []
+    for pattern in (f"*_{tag}*", f"*/*_{tag}*"):
+        matches.extend(
+            path
+            for path in LOGS_DIR.glob(pattern)
+            if path.is_dir() and (path / "best_info.json").exists() and run_dir_matches_tag(path, tag)
+        )
     if not matches:
-        direct = LOGS_DIR / tag
-        if direct.is_dir() and (direct / "best_info.json").exists():
-            return direct
+        for direct in (LOGS_DIR / tag, *LOGS_DIR.glob(f"*/{tag}")):
+            if direct.is_dir() and (direct / "best_info.json").exists():
+                return direct
         return None
     return max(matches, key=lambda path: path.stat().st_mtime)
 
@@ -278,10 +282,12 @@ def flatten_train_args(run: dict[str, Any]) -> list[str]:
     return out
 
 
-def build_command(run: dict[str, Any]) -> list[str]:
+def build_command(run: dict[str, Any], log_dir_group: str = "") -> list[str]:
     cmd = [sys.executable, "-u", "train.py"]
     cmd.extend(flatten_train_args(run))
     cmd.extend(["--seed", str(run["seed"]), "--log_dir", str(run["tag"])])
+    if log_dir_group:
+        cmd.extend(["--log_dir_group", log_dir_group])
     return cmd
 
 
@@ -296,8 +302,8 @@ def _stop_completed_process(proc: subprocess.Popen, tag: str) -> None:
         proc.wait(timeout=10)
 
 
-def launch_run(run: dict[str, Any], dry_run: bool, completion_exit_grace: float) -> int:
-    cmd = build_command(run)
+def launch_run(run: dict[str, Any], dry_run: bool, completion_exit_grace: float, log_dir_group: str = "") -> int:
+    cmd = build_command(run, log_dir_group=log_dir_group)
     print(f"\n=== RUN {run['tag']} seed={run['seed']} ===", flush=True)
     print(" ".join(cmd), flush=True)
     if dry_run:
@@ -548,6 +554,12 @@ def main() -> int:
         help="Seconds to wait after train.py prints completion before terminating a lingering successful process. Negative disables.",
     )
     parser.add_argument("--update-live-summary", action="store_true", help="Refresh docs/summary.md after controller artifact updates.")
+    parser.add_argument(
+        "--log-dir-group",
+        type=str,
+        default="",
+        help="Group all train.py runs under logs/<group>/ instead of logs/. Forwarded to train.py via --log_dir_group.",
+    )
     args = parser.parse_args()
 
     runs = load_queue(args.queue)
@@ -597,7 +609,7 @@ def main() -> int:
         existing = None if args.force else find_completed_run_dir(run["tag"])
         launched_this_run = False
         if existing is None:
-            code = launch_run(run, args.dry_run, args.completion_exit_grace)
+            code = launch_run(run, args.dry_run, args.completion_exit_grace, log_dir_group=args.log_dir_group)
             launched_this_run = not args.dry_run
             if launched_this_run:
                 launched += 1
@@ -607,7 +619,7 @@ def main() -> int:
                     "candidate": candidate,
                     "seed": int(run["seed"]),
                     "status": "dry_run",
-                    "command": build_command(run),
+                    "command": build_command(run, log_dir_group=args.log_dir_group),
                     "target_hit": False,
                 }
                 continue

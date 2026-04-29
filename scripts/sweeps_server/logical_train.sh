@@ -8,12 +8,14 @@ source "$D/_common.sh"
 PYTHON="${PYTHON:-python}"
 CONFIG="${CONFIG:-dataset.yaml}"
 SUFFIX="${SUFFIX:-logical_member_v11}"
-WORKERS="${WORKERS:-24}"
-NUM_WORKERS="${NUM_WORKERS:-24}"
-PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
+detect_profile
+WORKERS="${WORKERS:-$PROFILE_NUM_WORKERS}"
+NUM_WORKERS="${NUM_WORKERS:-$PROFILE_NUM_WORKERS}"
+PREFETCH_FACTOR="${PREFETCH_FACTOR:-$PROFILE_PREFETCH}"
 LOGICAL_SEEDS="${LOGICAL_SEEDS:-42}"
+LOG_DIR_GROUP="${LOG_DIR_GROUP:-run_$(date +%Y%m%d_%H%M%S)}"
 FORCE=0
-MAX_LAUNCHED=0
+MAX_LAUNCHED="${MAX_LAUNCHED:-$PROFILE_MAX_LAUNCHED}"
 
 usage() {
   cat <<'EOF'
@@ -45,6 +47,7 @@ while [[ $# -gt 0 ]]; do
     --seeds) LOGICAL_SEEDS="$2"; shift 2 ;;
     --force) FORCE=1; shift ;;
     --max-launched) MAX_LAUNCHED="$2"; shift 2 ;;
+    --log-dir-group) LOG_DIR_GROUP="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
   esac
@@ -189,6 +192,9 @@ if [[ "$FORCE" -eq 1 ]]; then
 fi
 if [[ "$MAX_LAUNCHED" -gt 0 ]]; then
   cmd+=(--max-launched "$MAX_LAUNCHED")
+fi
+if [[ -n "$LOG_DIR_GROUP" ]]; then
+  cmd+=(--log-dir-group "$LOG_DIR_GROUP")
 fi
 
 run_cmd "${cmd[@]}"

@@ -45,8 +45,8 @@ def active_log(logs_dir: Path) -> str:
     if not logs_dir.exists():
         return ""
     candidates = []
-    for path in logs_dir.iterdir():
-        if not path.is_dir():
+    for path in logs_dir.glob("**/*"):
+        if not path.is_dir() or path == logs_dir:
             continue
         name = path.name
         if "_rawbase_" not in name and "_lossfilter_" not in name:
@@ -373,9 +373,9 @@ def replace_tail(text: str, heading: str, new_lines: list[str]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--docs", type=Path, default=Path("docs/summary.md"))
-    parser.add_argument("--raw-ref-summary", type=Path, default=Path("validations/server_paper_refcheck_raw_summary.json"))
-    parser.add_argument("--rawbase-summary", type=Path, default=Path("validations/server_paper_rawbase_strict_single_factor_summary.json"))
-    parser.add_argument("--sample-skip-summary", type=Path, default=Path("validations/server_paper_nonfinite_loss_filter_summary.json"))
+    parser.add_argument("--raw-ref-summary", type=Path, default=Path("validations/01_baseline_results.json"))
+    parser.add_argument("--rawbase-summary", type=Path, default=Path("validations/02_sweep_results.json"))
+    parser.add_argument("--sample-skip-summary", type=Path, default=Path("validations/03_sample_skip_results.json"))
     parser.add_argument("--logs-dir", type=Path, default=Path("logs"))
     parser.add_argument("--validations-dir", type=Path, default=Path("validations"))
     parser.add_argument("--docs-plots-dir", type=Path, default=Path("docs/plots"))

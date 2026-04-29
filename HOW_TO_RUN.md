@@ -1,21 +1,58 @@
 # How To Run
 
-## 1. 데이터 생성
+이 프로젝트는 **trend 이미지(시계열 차트)** 를 보고 normal/anomaly를 분류합니다. 흐름:
 
-```bash
-python generate_data.py --config dataset.yaml --workers 24
+```
+dataset.yaml  →  데이터/이미지 생성  →  학습  →  추론
+                                       ↑
+                  현업 CSV는 generate_inference_images.py 로 끼워넣음
 ```
 
-## 2. 이미지 생성
+목차:
+1. 데이터셋 정의 (`dataset.yaml`)
+2. 데이터/이미지 생성
+3. 단일 학습 (`train.py`)
+4. 논문 sweep — 한 번에 전부 돌리기
+5. **stage 부분만 돌리기 — 구체 예시**
+6. 추론 (`inference.py`) + abnormal/normal 텍스트 리스트
+7. 현업 CSV 가져왔을 때
+8. 추가 학습 (folder)
+9. logs에서 표·plot 만들기
+10. Grad-CAM
+11. FP/FN 치우칠 때
+
+---
+
+## 1. 데이터셋 정의는 `dataset.yaml` 한 군데
+
+**바꿀 것은 이 파일뿐**입니다 — episode 길이, 노이즈, anomaly 종류·세기, fleet 수, 색·alpha 등 데이터셋 정의가 전부 여기.
+
+각 학습 run은 자기가 본 yaml 스냅샷(`logs/<run>/data_config_used.yaml`)을 따로 저장하므로, `dataset.yaml`을 나중에 바꿔도 옛 학습은 자기 스냅샷으로 재현됩니다.
+
+---
+
+## 2. 데이터/이미지 생성
 
 ```bash
+python generate_data.py   --config dataset.yaml --workers 24
 python generate_images.py --config dataset.yaml --workers 24
 ```
 
-`images/`는 모델 입력이고 `display/`는 사람이 보는 확인용 이미지입니다.
-데이터/이미지 생성 로그가 `tee`로 저장될 때는 progress bar 대신 단계 로그가 찍힙니다. 이미지 생성 worker 재시작은 기본 off입니다. 메모리 누수가 의심될 때만 `--maxtasksperchild 500`처럼 켭니다.
+출력:
 
-## 3. 학습
+```
+data/scenarios.csv, data/timeseries.csv      # 시나리오·시계열
+images/   <- 모델 입력용
+display/  <- 사람이 보는 확인용
+```
+
+`run_paper_server_all.sh`가 이미지가 없으면 자동으로 위 두 명령을 호출합니다. 별도로 미리 만들어둘 필요 없음.
+
+---
+
+## 3. 단일 학습 (`train.py`)
+
+가장 단순한 호출:
 
 ```bash
 python train.py \
@@ -29,56 +66,238 @@ python train.py \
   --log_dir my_run
 ```
 
+자주 쓰는 옵션:
+
+| 옵션 | 의미 | 예시 |
+|---|---|---|
+| `--model_name` | timm 백본 이름. `weights/<이름>.pth` 가 있어야 함 | `--model_name swin_tiny_patch4_window7_224.ms_in22k_ft_in1k` |
+| `--lr_backbone` / `--lr_head` | LR. ConvNeXtV2-Tiny 기본 `2e-5 / 2e-4` | `--lr_backbone 3e-5 --lr_head 3e-4` |
+| `--warmup_epochs` | warmup epoch 수 | `--warmup_epochs 3` |
+| `--grad_clip` | gradient clip max_norm. `0` 이면 끔 | `--grad_clip 0.5` |
+| `--label_smoothing` | label smoothing | `--label_smoothing 0.02` |
+| `--stochastic_depth_rate` | stochastic depth | `--stochastic_depth_rate 0.05` |
+| `--focal_gamma` | focal loss γ | `--focal_gamma 2.0` |
+| `--abnormal_weight` | anomaly class 가중치 | `--abnormal_weight 1.5` |
+| `--ema_decay` | EMA. `0` 이면 끔 | `--ema_decay 0.95` |
+| `--allow_tie_save` | val_f1 tie 시도 저장 허용 | `--allow_tie_save` |
+| `--filter_nonfinite_loss` | NaN/Inf loss 샘플 step skip | `--filter_nonfinite_loss` |
+| `--log_dir_group` | `logs/<group>/<run>/` 형식으로 묶음 | `--log_dir_group run_20260430_120000` |
+
 출력:
 
-```text
-logs/<run>/
-  best_model.pth
-  best_info.json
-  history.json
-  confusion_matrix.png
-  confusion_matrix_nt.png
-  training_curves.png
+```
+logs/<group?>/<run>/
+  best_model.pth, best_info.json, history.json
+  confusion_matrix.png, training_curves.png
+  data_config_used.yaml   <- 이 run이 본 데이터셋 정의
+  train_config_used.yaml  <- 이 run의 학습 인자 전부
   predictions/
 ```
 
-## 4. best_model 추론
-
-실전처럼 이미 만들어진 trend CSV에서 추론용 이미지만 먼저 만들려면:
+BKM combined 한 번 돌리는 단일 명령 예시 (`05_bkm_combined`와 같은 조합):
 
 ```bash
-python scripts/generate_inference_images.py \
-  --timeseries data/timeseries.csv \
-  --scenarios data/scenarios.csv \
-  --out-dir inference_inputs
+python train.py \
+  --config dataset.yaml --mode binary --epochs 20 --batch_size 32 --precision fp16 \
+  --normal_ratio 3300 \
+  --grad_clip 0.5 \
+  --label_smoothing 0.02 \
+  --stochastic_depth_rate 0.05 \
+  --focal_gamma 2.0 \
+  --abnormal_weight 1.5 \
+  --ema_decay 0.95 \
+  --allow_tie_save \
+  --seed 42 --log_dir bkm_combined_s42
 ```
 
-출력:
+---
 
-```text
-inference_inputs/
-  model_inputs/
-  display/
-  manifest.csv
+## 4. 논문 sweep — 한 번에 전부 돌리기
+
+```bash
+bash scripts/sweeps_server/00_all.sh
 ```
 
-이 스크립트에서 YAML은 렌더링 스타일만 읽습니다. 데이터 위치는 `--timeseries`, `--scenarios`, `--out-dir`로 직접 지정합니다.
+내부 순서:
+
+| # | stage | 한 줄 설명 |
+|---|---|---|
+| 0 | weights/dataset 준비 | 없으면 `download.py`, `generate_data.py`, `generate_images.py` 자동 |
+| 1 | baseline | 같은 baseline 5-seed 재확인 |
+| 2 | axis sweep (core) | lr/warmup/normal_ratio/per_class/label_smoothing/stochastic_depth/focal_gamma/abnormal_weight/ema/allow_tie_save 한 축씩만 |
+| 3 | color | trend·fleet 색·alpha 축 |
+| 4 | sample_skip | nonfinite-loss 샘플 step-skip 안전 실험 1-seed |
+| 5 | backbone | `weights/`에 들어있는 모든 `*.pth`(`best_model.pth`·`*.fp16.pth` 제외)를 자동 검출해서 한 번씩 학습 |
+| 6 | logical_train | member별 logical 데이터셋 + 학습 |
+| 7 | gc (last) | grad_clip 축 (불안정 위험으로 마지막) |
+| 8 | bkm_combined | 8개 BKM 값 다 적용한 candidate 1개 × 5-seed |
+| 9 | postprocess | 종합 리포트 + 축별 plot + instability/trend |
+
+GPU 메모리·CPU 수로 자동 프로필 결정:
+
+| 프로필 | 조건 | num_workers | prefetch | 동시 launch |
+|---|---|---:|---:|---:|
+| `server` | GPU ≥ 40 GB | 24 | 4 | 무제한 |
+| `pc` | GPU ≥ 12 GB | 2 | 2 | 1 |
+| `minimal` | 그 외 | 0 | 1 | 1 |
+
+`--num-workers`, `--prefetch-factor`, `--max-launched`, `--log-dir-group` 직접 지정하면 위 자동값 덮어씀.
+
+`00_all.sh` 시작할 때 `LOG_DIR_GROUP=run_<timestamp>` 한 번 만들어서 모든 stage가 `logs/run_<timestamp>/<run>/` 아래로 모입니다.
+
+---
+
+## 5. stage 부분만 돌리기 — 구체 예시
+
+### 한 축만
+
+```bash
+bash scripts/sweeps_server/axis.sh lr            # stage 2의 lr만
+bash scripts/sweeps_server/axis.sh gc            # stage 7
+bash scripts/sweeps_server/axis.sh baseline      # stage 1
+```
+
+`axis.sh`가 받는 이름: `lr, warmup, normal_ratio, per_class, label_smoothing, stochastic_depth, focal_gamma, abnormal_weight, ema, color, allow_tie_save, gc, baseline`.
+
+### stage 1~3만 (baseline + 모든 core 축 + color)
+
+축마다 호출하거나:
+
+```bash
+for axis in baseline lr warmup normal_ratio per_class label_smoothing \
+            stochastic_depth focal_gamma abnormal_weight ema allow_tie_save color; do
+  bash scripts/sweeps_server/axis.sh "$axis"
+done
+```
+
+또는 한 줄:
+
+```bash
+bash scripts/run_paper_server_all.sh \
+  --skip-weights --skip-dataset \
+  --round1-include-axes lr,warmup,normal_ratio,per_class,label_smoothing,stochastic_depth,focal_gamma,abnormal_weight,ema,allow_tie_save,color \
+  --skip-post
+```
+
+### stage 0,4만 (데이터 준비 + sample_skip)
+
+```bash
+bash scripts/run_paper_server_all.sh --skip-refcheck --skip-round1 --skip-post
+bash scripts/sweeps_server/sample_skip.sh
+```
+
+### stage 5,8만 (backbone + bkm_combined)
+
+```bash
+bash scripts/sweeps_server/backbone.sh
+bash scripts/sweeps_server/bkm_combined.sh
+```
+
+### stage 9만 (이미 결과 있을 때 표/plot만 갱신)
+
+```bash
+bash scripts/run_paper_server_all.sh \
+  --skip-weights --skip-dataset --skip-refcheck --skip-round1
+```
+
+### 같은 group 으로 묶어 돌리기
+
+여러 명령을 한 묶음으로 보고 싶을 때 group 명을 직접 지정:
+
+```bash
+GROUP=run_$(date +%Y%m%d_%H%M%S)
+bash scripts/sweeps_server/axis.sh baseline --log-dir-group "$GROUP"
+bash scripts/sweeps_server/axis.sh lr        --log-dir-group "$GROUP"
+bash scripts/sweeps_server/backbone.sh       --log-dir-group "$GROUP"
+```
+
+전 stage 결과가 `logs/$GROUP/<run>/` 아래로 모입니다.
+
+### 1 run만 검증 (학습 launch 안 함)
+
+```bash
+bash scripts/sweeps_server/backbone.sh --prepare-only          # queue/active만 만듦
+bash scripts/sweeps_server/axis.sh lr --max-launched 1         # lr 축에서 1 run만
+```
+
+---
+
+## 6. 추론 (`inference.py`) + 텍스트 리스트
 
 ```bash
 python inference.py \
-  --model logs/<run>/best_model.pth
+  --model logs/<group>/<run>/best_model.pth \
+  --output_dir my_inference
 ```
 
-## 5. 서버 batch 추론
+출력 (`my_inference/`):
+
+```
+abnormal/             <- 불량 판정 display 이미지
+normal/               <- 정상 판정 display 이미지
+predictions.csv       <- 모든 chart, p_abnormal, predicted, p_normal
+predictions.txt       <- 통합 텍스트 (ABNORMAL 위, NORMAL 아래)
+abnormal_list.txt     <- 불량 chart_id 목록만
+normal_list.txt       <- 정상 chart_id 목록만
+```
+
+`abnormal_list.txt` / `normal_list.txt` 형식:
+
+```
+ch_09100   p_abn=0.9991   ch_09100.png
+ch_09572   p_abn=0.0017   ch_09572.png
+```
+
+특정 split만 보고 싶으면:
 
 ```bash
-python scripts/server_batch_predict.py \
-  --model-run logs/<run>
+python inference.py --model logs/<run>/best_model.pth --split test
 ```
 
-## 6. normal/abnormal 폴더로 추가학습
+서버 batch 추론 (모델 폴더 통째로):
 
-```text
+```bash
+python scripts/server_batch_predict.py --model-run logs/<group>/<run>
+```
+
+---
+
+## 7. 현업 CSV 가져왔을 때
+
+현업 `timeseries.csv` + `scenarios.csv` 두 개가 있다고 가정하고, 그걸로 추론까지 가는 **전체 흐름**:
+
+```bash
+# (1) 현업 CSV → 모델 입력 이미지 생성
+python scripts/generate_inference_images.py \
+  --timeseries fab_export/timeseries.csv \
+  --scenarios  fab_export/scenarios.csv \
+  --out-dir    inference_inputs
+
+# 출력:
+#   inference_inputs/model_inputs/   <- 모델 입력용 이미지
+#   inference_inputs/display/        <- 사람 확인용
+#   inference_inputs/manifest.csv    <- chart_id ↔ 파일 매핑
+
+# (2) 학습된 모델로 분류 + 텍스트 리스트
+python inference.py \
+  --model logs/<group>/<run>/best_model.pth \
+  --data_dir inference_inputs \
+  --output_dir fab_results
+
+# 출력 fab_results/:
+#   abnormal/  normal/  predictions.csv  predictions.txt
+#   abnormal_list.txt  normal_list.txt
+```
+
+`generate_inference_images.py` 는 yaml에서 렌더 스타일만 읽고, 데이터 위치는 `--timeseries`, `--scenarios`, `--out-dir` 로 직접 받습니다. 즉 `dataset.yaml` 안 건드리고 현업 데이터 그대로 처리.
+
+---
+
+## 8. normal/abnormal 폴더로 추가 학습
+
+이미 분류된 폴더가 있을 때 fine-tune:
+
+```
 extra_images/
   normal/
   abnormal/
@@ -86,18 +305,16 @@ extra_images/
 
 ```bash
 python scripts/add_training_from_folders.py \
-  --model-run logs/<run> \
+  --model-run logs/<group>/<run> \
   --image-root extra_images \
-  --epochs 3 \
-  --lr 1e-5 \
-  --scheduler cosine
+  --epochs 3 --lr 1e-5 --scheduler cosine
 ```
 
-`best_model.pth`에서는 weight만 불러옵니다. 추가학습용 optimizer LR과 scheduler는 위 옵션으로 새로 정합니다. 출력은 `logs/addtrain_*/best_model.pth`, `best_info.json`, `history.json`, `confusion_matrix.png`입니다.
+`best_model.pth`에서 weight만 불러와서 fine-tune. 출력은 `logs/addtrain_*/`. 추가 학습 입력은 **모델 입력용 이미지** (display 아님).
 
-추가학습 폴더에는 display 이미지가 아니라 모델 입력용 이미지를 넣습니다. display 이미지는 사람이 확인하는 용도입니다.
+---
 
-## 7. logs에서 summary table/plot 생성
+## 9. logs에서 표·plot 만들기
 
 ```bash
 python scripts/generate_log_history_report.py \
@@ -107,102 +324,51 @@ python scripts/generate_log_history_report.py \
   --top-k 30
 ```
 
-출력:
+`logs/<group>/<run>/history.json` 까지 자동으로 추적합니다. 특정 group만 보고 싶으면 `--contains run_20260430` 처럼 지정.
 
-```text
-validations/log_history_report_rawbase.md
-validations/log_history_report_rawbase_candidates.csv
-validations/log_history_report_rawbase_runs.csv
-validations/log_history_report_rawbase_candidate_f1.png
-validations/log_history_report_rawbase_fn_fp.png
-validations/log_history_report_rawbase_val_f1_curves.png
-validations/log_history_report_rawbase_grad_p99_curves.png
-```
+출력: markdown / CSV / PNG (candidate F1 막대, val_f1 곡선, grad p99 곡선, FN/FP 산점).
 
-성능 plot 이미지는 이 스크립트가 직접 생성합니다. `generate_images.py`는 학습/display 이미지 생성용입니다.
+---
 
-## 8. Grad-CAM 확인
+## 10. Grad-CAM
 
 ```bash
 python scripts/gradcam_report.py \
-  --model-run logs/<run> \
+  --model-run logs/<group>/<run> \
   --image-root images/test \
   --out-dir validations/gradcam_probe \
   --include-classes normal,mean_shift,standard_deviation,spike,drift,context \
   --limit-per-class 6 \
   --save-heat-only \
-  --heat-threshold 0.0 \
-  --heat-min-alpha 0.18 \
-  --gallery-out docs/gradcam_class_overlay.png
+  --heat-threshold 0.0 --heat-min-alpha 0.18
 ```
 
-출력은 `gradcam.csv`, `summary.md`, `overlays/`, `heat_only/`, `cam_on_image/`입니다. `cam_on_image/`는 원본 trend 이미지 위에 CAM colormap을 반투명으로 얹은 이미지입니다. `--heat-threshold 0.0 --heat-min-alpha 0.18`을 쓰면 빨강 high heat뿐 아니라 파랑 low heat 영역도 보입니다. Grad-CAM은 모델 근거 위치이지 실제 불량 위치가 아니므로 left/right 판정 룰로 바로 쓰지 않습니다.
+CAM 은 모델 근거 위치를 보여주는 것이지 실제 anomaly 위치가 아닙니다. 후처리 룰로는 쓰지 않음.
 
-후처리 후보는 별도 FP/FN 리포트로 봅니다.
+FP/FN만 따로 보고 싶으면 `gradcam_error_report.py`.
+후처리 검증은 `right_crop_postprocess_report.py` 또는 `gradcam_normal_rescue_report.py`.
 
-```bash
-python scripts/right_crop_postprocess_report.py \
-  --model-run logs/<run> \
-  --split test \
-  --crop-ratio 0.4 \
-  --out-dir validations/right_crop_postprocess
+---
 
-python scripts/gradcam_normal_rescue_report.py \
-  --model-run logs/<run> \
-  --split test \
-  --out-dir validations/gradcam_normal_rescue
-```
+## 11. FP / FN 한쪽으로 치우칠 때
 
-FP/FN만 따로 CAM을 보고 싶으면:
+| 현상 | 우선 시도 |
+|---|---|
+| FP가 많다 (정상을 anomaly로 잡음) | `normal_ratio`↑ 또는 `--max_per_class`↑, `abnormal_weight`↓ 또는 `focal_gamma`↓ |
+| FN이 많다 (불량을 정상으로 놓침) | `abnormal_weight`↑, `focal_gamma`↑, `label_smoothing` 주변값 |
 
-```bash
-python scripts/gradcam_error_report.py \
-  --model-run logs/<run> \
-  --split test \
-  --error-type fp \
-  --out-dir validations/gradcam_fp_analysis \
-  --heat-threshold 0.0 \
-  --heat-min-alpha 0.18 \
-  --limit 6 \
-  --fill-hard-normal \
-  --gallery-out docs/gradcam_fp_examples.png
-```
+한 번에 여러 축 동시에 바꾸지 말고 한 축씩만 비교 (이게 `02_sweep_queue.json` 의 핵심 원칙).
 
-## 9. 현재 서버 실험 재개
+---
 
-```bash
-bash scripts/sweeps_server/00_all.sh
-```
+## 결과 파일 (`validations/`)
 
-현재 서버 queue는 core 축을 먼저 실행한 뒤 `color`, `sample_skip`, `logical_train` 순서로 후속 평가를 진행하고, `gc`는 마지막에 실행합니다. 축별로는 `scripts/sweeps_server/10_lr.sh`, `40_color.sh`, `06_sample_skip.sh`, `50_logical_train.sh`, `90_gc.sh`처럼 따로 실행할 수 있습니다.
-
-ref 자체의 LR/warmup을 바꾸려면 `validations/paper_refcheck_raw_queue.json`에서 각 seed의 아래 값을 바꿉니다.
-
-```json
-"--lr_backbone": "3e-5",
-"--lr_head": "3e-4",
-"--warmup_epochs": 3
-```
-
-단일 run으로 먼저 확인하려면:
-
-```bash
-python train.py \
-  --config dataset.yaml \
-  --mode binary \
-  --lr_backbone 3e-5 \
-  --lr_head 3e-4 \
-  --warmup_epochs 3 \
-  --grad_clip 0.0 \
-  --smooth_window 1 \
-  --normal_ratio 700 \
-  --log_dir ref_lrwarm3_probe
-```
-
-## 10. FP/FN이 치우칠 때
-
-FP가 너무 많으면 정상 이미지를 anomaly로 많이 잡는 상태입니다. 먼저 `normal_ratio`나 `max_per_class`를 올려 normal 쪽 근거를 늘리고, `abnormal_weight`를 낮추거나 `focal_gamma`를 낮춰 anomaly 쪽 압박을 줄입니다. `label_smoothing`이 크면 결정 경계가 흐려질 수 있으니 낮은 값도 같이 봅니다.
-
-FN이 너무 많으면 불량을 normal로 놓치는 상태입니다. `abnormal_weight`를 올리고, `focal_gamma`나 `label_smoothing` 주변값을 봅니다. `stochastic_depth`는 과적합을 줄여 FN/FP 균형이 좋아지는지 확인하는 축이고, `EMA`는 seed별 진동을 줄이는지 확인하는 축입니다.
-
-한 번에 여러 값을 섞지 말고 한 축만 바꿔서 봅니다. 서버 main sweep은 각 주요 축을 5조건 기준으로 비교합니다.
+| 파일 | 뜻 |
+|---|---|
+| `01_baseline_queue.json` / `_active.json` / `_results.{json,md}` | baseline 5-seed |
+| `02_sweep_queue.json` / `_active.json` / `_results.{json,md}` | 축별 sweep |
+| `02_sweep_report.md` / `02_sweep_plots/` | postprocess 리포트 + 축별 plot |
+| `03_sample_skip_queue.json` / `_active.json` / `_results.{json,md}` / `_plot.png` | sample_skip + 비교 plot |
+| `04_backbone_queue.json` / `_active.json` / `_results.{json,md}` / `_plot.png` | backbone sweep + 비교 plot |
+| `05_bkm_combined_queue.json` / `_active.json` / `_results.{json,md}` / `_plot.png` | BKM combined + 비교 plot |
+| `run.log` | 통합 실행 로그 |

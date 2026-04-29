@@ -56,6 +56,7 @@ FAMILY_TITLES = {
 }
 
 SOURCE_PRIORITY = {
+    "manual": 110,
     "baseline": 100,
     "round2": 40,
     "strict": 30,
@@ -223,6 +224,18 @@ def fmt_delta(value: float | None, baseline: float, digits: int = 4) -> str:
     return f"{delta:+.3f}".rstrip("0").rstrip(".")
 
 
+def completed_run_count(payload: dict[str, Any]) -> int:
+    aggregate_count = payload.get("aggregates", {}).get("complete")
+    if aggregate_count is not None:
+        return int(aggregate_count)
+    runs = payload.get("runs", {})
+    if isinstance(runs, dict):
+        return sum(1 for row in runs.values() if isinstance(row, dict) and row.get("status") == "complete")
+    if isinstance(runs, list):
+        return sum(1 for row in runs if isinstance(row, dict) and row.get("status") == "complete")
+    return 0
+
+
 def candidate_base(tag_or_name: str) -> str:
     return re.sub(r"_s(?:42|[1-4])$", "", tag_or_name)
 
@@ -336,8 +349,20 @@ def add_record(records: dict[str, dict[str, ConditionRecord]], record: Condition
         family_records[record.label] = record
 
 
-def baseline_metrics() -> tuple[float, float, float]:
-    for name in ("server_paper_refcheck_raw_summary.json", "paper_refcheck_raw_summary.json"):
+def manual_baseline_metrics(payload: dict[str, Any]) -> tuple[float, float, float] | None:
+    base = payload.get("baseline", {})
+    if not isinstance(base, dict):
+        return None
+    if base.get("f1") is None or base.get("fn") is None or base.get("fp") is None:
+        return None
+    return (float(base["f1"]), float(base["fn"]), float(base["fp"]))
+
+
+def baseline_metrics(manual_summary: dict[str, Any] | None = None) -> tuple[float, float, float]:
+    manual = manual_baseline_metrics(manual_summary or {})
+    if manual is not None:
+        return manual
+    for name in ("01_baseline_results.json",):
         payload = load_json(VALIDATIONS / name)
         row = payload.get("aggregates", {}).get("by_candidate", {}).get(OPERATING_BASELINE)
         if row and row.get("f1_mean") is not None:
@@ -355,8 +380,8 @@ def baseline_metrics() -> tuple[float, float, float]:
     )
 
 
-def inject_baselines(records: dict[str, dict[str, ConditionRecord]]) -> None:
-    bf1, bfn, bfp = baseline_metrics()
+def inject_baselines(records: dict[str, dict[str, ConditionRecord]], baseline: tuple[float, float, float]) -> None:
+    bf1, bfn, bfp = baseline
     for family, (label, sort_value) in FAMILY_BASELINES.items():
         add_record(
             records,
@@ -374,6 +399,39 @@ def inject_baselines(records: dict[str, dict[str, ConditionRecord]]) -> None:
                 candidate=OPERATING_BASELINE,
             ),
         )
+
+
+def load_manual_summary(records: dict[str, dict[str, ConditionRecord]], payload: dict[str, Any]) -> None:
+    families = payload.get("families", {})
+    if not isinstance(families, dict):
+        return
+    for family, rows in families.items():
+        if family not in FAMILY_ORDER or not isinstance(rows, list):
+            continue
+        records[family] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            label = str(row.get("label", "")).strip()
+            if not label:
+                continue
+            add_record(
+                records,
+                ConditionRecord(
+                    family=family,
+                    label=label,
+                    sort_value=float(row.get("sort_value", 0.0)),
+                    seeds_done=int(row.get("seeds_done", row.get("seeds", 5))),
+                    seeds_total=int(row.get("seeds_total", row.get("seeds", 5))),
+                    f1=float(row["f1"]) if row.get("f1") is not None else None,
+                    fn=float(row["fn"]) if row.get("fn") is not None else None,
+                    fp=float(row["fp"]) if row.get("fp") is not None else None,
+                    status=str(row.get("status", "complete")),
+                    source="manual",
+                    candidate=str(row.get("candidate", f"manual_{family}_{label}")),
+                    note=str(row.get("note", "")),
+                ),
+            )
 
 
 def load_legacy_v11(records: dict[str, dict[str, ConditionRecord]], path: Path) -> None:
@@ -548,7 +606,7 @@ def best_completed(rows: list[ConditionRecord], exclude_baseline: bool = True, p
     if prefer_strict_5seed:
         strict_5seed = [
             r for r in candidates
-            if r.seeds_done >= 5 and r.seeds_total >= 5 and r.source in {"strict", "round2"}
+            if r.seeds_done >= 5 and r.seeds_total >= 5 and r.source in {"strict", "round2", "manual"}
         ]
         if strict_5seed:
             candidates = strict_5seed
@@ -679,7 +737,34 @@ def evidence_limits(records: dict[str, dict[str, ConditionRecord]]) -> list[str]
     ]
 
 
-def best_known_method(records: dict[str, dict[str, ConditionRecord]]) -> list[str]:
+def manual_bkm_lines(payload: dict[str, Any]) -> list[str]:
+    rows = payload.get("bkm", [])
+    if not isinstance(rows, list) or not rows:
+        return []
+    lines = [
+        "| axis | baseline | BKM value | F1 | FN | FP | status |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | --- |",
+    ]
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        family = str(row.get("family", "")).strip()
+        if not family:
+            continue
+        lines.append(
+            f"| `{family}` | `{row.get('baseline', '-')}` | `{row.get('bkm_value', '-')}` | "
+            f"{fmt_float(float(row['f1'])) if row.get('f1') is not None else '-'} | "
+            f"{fmt_compact(float(row['fn'])) if row.get('fn') is not None else '-'} | "
+            f"{fmt_compact(float(row['fp'])) if row.get('fp') is not None else '-'} | "
+            f"{row.get('status', 'single-axis evidence')} |"
+        )
+    return lines if len(lines) > 2 else []
+
+
+def best_known_method(records: dict[str, dict[str, ConditionRecord]], manual_summary: dict[str, Any] | None = None) -> list[str]:
+    manual_lines = manual_bkm_lines(manual_summary or {})
+    if manual_lines:
+        return manual_lines
     picks = {
         "normal_ratio": None,
         "gc": None,
@@ -748,6 +833,15 @@ def plot_family(
     ]
 
     for ax, (metric_name, base_value, getter) in zip(axes, metrics):
+        ax.axhline(
+            base_value,
+            color="#d62728",
+            linestyle="--",
+            linewidth=1.2,
+            alpha=0.9,
+            label="operating baseline",
+            zorder=0,
+        )
         ys_reference_x: list[int] = []
         ys_reference_y: list[float] = []
         ys_complete_x: list[int] = []
@@ -801,7 +895,7 @@ def plot_family(
                     bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none", "pad": 1.5},
                 )
         else:
-            all_y = ys_reference_y + ys_complete_y + comparison_y
+            all_y = [base_value] + ys_reference_y + ys_complete_y + comparison_y
             upper = robust_upper_bound(all_y)
             if upper is not None:
                 ax.set_ylim(bottom=0.0, top=upper)
@@ -879,12 +973,13 @@ def write_markdown(
     state: dict[str, Any],
     strict_summary: dict[str, Any],
     round2_summary: dict[str, Any],
+    manual_summary: dict[str, Any],
 ) -> None:
-    baseline = baseline_metrics()
+    baseline = baseline_metrics(manual_summary)
     generated_at = datetime.now().isoformat(timespec="seconds")
-    main_complete = int(strict_summary.get("aggregates", {}).get("complete", 0))
-    round2_complete = int(round2_summary.get("aggregates", {}).get("complete", 0))
-    round2_queue = load_json(VALIDATIONS / "server_paper_rawbase_strict_single_factor_round2_queue.prepared.json")
+    main_complete = completed_run_count(strict_summary)
+    round2_complete = completed_run_count(round2_summary)
+    round2_queue: dict[str, Any] = {}
     round2_total = len(round2_queue.get("runs", []))
 
     lines = [
@@ -898,6 +993,7 @@ def write_markdown(
         "- Main seed set: `42, 1, 2, 3, 4`; report `F1`, `FN`, `FP`, and completed seed count.",
         f"- Operating baseline: `{OPERATING_BASELINE}`.",
         "- Rawbase server sweep uses `grad_clip=0.0`, `smooth_window=1`, `label_smoothing=0.0`, and `NT=0.9`.",
+        "- Paper-facing aggregate override: `docs/data/one_factor_latest.json`.",
         "",
         "## Performance Summary",
         "",
@@ -915,7 +1011,7 @@ def write_markdown(
         "## Best Known Method",
         "",
     ])
-    lines.extend(best_known_method(records) or ["- No completed candidate set yet."])
+    lines.extend(best_known_method(records, manual_summary) or ["- No completed candidate set yet."])
     lines.extend([
         "",
         "## 학습 이미지 예시",
@@ -924,17 +1020,17 @@ def write_markdown(
         "",
         "### Training Image",
         "",
-        "![training images by class](sample_overview_train.png)",
+        "![training images by class](images/sample_overview_train.png)",
         "",
         "### Display Image",
         "",
-        "![display images by class](sample_overview_display.png)",
+        "![display images by class](images/sample_overview_display.png)",
         "",
         "### Legend Axis Image",
         "",
         "같은 `device/step/item` group에서도 `legend_axis`를 `eqp_id`, `chamber`, `recipe`로 바꾸면 fleet member와 legend가 달라지므로 별도 이미지로 생성합니다. 이때 `highlighted_member`는 강조되는 member이고, `target`은 가운데 가로 기준선 값입니다.",
         "",
-        "![display images by legend_axis](sample_overview_legend_axis.png)",
+        "![display images by legend_axis](images/sample_overview_legend_axis.png)",
         "",
         "불량 class는 `mean_shift`, `std_dev`, `spike`, `drift`, `context`처럼 class별로 나뉘며, 각 이미지는 해당 class label로 학습됩니다.",
         "",
@@ -944,7 +1040,7 @@ def write_markdown(
         "",
         "아래 예시는 같은 chart `ch_09100`을 `EQP A`, `EQP B`, `EQP C`, `EQP D`, `EQP E` class 이미지로 펼친 것입니다. 각 EQP의 highlighted trend만 서로 다른 색으로 표시하고, 회색 점들은 같은 `legend_axis` 안의 비교 fleet입니다. class 글자는 normal은 검정, anomaly는 빨강입니다. 이 예시에서는 `EQP C`만 anomaly class이고 `EQP A`, `EQP B`, `EQP D`, `EQP E`는 normal class입니다.",
         "",
-        "![logical member class examples](logical_member_targets_ch09100.png)",
+        "![logical member class examples](images/logical_member_targets_ch09100.png)",
         "",
         "즉 family 전체 이상 감지가 아니라, `highlighted_member` 단위로 label을 부여하는 학습 예시입니다.",
         "",
@@ -954,7 +1050,7 @@ def write_markdown(
         "",
         "아래 이미지는 class별 6행, sample별 6열로 원본 trend 이미지 위에 CAM colormap을 반투명으로 얹은 예시입니다. 샘플명은 숨기고 왼쪽 class 라벨을 크게 표시했습니다. 빨강은 상대적으로 큰 CAM 값이고, 파랑도 함께 표시해서 CAM이 넓게 퍼지는지 확인합니다.",
         "",
-        "![class Grad-CAM overlay](gradcam_class_overlay.png)",
+        "![class Grad-CAM overlay](images/gradcam_class_overlay.png)",
         "",
         "| check | F1 macro | FN | FP | result |",
         "| --- | ---: | ---: | ---: | --- |",
@@ -969,7 +1065,7 @@ def write_markdown(
         "",
         "최신 model run의 test 실제 FP는 1개입니다. `ch_09572`는 true normal인데 `p_abnormal=0.99995`, right-crop도 `p_abnormal=0.99999`로 abnormal 판정됐습니다. CAM mass는 left 0.730, mid 0.227, right 0.043이라 우측 최근 불량을 본 것이 아니라 좌측/초반의 국소 outlier와 cluster-edge를 강한 abnormal 근거로 본 케이스입니다. FP 갤러리는 6장을 맞추기 위해 실제 FP 1개와 test normal 중 `p_abnormal` 상위 hard-normal 5개를 함께 표시했습니다. 현재 실제 FP만 보면 spike-like 정상 outlier를 spike성 불량으로 오인한 것으로 해석합니다.",
         "",
-        "![FP Grad-CAM examples](gradcam_fp_examples.png)",
+        "![FP Grad-CAM examples](images/gradcam_fp_examples.png)",
         "",
         "## Pending Round-2 Checks",
         "",
@@ -1014,7 +1110,7 @@ def write_markdown(
                 "",
                 "| baseline | c01 | c02 | c03 |",
                 "| --- | --- | --- | --- |",
-                "| ![baseline](color_samples/baseline_ch_09100.png) | ![c01](color_samples/c01_ch_09100.png) | ![c02](color_samples/c02_ch_09100.png) | ![c03](color_samples/c03_ch_09100.png) |",
+                "| ![baseline](images/color_samples/baseline_ch_09100.png) | ![c01](images/color_samples/c01_ch_09100.png) | ![c02](images/color_samples/c02_ch_09100.png) | ![c03](images/color_samples/c03_ch_09100.png) |",
                 "",
             ])
         if family in {"lr", "warmup"}:
@@ -1068,41 +1164,48 @@ def write_markdown(
         out_path.write_text(body, encoding="utf-8")
 
 
-def build_records(strict_summary_path: Path, round2_summary_path: Path, round2_queue_path: Path) -> dict[str, dict[str, ConditionRecord]]:
+def build_records(
+    strict_summary_path: Path,
+    round2_summary_path: Path,
+    round2_queue_path: Path,
+    manual_summary: dict[str, Any],
+) -> dict[str, dict[str, ConditionRecord]]:
     records: dict[str, dict[str, ConditionRecord]] = {}
-    inject_baselines(records)
+    inject_baselines(records, baseline_metrics(manual_summary))
     load_legacy_v11(records, LOGS / "v11_experiments_summary_fresh0412.json")
     load_summary_aggregates(records, strict_summary_path, "strict")
     load_summary_aggregates(records, round2_summary_path, "round2")
     load_round2_queue(records, round2_queue_path, round2_summary_path)
+    load_manual_summary(records, manual_summary)
     return records
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Generate markdown and plots for strict one-factor experiments.")
-    ap.add_argument("--strict-summary", default=str(VALIDATIONS / "paper_strict_single_factor_summary.json"))
-    ap.add_argument("--round2-summary", default=str(VALIDATIONS / "server_paper_rawbase_strict_single_factor_round2_summary.json"))
-    ap.add_argument("--round2-queue", default=str(VALIDATIONS / "server_paper_rawbase_strict_single_factor_round2_queue.prepared.json"))
-    ap.add_argument("--state", default=str(VALIDATIONS / "paper_strict_single_factor_state.json"))
-    ap.add_argument("--markdown-out", default=str(VALIDATIONS / "paper_strict_single_factor_summary.md"))
-    ap.add_argument("--report-out", default=str(VALIDATIONS / "paper_strict_single_factor_report.md"))
-    ap.add_argument("--plots-dir", default=str(VALIDATIONS / "paper_strict_single_factor_plots"))
+    ap.add_argument("--strict-summary", default=str(VALIDATIONS / "02_sweep_results.json"))
+    ap.add_argument("--round2-summary", default="")
+    ap.add_argument("--round2-queue", default="")
+    ap.add_argument("--manual-summary", default=str(ROOT / "docs" / "data" / "one_factor_latest.json"))
+    ap.add_argument("--markdown-out", default=str(VALIDATIONS / "02_sweep_results.md"))
+    ap.add_argument("--report-out", default=str(VALIDATIONS / "02_sweep_report.md"))
+    ap.add_argument("--plots-dir", default=str(VALIDATIONS / "02_sweep_plots"))
     args = ap.parse_args()
 
     strict_summary_path = Path(args.strict_summary)
-    round2_summary_path = Path(args.round2_summary)
-    round2_queue_path = Path(args.round2_queue)
-    state_path = Path(args.state)
+    round2_summary_path = Path(args.round2_summary) if args.round2_summary else Path("/__missing__")
+    round2_queue_path = Path(args.round2_queue) if args.round2_queue else Path("/__missing__")
+    manual_summary_path = Path(args.manual_summary)
     markdown_out = Path(args.markdown_out)
     report_out = Path(args.report_out)
     plots_dir = Path(args.plots_dir)
 
     strict_summary = load_json(strict_summary_path)
-    round2_summary = load_json(round2_summary_path)
-    state = load_json(state_path)
-    records = build_records(strict_summary_path, round2_summary_path, round2_queue_path)
+    round2_summary = load_json(round2_summary_path) if round2_summary_path.exists() else {}
+    manual_summary = load_json(manual_summary_path)
+    state = {}
+    records = build_records(strict_summary_path, round2_summary_path, round2_queue_path, manual_summary)
     optimized_normal_ratio = load_optimized_v11_normal_ratio(LOGS / "v11_experiments_summary_fresh0413_reset.json")
-    baseline = baseline_metrics()
+    baseline = baseline_metrics(manual_summary)
 
     plots_dir.mkdir(parents=True, exist_ok=True)
     for family in FAMILY_ORDER:
@@ -1114,7 +1217,7 @@ def main() -> int:
         if family in {"lr", "warmup"}:
             plot_lr_schedule_family(completed_or_reference(rows), plots_dir / f"{family}_lr_schedule.png", family)
 
-    write_markdown([markdown_out, report_out], records, optimized_normal_ratio, plots_dir, state, strict_summary, round2_summary)
+    write_markdown([markdown_out, report_out], records, optimized_normal_ratio, plots_dir, state, strict_summary, round2_summary, manual_summary)
     print(json.dumps({
         "markdown": str(markdown_out),
         "report": str(report_out),

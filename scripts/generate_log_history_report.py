@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Build markdown tables and plots from logs/*/history.json."""
+"""Build markdown tables and plots from flat and grouped logs."""
 
 from __future__ import annotations
 
@@ -15,6 +15,15 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def iter_run_dirs(logs_dir: Path):
+    if not logs_dir.exists():
+        return
+    for history_path in sorted(logs_dir.glob("**/history.json")):
+        run_dir = history_path.parent
+        if (run_dir / "best_info.json").exists():
+            yield run_dir
 
 
 def read_json(path: Path, default: Any) -> Any:
@@ -170,7 +179,7 @@ def write_markdown(path: Path, prefix: Path, run_rows: list[dict[str, Any]], agg
         "",
         f"- Runs parsed: `{len(run_rows)}`",
         f"- Candidates: `{len(agg_rows)}`",
-        "- Source: `logs/*/history.json` plus `best_info.json`.",
+        "- Source: `logs/**/history.json` plus `best_info.json`.",
         "- Metric: `selected_normal_threshold_result` when present, otherwise `best_info.test_f1`.",
         "",
     ]
@@ -314,10 +323,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     rows = []
-    for run_dir in args.logs_dir.iterdir() if args.logs_dir.exists() else []:
-        if not run_dir.is_dir():
-            continue
-        if args.contains and args.contains not in run_dir.name:
+    for run_dir in iter_run_dirs(args.logs_dir):
+        rel_name = str(run_dir.relative_to(args.logs_dir)).replace("\\", "/")
+        if args.contains and args.contains not in rel_name:
             continue
         row = collect_run(run_dir)
         if row is None:

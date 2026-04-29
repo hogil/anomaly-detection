@@ -904,6 +904,10 @@ def main():
                         help="조건명만 입력 (예: v9_test). 'logs/' 는 자동. "
                              "실제 폴더: 'logs/YYMMDD_HHMMSS_<조건명>_F<testF1>_R<testRecall>'. "
                              "best 갱신 시마다 F/R 숫자 자동 갱신 (폴더 rename).")
+    parser.add_argument("--log_dir_group", type=str, default="",
+                        help="logs/ 아래에 묶음 상위폴더를 둘 때 사용. "
+                             "예: --log_dir_group run_20260430_120000 -> logs/run_20260430_120000/<run>/. "
+                             "run_paper_server_all.sh 등 batch 실행에서 한 sweep을 한 폴더에 모으려고 사용.")
     parser.add_argument("--scheduler", type=str, default=td("scheduler", "cosine"),
                         choices=["cosine", "step", "plateau"])
     parser.add_argument("--step_size", type=int, default=td("step_size", 10))
@@ -1187,7 +1191,13 @@ def main():
     )
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, **common)
     test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, **common)
-    print(f"  DataLoader: num_workers={num_workers}, pin_memory=True, prefetch_factor=4, persistent_workers={num_workers > 0}")
+    effective_prefetch = args.prefetch_factor if num_workers > 0 else None
+    print(
+        "  DataLoader: "
+        f"num_workers={num_workers}, pin_memory=True, "
+        f"prefetch_factor={effective_prefetch}, "
+        f"persistent_workers={num_workers > 0}"
+    )
     if sampler_info is None:
         print("  Train sampler: shuffle")
     else:
@@ -1327,6 +1337,10 @@ def main():
     # best 갱신 시마다 뒤에 _F<test_f1>_R<test_recall> 이 붙도록 rename 된다.
     base_prefix, condition_name = _resolve_run_name(args.log_dir)
     logs_root = Path("logs")
+    if args.log_dir_group:
+        group = args.log_dir_group.replace("\\", "/").strip("/").strip()
+        if group:
+            logs_root = logs_root / group
     log_dir = logs_root / base_prefix
     log_dir.mkdir(parents=True, exist_ok=True)
     predictions_dir = log_dir / "predictions"

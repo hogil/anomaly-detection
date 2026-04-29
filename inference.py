@@ -224,16 +224,15 @@ def run_inference(
             abn_idx = 1  # fallback
         p_abnormal = float(probs[abn_idx].item())
 
-        # 3. timestamp 추출 (highlighted member의 가장 오래된 x 값)
-        member_x = fleet_data[highlighted_member][0]
-        earliest_x = member_x[0] if len(member_x) > 0 else None
-        ts_str = _format_timestamp(earliest_x) if earliest_x is not None else "na"
-
-        # 4. filename: p{pct}_{col1}_{col2}_{col3}_{yymmddhh24}.png
-        # p_abnormal을 맨 앞에 3자리 퍼센트로 배치 → 폴더 정렬 시 심각도 순 바로 확인
+        # 3. filename: p{pct}_{device}_{step}_{item}_{target}.png
+        # p_abnormal 3자리 퍼센트 → 폴더 정렬 시 심각도 순. timestamp 대신 target 값으로 변경.
         p_pct = f"p{int(round(p_abnormal * 100)):03d}"
         name_parts = [str(row.get(c, "unk")) for c in title_columns]
-        base_fname = f"{p_pct}_{'_'.join(name_parts)}_{ts_str}.png"
+        if isinstance(target, (int, float)):
+            tgt_str = f"t{target:+.3f}".replace(".", "p").replace("+", "p").replace("-", "n")
+        else:
+            tgt_str = "tna"
+        base_fname = f"{p_pct}_{'_'.join(name_parts)}_{tgt_str}.png"
         dest_dir = out_path / pred_class
         disp_path = dest_dir / base_fname
         # 충돌 시 suffix
@@ -261,6 +260,7 @@ def run_inference(
             "highlighted_member": highlighted_member,
             "predicted": pred_class,
             "p_abnormal": round(p_abnormal, 4),
+            "target": target if isinstance(target, (int, float)) else "",
             "image_file": str(disp_path.relative_to(out_path)).replace("\\", "/"),
         }
         for c in title_columns:
@@ -283,27 +283,26 @@ def run_inference(
     csv_path = out_path / "predictions.csv"
     results_df.to_csv(csv_path, index=False)
 
-    # txt 리스트 — 통합본 + abnormal/normal 분리본 3종.
-    txt_path = out_path / "predictions.txt"
+    # 두 리스트 모두 p_abnormal 내림차순. CSV 형식 (콤마 구분자 + 헤더).
     abn_df = results_df[results_df["predicted"] == "abnormal"].sort_values("p_abnormal", ascending=False)
-    nor_df = results_df[results_df["predicted"] == "normal"].sort_values("p_abnormal", ascending=True)
+    nor_df = results_df[results_df["predicted"] == "normal"].sort_values("p_abnormal", ascending=False)
+
+    list_columns = [c for c in ("device", "step", "item", "target", "p_abnormal", "chart_id", "image_file") if c in results_df.columns]
+
+    abn_df[list_columns].to_csv(out_path / "abnormal_list.txt", index=False)
+    nor_df[list_columns].to_csv(out_path / "normal_list.txt", index=False)
+
+    # 통합 텍스트도 CSV. 위쪽이 ABNORMAL, 아래쪽이 NORMAL (둘 다 p_abn 내림차순).
+    txt_path = out_path / "predictions.txt"
     with open(txt_path, "w", encoding="utf-8") as f:
-        f.write(f"=== ABNORMAL ({len(abn_df)}) — sorted by severity (high→low) ===\n")
+        f.write(f"# ABNORMAL ({len(abn_df)}) — p_abnormal desc\n")
+        f.write(",".join(list_columns) + "\n")
         for _, r in abn_df.iterrows():
-            f.write(f"  p_abn={r['p_abnormal']:.4f}  {r['chart_id']}  {r['image_file']}\n")
-        f.write(f"\n=== NORMAL ({len(nor_df)}) — sorted by safety (low→high p_abn) ===\n")
+            f.write(",".join(str(r[c]) for c in list_columns) + "\n")
+        f.write(f"\n# NORMAL ({len(nor_df)}) — p_abnormal desc\n")
+        f.write(",".join(list_columns) + "\n")
         for _, r in nor_df.iterrows():
-            f.write(f"  p_abn={r['p_abnormal']:.4f}  {r['chart_id']}  {r['image_file']}\n")
-
-    abn_path = out_path / "abnormal_list.txt"
-    with open(abn_path, "w", encoding="utf-8") as f:
-        for _, r in abn_df.iterrows():
-            f.write(f"{r['chart_id']}\tp_abn={r['p_abnormal']:.4f}\t{r['image_file']}\n")
-
-    nor_path = out_path / "normal_list.txt"
-    with open(nor_path, "w", encoding="utf-8") as f:
-        for _, r in nor_df.iterrows():
-            f.write(f"{r['chart_id']}\tp_abn={r['p_abnormal']:.4f}\t{r['image_file']}\n")
+            f.write(",".join(str(r[c]) for c in list_columns) + "\n")
 
     # 요약
     n_total = len(results_df)

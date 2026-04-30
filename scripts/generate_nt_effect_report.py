@@ -2,13 +2,16 @@
 """Build a NT (normal_threshold) effect markdown + plot.
 
 Walks logs/**/best_info.json and pulls each run's `normal_threshold_results`
-dict (thresholds 0.5 / 0.9 / 0.99 / 0.999 / 0.9999). For every threshold
-level it averages FN, FP, and F1 across rawbase baseline runs and reports a
-table + bar plot.
+for two cases:
+- "그냥" (no NT applied, argmax-only) -> NT key 0.5
+- "NT applied" -> NT key 0.9 (the reporting default)
+
+Aggregates mean FN / FP / F1 across runs of the matched candidate so the
+output is a 2-row table + a side-by-side bar plot.
 
 Typical use:
   python scripts/generate_nt_effect_report.py
-    --candidate-prefix fresh0412_v11_refcheck_raw_n700
+    --candidate-prefix fresh0412_v11_n700
     --out-md  validations/nt_effect.md
     --out-csv validations/nt_effect.csv
     --out-plot validations/nt_effect.png
@@ -113,18 +116,21 @@ def main() -> int:
             f"prefix='{args.candidate_prefix}' contains='{args.candidate_contains}'"
         )
 
-    # Aggregate
+    # 2-row aggregate: 그냥(no NT, argmax → NT=0.5) vs NT applied (NT=0.9 default).
+    LABELS = [(0.5, "그냥 (no NT)"), (0.9, "NT=0.9")]
     agg = []
-    for nt_val in sorted(rows_per_nt.keys()):
-        rs = rows_per_nt[nt_val]
+    for nt_val, label in LABELS:
+        rs = rows_per_nt.get(nt_val, [])
+        if not rs:
+            continue
+        f1s = [r["f1"] for r in rs if isinstance(r["f1"], (int, float))]
         agg.append({
+            "label": label,
             "nt": nt_val,
             "n_runs": len(rs),
-            "f1_mean": mean(r["f1"] for r in rs if isinstance(r["f1"], (int, float))) if any(isinstance(r["f1"], (int, float)) for r in rs) else None,
+            "f1_mean": mean(f1s) if f1s else None,
             "fn_mean": mean(r["fn"] for r in rs),
             "fp_mean": mean(r["fp"] for r in rs),
-            "fn_max": max(r["fn"] for r in rs),
-            "fp_max": max(r["fp"] for r in rs),
         })
 
     # Markdown
@@ -133,52 +139,50 @@ def main() -> int:
         "# NT (normal_threshold) effect",
         "",
         f"- runs scanned: {runs_seen}",
-        f"- candidates matched: {len(matched_candidates)} ({', '.join(sorted(matched_candidates)[:5])}{'...' if len(matched_candidates) > 5 else ''})",
+        f"- candidate(s) matched: {len(matched_candidates)} ({', '.join(sorted(matched_candidates)[:5])}{'...' if len(matched_candidates) > 5 else ''})",
         "",
         f"![NT effect]({args.out_plot.name})",
         "",
-        "| NT | runs | F1 mean | FN mean | FP mean | FN max | FP max |",
-        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| condition | runs | F1 mean | FN mean | FP mean |",
+        "| --- | ---: | ---: | ---: | ---: |",
     ]
     for row in agg:
         f1 = f"{row['f1_mean']:.4f}" if row["f1_mean"] is not None else "-"
         md_lines.append(
-            f"| {row['nt']} | {row['n_runs']} | {f1} | {row['fn_mean']:.2f} | {row['fp_mean']:.2f} | {row['fn_max']} | {row['fp_max']} |"
+            f"| {row['label']} | {row['n_runs']} | {f1} | {row['fn_mean']:.2f} | {row['fp_mean']:.2f} |"
         )
     md_lines.extend([
         "",
-        "**해석**: NT(`normal_threshold`)를 올리면 \"normal 로 판정되려면 더 높은 confidence 필요\" 기준이 되므로 더 많은 케이스를 abnormal 로 보내게 됩니다. 결과: **NT 올라가면 FN 줄고 (불량 더 잘 잡음) FP 늘어남 (정상도 abnormal 로 오인)**. 0.9999 같은 극단값에서는 모든 케이스를 abnormal 로 분류해서 FP=전체 normal 수가 되는 degenerate. test-peeking 위험으로 권장하지 않습니다 (memory `feedback_normal_threshold_099`).",
+        "**해석**: NT 적용 시 \"p_normal ≥ 0.9 이어야 normal 로 판정\" 기준으로 더 많은 케이스를 abnormal 쪽으로 보냅니다. 결과: **FN 감소 (불량 더 잡음) / FP 약간 증가 (정상도 abnormal 로 오인 가능)**. 기본 NT=0.9 가 sweet spot. 0.99 이상 극단값은 권장 안 함 (memory `feedback_normal_threshold_099`).",
     ])
     args.out_md.write_text("\n".join(md_lines) + "\n", encoding="utf-8")
 
     # CSV
     args.out_csv.parent.mkdir(parents=True, exist_ok=True)
     with args.out_csv.open("w", newline="", encoding="utf-8") as h:
-        w = csv.DictWriter(h, fieldnames=["nt", "n_runs", "f1_mean", "fn_mean", "fp_mean", "fn_max", "fp_max"])
+        w = csv.DictWriter(h, fieldnames=["label", "nt", "n_runs", "f1_mean", "fn_mean", "fp_mean"])
         w.writeheader()
         for row in agg:
             w.writerow(row)
 
-    # Plot — drop degenerate NT rows where FP (or FN) saturates the test set,
-    # otherwise the y-axis is dominated by collapsed runs.
-    plot_rows = [r for r in agg if r["fp_mean"] < 100 and r["fn_mean"] < 100]
-    if not plot_rows:
-        plot_rows = agg
-    nts = [str(r["nt"]) for r in plot_rows]
-    fns = [r["fn_mean"] for r in plot_rows]
-    fps = [r["fp_mean"] for r in plot_rows]
+    # Plot — 2 conditions side by side
+    labels = [r["label"] for r in agg]
+    fns = [r["fn_mean"] for r in agg]
+    fps = [r["fp_mean"] for r in agg]
 
     args.out_plot.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(8.0, 5.0))
-    width = 0.4
-    x = list(range(len(nts)))
+    fig, ax = plt.subplots(figsize=(6.5, 4.5))
+    width = 0.35
+    x = list(range(len(labels)))
     ax.bar([i - width / 2 for i in x], fns, width=width, label="FN (mean)", color="#E43320")
     ax.bar([i + width / 2 for i in x], fps, width=width, label="FP (mean)", color="#F5B041")
+    for i, (fn, fp) in enumerate(zip(fns, fps)):
+        ax.text(i - width / 2, fn + 0.1, f"{fn:.1f}", ha="center", fontsize=9)
+        ax.text(i + width / 2, fp + 0.1, f"{fp:.1f}", ha="center", fontsize=9)
     ax.set_xticks(x)
-    ax.set_xticklabels(nts)
-    ax.set_xlabel("normal_threshold")
+    ax.set_xticklabels(labels)
     ax.set_ylabel("count (mean over runs)")
-    ax.set_title(f"NT effect on FN / FP (rawbase, {runs_seen} runs)")
+    ax.set_title(f"NT effect on FN / FP ({runs_seen} runs)")
     ax.legend()
     fig.tight_layout()
     fig.savefig(args.out_plot, dpi=130)

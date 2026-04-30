@@ -170,6 +170,79 @@
 | off (기준) | 5/5 | 0.9944 | 0 | 4.6 | 0 | 3.8 | 0 |
 | **on (BKM)** | 5/5 | **0.9964** | +0.0020 | 2.4 | -2.2 | 3.0 | -0.8 |
 
+## 학습 이미지 예시
+
+학습 데이터는 `normal`과 불량 class별 이미지로 구성합니다. 모델 입력은 training image이고, display image는 같은 sample을 사람이 확인하기 쉽게 축/legend/색을 붙인 렌더링입니다.
+
+### Training Image
+![training images by class](images/sample_overview_train.png)
+
+### Display Image
+![display images by class](images/sample_overview_display.png)
+
+### Legend Axis Image
+
+같은 `device/step/item` group에서도 `legend_axis`를 `eqp_id`, `chamber`, `recipe`로 바꾸면 fleet member와 legend가 달라지므로 별도 이미지로 생성합니다. `highlighted_member`는 강조되는 member, `target`은 가운데 가로 기준선 값.
+
+![display images by legend_axis](images/sample_overview_legend_axis.png)
+
+불량 class는 `mean_shift`, `standard_deviation`, `spike`, `drift`, `context` 다섯 종류이고, 각 이미지는 해당 class label로 학습됩니다.
+
+## Logical Member Attribution Example
+
+같은 `legend_axis` chart를 member별 class 판단 이미지로 확장합니다. 불량 member 이미지만 anomaly class이고, 양호 member 이미지는 normal class입니다.
+
+아래 예시는 같은 chart `ch_09100`을 `EQP A`, `EQP B`, `EQP C`, `EQP D`, `EQP E` class 이미지로 펼친 것입니다. 각 EQP의 highlighted trend만 서로 다른 색으로 표시하고, 회색 점들은 같은 `legend_axis` 안의 비교 fleet입니다. class 글자는 normal은 검정, anomaly는 빨강. 이 예시에서는 `EQP C`만 anomaly class.
+
+![logical member class examples](images/logical_member_targets_ch09100.png)
+
+즉 family 전체 이상 감지가 아니라, `highlighted_member` 단위로 label을 부여하는 학습 예시.
+
+## Grad-CAM / Postprocess Check
+
+Grad-CAM의 heat는 실제 anomaly 위치가 아니라 `abnormal` logit에 기여한 모델 근거 위치입니다. 넓은 불량은 heat도 넓게 퍼질 수 있고, `spike` 같은 국소 패턴은 더 좁게 잡히는 경향이 있습니다. 좌측 불량과 우측 정상의 대비 때문에 우측에 heat가 생기기도 해서, CAM 위치만으로 left/right defect를 판정하지 않습니다.
+
+class별 6행 sample 6열로 원본 trend 이미지 위에 CAM colormap을 반투명으로 얹은 예시입니다. 빨강은 큰 CAM 값, 파랑도 같이 표시해서 CAM이 넓게 퍼지는지 확인.
+
+![class Grad-CAM overlay](images/gradcam_class_overlay.png)
+
+| check | F1 macro | FN | FP | result |
+| --- | ---: | ---: | ---: | --- |
+| full image baseline | 0.9960 | 5 | 1 | 기준 |
+| right-crop rescue | 0.9378 | 0 | 93 | FN 5개는 모두 잡지만 FP가 너무 커짐 |
+| Grad-CAM normal rescue, best F1 | 0.9753 | 5 | 32 | FP만 늘고 FN rescue 없음 |
+| Grad-CAM normal rescue, best FN | 0.9344 | 0 | 98 | FN은 모두 잡지만 FP가 너무 커짐 |
+
+결론: Grad-CAM은 설명/검토용으로 두고, 후처리 룰은 바로 적용하지 않음. `full=abnormal, right_crop=normal`은 좌측/과거 불량 가능성 검토, `full=abnormal, right_crop=abnormal`은 최근 우측 불량 가능성 검토 정도로만 사용.
+
+### FP Grad-CAM Check
+
+최신 model run의 test 실제 FP는 1개. `ch_09572`는 true normal인데 `p_abnormal=0.99995`, right-crop도 `p_abnormal=0.99999`로 abnormal 판정. CAM mass는 left 0.730, mid 0.227, right 0.043이라 우측 최근 불량이 아니라 좌측/초반의 국소 outlier와 cluster-edge를 강한 abnormal 근거로 본 케이스. FP 갤러리는 6장을 맞추기 위해 실제 FP 1개와 test normal 중 `p_abnormal` 상위 hard-normal 5개를 함께 표시. 현재 실제 FP만 보면 spike-like 정상 outlier를 spike성 불량으로 오인.
+
+![FP Grad-CAM examples](images/gradcam_fp_examples.png)
+
+## NT (normal_threshold) effect
+
+`normal_threshold` 는 "p_normal 이 이 값 이상이면 normal 로 판정" 하는 기준입니다. 기본 reporting NT = 0.9. NT 를 올리면 더 많은 케이스를 abnormal 로 분류 → **FN ↓ , FP ↑** trade-off.
+
+`fresh0412_v11_n700` baseline 5-seed 평균:
+
+![nt effect](plots/nt_effect.png)
+
+| NT | runs | F1 mean | FN mean | FP mean | FN max | FP max |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.5 | 5 | 0.9901 | 9.80 | 5.00 | 14 | 7 |
+| 0.9 (default) | 5 | 0.9920 | 6.80 | 5.20 | 10 | 7 |
+| 0.99 | 5 | 0.9915 | 5.80 | 7.00 | 9 | 12 |
+| 0.999 | 5 | 0.9915 | 3.80 | 9.00 | 7 | 13 |
+| 0.9999 | 5 | 0.3333 | 0.00 | 750.00 | 0 | 750 |
+
+- 0.5 → 0.9 로 올리면 FN 만 빠르게 감소 (불량을 더 잡음).
+- 0.99 부터는 FP 증가 시작 (정상을 abnormal 로 오인하기 시작).
+- **0.9999** 는 모든 케이스를 abnormal 로 분류하는 degenerate (FP=750=전체 normal 수). test-peeking 위험으로 사용 금지 — memory `feedback_normal_threshold_099` 참조.
+
+재생성: `python scripts/generate_nt_effect_report.py --candidate-prefix fresh0412_v11_n700 --out-md validations/nt_effect.md --out-csv validations/nt_effect.csv --out-plot validations/nt_effect.png` → 생성 후 plot 만 `docs/plots/` 로 복사.
+
 ## 운영 스크립트
 
 | 작업 | 명령어 |

@@ -1,0 +1,120 @@
+{
+  "created_from": "user_pasted_one_factor_tables_2026-04-30",
+  "baseline": {
+    "f1": 0.9944,
+    "fn": 4.6,
+    "fp": 3.8
+  },
+  "bkm": [
+    {"family": "normal_ratio", "baseline": "700", "bkm_value": "3300", "f1": 0.9988, "fn": 0.8, "fp": 1.0, "status": "single-axis evidence"},
+    {"family": "gc", "baseline": "1.0", "bkm_value": "0.5", "f1": 0.9964, "fn": 2.2, "fp": 3.2, "status": "single-axis evidence"},
+    {"family": "label_smoothing", "baseline": "0.00", "bkm_value": "0.02", "f1": 0.9981, "fn": 0.8, "fp": 2.0, "status": "single-axis evidence"},
+    {"family": "stochastic_depth", "baseline": "0.00", "bkm_value": "0.05", "f1": 0.9985, "fn": 0.8, "fp": 1.4, "status": "single-axis evidence"},
+    {"family": "focal_gamma", "baseline": "0.0", "bkm_value": "2", "f1": 0.9964, "fn": 2.4, "fp": 3.0, "status": "single-axis evidence"},
+    {"family": "abnormal_weight", "baseline": "1.0", "bkm_value": "1.5", "f1": 0.9956, "fn": 3.0, "fp": 3.6, "status": "single-axis evidence"},
+    {"family": "ema", "baseline": "0.0 / off", "bkm_value": "0.95", "f1": 0.9964, "fn": 2.2, "fp": 3.2, "status": "single-axis evidence"},
+    {"family": "allow_tie_save", "baseline": "off", "bkm_value": "on", "f1": 0.9964, "fn": 2.4, "fp": 3.0, "status": "single-axis evidence"}
+  ],
+  "families": {
+    "normal_ratio": [
+      {"label": "700", "sort_value": 700, "seeds_done": 5, "seeds_total": 5, "f1": 0.9944, "fn": 4.6, "fp": 3.8, "status": "reference"},
+      {"label": "1400", "sort_value": 1400, "seeds_done": 5, "seeds_total": 5, "f1": 0.9956, "fn": 3.6, "fp": 3.0, "status": "complete"},
+      {"label": "2100", "sort_value": 2100, "seeds_done": 5, "seeds_total": 5, "f1": 0.9959, "fn": 2.2, "fp": 4.0, "status": "complete"},
+      {"label": "2800", "sort_value": 2800, "seeds_done": 5, "seeds_total": 5, "f1": 0.9951, "fn": 4.8, "fp": 2.6, "status": "complete"},
+      {"label": "3000", "sort_value": 3000, "seeds_done": 5, "seeds_total": 5, "f1": 0.9980, "fn": 0.8, "fp": 2.2, "status": "complete"},
+      {"label": "3150", "sort_value": 3150, "seeds_done": 5, "seeds_total": 5, "f1": 0.9984, "fn": 1.6, "fp": 0.8, "status": "complete"},
+      {"label": "3300", "sort_value": 3300, "seeds_done": 5, "seeds_total": 5, "f1": 0.9988, "fn": 0.8, "fp": 1.0, "status": "complete"},
+      {"label": "3500", "sort_value": 3500, "seeds_done": 5, "seeds_total": 5, "f1": 0.9957, "fn": 3.4, "fp": 3.0, "status": "complete"}
+    ],
+    "per_class": [
+      {"label": "0 / off", "sort_value": 0, "seeds_done": 5, "seeds_total": 5, "f1": 0.9944, "fn": 4.6, "fp": 3.8, "status": "reference"},
+      {"label": "100", "sort_value": 100, "seeds_done": 5, "seeds_total": 5, "f1": 0.9851, "fn": 6.4, "fp": 16.0, "status": "complete"},
+      {"label": "200", "sort_value": 200, "seeds_done": 5, "seeds_total": 5, "f1": 0.9905, "fn": 6.0, "fp": 8.2, "status": "complete"},
+      {"label": "300", "sort_value": 300, "seeds_done": 5, "seeds_total": 5, "f1": 0.9933, "fn": 3.0, "fp": 7.0, "status": "complete"},
+      {"label": "400", "sort_value": 400, "seeds_done": 5, "seeds_total": 5, "f1": 0.9936, "fn": 3.2, "fp": 6.4, "status": "complete"},
+      {"label": "500", "sort_value": 500, "seeds_done": 5, "seeds_total": 5, "f1": 0.9937, "fn": 3.0, "fp": 6.4, "status": "complete"},
+      {"label": "600", "sort_value": 600, "seeds_done": 5, "seeds_total": 5, "f1": 0.9955, "fn": 3.2, "fp": 3.6, "status": "complete"},
+      {"label": "700", "sort_value": 700, "seeds_done": 5, "seeds_total": 5, "f1": 0.9960, "fn": 2.4, "fp": 3.6, "status": "complete"},
+      {"label": "800", "sort_value": 800, "seeds_done": 5, "seeds_total": 5, "f1": 0.9933, "fn": 3.4, "fp": 6.6, "status": "complete"},
+      {"label": "900", "sort_value": 900, "seeds_done": 5, "seeds_total": 5, "f1": 0.9945, "fn": 4.4, "fp": 3.8, "status": "complete"},
+      {"label": "1000", "sort_value": 1000, "seeds_done": 5, "seeds_total": 5, "f1": 0.9945, "fn": 2.8, "fp": 5.4, "status": "complete"}
+    ],
+    "lr": [
+      {"label": "1e-5 / 1e-4", "sort_value": 0.00001, "seeds_done": 5, "seeds_total": 5, "f1": 0.9940, "fn": 5.2, "fp": 3.8, "status": "complete"},
+      {"label": "2e-5 / 2e-4", "sort_value": 0.00002, "seeds_done": 5, "seeds_total": 5, "f1": 0.9944, "fn": 4.6, "fp": 3.8, "status": "reference"},
+      {"label": "3e-5 / 3e-4", "sort_value": 0.00003, "seeds_done": 5, "seeds_total": 5, "f1": 0.9963, "fn": 2.8, "fp": 2.8, "status": "complete"},
+      {"label": "5e-5 / 5e-4", "sort_value": 0.00005, "seeds_done": 5, "seeds_total": 5, "f1": 0.9963, "fn": 2.4, "fp": 3.2, "status": "complete"},
+      {"label": "1e-4 / 1e-3", "sort_value": 0.0001, "seeds_done": 5, "seeds_total": 5, "f1": 0.9964, "fn": 2.0, "fp": 3.4, "status": "complete"}
+    ],
+    "warmup": [
+      {"label": "0", "sort_value": 0, "seeds_done": 5, "seeds_total": 5, "f1": 0.9868, "fn": 8.0, "fp": 11.8, "status": "complete"},
+      {"label": "3", "sort_value": 3, "seeds_done": 5, "seeds_total": 5, "f1": 0.9957, "fn": 2.4, "fp": 4.0, "status": "complete"},
+      {"label": "5", "sort_value": 5, "seeds_done": 5, "seeds_total": 5, "f1": 0.9944, "fn": 4.6, "fp": 3.8, "status": "reference"},
+      {"label": "8", "sort_value": 8, "seeds_done": 5, "seeds_total": 5, "f1": 0.9951, "fn": 4.0, "fp": 3.4, "status": "complete"},
+      {"label": "10", "sort_value": 10, "seeds_done": 5, "seeds_total": 5, "f1": 0.9939, "fn": 3.8, "fp": 5.4, "status": "complete"}
+    ],
+    "gc": [
+      {"label": "0 / off", "sort_value": 0, "seeds_done": 5, "seeds_total": 5, "f1": 0.9944, "fn": 4.6, "fp": 3.8, "status": "reference"},
+      {"label": "0.1", "sort_value": 0.1, "seeds_done": 5, "seeds_total": 5, "f1": 0.9951, "fn": 3.4, "fp": 4.0, "status": "complete"},
+      {"label": "0.25", "sort_value": 0.25, "seeds_done": 5, "seeds_total": 5, "f1": 0.9953, "fn": 3.4, "fp": 3.6, "status": "complete"},
+      {"label": "0.5", "sort_value": 0.5, "seeds_done": 5, "seeds_total": 5, "f1": 0.9964, "fn": 2.2, "fp": 3.2, "status": "complete"},
+      {"label": "1.5", "sort_value": 1.5, "seeds_done": 5, "seeds_total": 5, "f1": 0.9940, "fn": 3.2, "fp": 5.8, "status": "complete"},
+      {"label": "5", "sort_value": 5, "seeds_done": 5, "seeds_total": 5, "f1": 0.9951, "fn": 2.2, "fp": 5.2, "status": "complete"}
+    ],
+    "weight_decay": [
+      {"label": "0.01", "sort_value": 0.01, "seeds_done": 5, "seeds_total": 5, "f1": 0.9944, "fn": 4.6, "fp": 3.8, "status": "reference"}
+    ],
+    "smoothing": [
+      {"label": "1-raw", "sort_value": 1, "seeds_done": 5, "seeds_total": 5, "f1": 0.9944, "fn": 4.6, "fp": 3.8, "status": "reference"}
+    ],
+    "label_smoothing": [
+      {"label": "0.00", "sort_value": 0, "seeds_done": 5, "seeds_total": 5, "f1": 0.9944, "fn": 4.6, "fp": 3.8, "status": "reference"},
+      {"label": "0.02", "sort_value": 0.02, "seeds_done": 5, "seeds_total": 5, "f1": 0.9981, "fn": 0.8, "fp": 2.0, "status": "complete"},
+      {"label": "0.05", "sort_value": 0.05, "seeds_done": 5, "seeds_total": 5, "f1": 0.9959, "fn": 2.8, "fp": 3.4, "status": "complete"},
+      {"label": "0.1", "sort_value": 0.1, "seeds_done": 5, "seeds_total": 5, "f1": 0.9949, "fn": 3.0, "fp": 4.6, "status": "complete"},
+      {"label": "0.15", "sort_value": 0.15, "seeds_done": 5, "seeds_total": 5, "f1": 0.9971, "fn": 0.4, "fp": 4.0, "status": "complete"},
+      {"label": "0.2", "sort_value": 0.2, "seeds_done": 5, "seeds_total": 5, "f1": 0.9972, "fn": 0.6, "fp": 3.6, "status": "complete"}
+    ],
+    "stochastic_depth": [
+      {"label": "0.00", "sort_value": 0, "seeds_done": 5, "seeds_total": 5, "f1": 0.9944, "fn": 4.6, "fp": 3.8, "status": "reference"},
+      {"label": "0.05", "sort_value": 0.05, "seeds_done": 5, "seeds_total": 5, "f1": 0.9985, "fn": 0.8, "fp": 1.4, "status": "complete"},
+      {"label": "0.1", "sort_value": 0.1, "seeds_done": 5, "seeds_total": 5, "f1": 0.9975, "fn": 0.8, "fp": 3.0, "status": "complete"},
+      {"label": "0.15", "sort_value": 0.15, "seeds_done": 5, "seeds_total": 5, "f1": 0.9949, "fn": 3.0, "fp": 4.6, "status": "complete"},
+      {"label": "0.2", "sort_value": 0.2, "seeds_done": 5, "seeds_total": 5, "f1": 0.9953, "fn": 3.0, "fp": 4.0, "status": "complete"},
+      {"label": "0.3", "sort_value": 0.3, "seeds_done": 5, "seeds_total": 5, "f1": 0.9977, "fn": 1.0, "fp": 2.4, "status": "complete"}
+    ],
+    "focal_gamma": [
+      {"label": "0.0", "sort_value": 0, "seeds_done": 5, "seeds_total": 5, "f1": 0.9944, "fn": 4.6, "fp": 3.8, "status": "reference"},
+      {"label": "0.5", "sort_value": 0.5, "seeds_done": 5, "seeds_total": 5, "f1": 0.9957, "fn": 2.6, "fp": 3.8, "status": "complete"},
+      {"label": "1", "sort_value": 1, "seeds_done": 5, "seeds_total": 5, "f1": 0.9947, "fn": 2.8, "fp": 5.2, "status": "complete"},
+      {"label": "1.5", "sort_value": 1.5, "seeds_done": 5, "seeds_total": 5, "f1": 0.9957, "fn": 2.2, "fp": 4.2, "status": "complete"},
+      {"label": "2", "sort_value": 2, "seeds_done": 5, "seeds_total": 5, "f1": 0.9964, "fn": 2.4, "fp": 3.0, "status": "complete"},
+      {"label": "2.5", "sort_value": 2.5, "seeds_done": 5, "seeds_total": 5, "f1": 0.9963, "fn": 1.8, "fp": 3.8, "status": "complete"}
+    ],
+    "abnormal_weight": [
+      {"label": "0.5", "sort_value": 0.5, "seeds_done": 5, "seeds_total": 5, "f1": 0.9952, "fn": 2.6, "fp": 4.6, "status": "complete"},
+      {"label": "0.8", "sort_value": 0.8, "seeds_done": 5, "seeds_total": 5, "f1": 0.9956, "fn": 2.8, "fp": 3.8, "status": "complete"},
+      {"label": "1.0", "sort_value": 1, "seeds_done": 5, "seeds_total": 5, "f1": 0.9944, "fn": 4.6, "fp": 3.8, "status": "reference"},
+      {"label": "1.2", "sort_value": 1.2, "seeds_done": 5, "seeds_total": 5, "f1": 0.9951, "fn": 3.2, "fp": 4.2, "status": "complete"},
+      {"label": "1.5", "sort_value": 1.5, "seeds_done": 5, "seeds_total": 5, "f1": 0.9956, "fn": 3.0, "fp": 3.6, "status": "complete"},
+      {"label": "2", "sort_value": 2, "seeds_done": 5, "seeds_total": 5, "f1": 0.9951, "fn": 3.0, "fp": 4.4, "status": "complete"},
+      {"label": "3", "sort_value": 3, "seeds_done": 5, "seeds_total": 5, "f1": 0.9949, "fn": 3.0, "fp": 4.6, "status": "complete"}
+    ],
+    "ema": [
+      {"label": "0.0 / off", "sort_value": 0, "seeds_done": 5, "seeds_total": 5, "f1": 0.9944, "fn": 4.6, "fp": 3.8, "status": "reference"},
+      {"label": "0.9", "sort_value": 0.9, "seeds_done": 5, "seeds_total": 5, "f1": 0.9948, "fn": 3.8, "fp": 4.0, "status": "complete"},
+      {"label": "0.95", "sort_value": 0.95, "seeds_done": 5, "seeds_total": 5, "f1": 0.9964, "fn": 2.2, "fp": 3.2, "status": "complete"},
+      {"label": "0.99", "sort_value": 0.99, "seeds_done": 5, "seeds_total": 5, "f1": 0.9959, "fn": 2.4, "fp": 3.8, "status": "complete"},
+      {"label": "0.995", "sort_value": 0.995, "seeds_done": 5, "seeds_total": 5, "f1": 0.9956, "fn": 2.2, "fp": 4.4, "status": "complete"},
+      {"label": "0.999", "sort_value": 0.999, "seeds_done": 5, "seeds_total": 5, "f1": 0.9957, "fn": 2.6, "fp": 3.8, "status": "complete"}
+    ],
+    "color": [
+      {"label": "baseline", "sort_value": 0, "seeds_done": 5, "seeds_total": 5, "f1": 0.9944, "fn": 4.6, "fp": 3.8, "status": "reference"},
+      {"label": "c01", "sort_value": 1, "seeds_done": 5, "seeds_total": 5, "f1": 0.9952, "fn": 3.8, "fp": 3.4, "status": "complete"}
+    ],
+    "allow_tie_save": [
+      {"label": "off", "sort_value": 0, "seeds_done": 5, "seeds_total": 5, "f1": 0.9944, "fn": 4.6, "fp": 3.8, "status": "reference"},
+      {"label": "on", "sort_value": 1, "seeds_done": 5, "seeds_total": 5, "f1": 0.9964, "fn": 2.4, "fp": 3.0, "status": "complete"}
+    ]
+  }
+}

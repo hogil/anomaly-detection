@@ -66,11 +66,16 @@ def main() -> int:
     ap.add_argument("--out-md", type=Path, default=Path("validations/nt_effect.md"))
     ap.add_argument("--out-csv", type=Path, default=Path("validations/nt_effect.csv"))
     ap.add_argument("--out-plot", type=Path, default=Path("validations/nt_effect.png"))
+    ap.add_argument("--collapse-threshold", type=int, default=50,
+                    help="drop runs where any FN/FP exceeds this (collapsed/degenerate). default 50.")
     args = ap.parse_args()
 
-    rows_per_nt: dict[float, list[dict[str, Any]]] = defaultdict(list)
+    # Per-run paired records: (no-NT, with-NT) on the SAME run only.
+    # That way both columns share the same denominator and the mean FN/FP move
+    # is genuinely the threshold effect, not a different run set.
+    paired_runs: list[dict[str, Any]] = []
     matched_candidates: set[str] = set()
-    runs_seen = 0
+    skipped_collapsed = 0
 
     for fp in sorted(glob.glob(str(args.logs_dir / "**" / "best_info.json"), recursive=True)):
         parts = os.path.normpath(fp).split(os.sep)
@@ -88,58 +93,69 @@ def main() -> int:
         ntr = d.get("normal_threshold_results")
         if not isinstance(ntr, dict):
             continue
-        runs_seen += 1
-        matched_candidates.add(cand)
-        for nt_str, payload in ntr.items():
-            try:
-                nt_val = float(nt_str)
-            except ValueError:
-                continue
-            if not isinstance(payload, dict):
-                continue
-            metrics = payload.get("metrics")
-            f1 = payload.get("f1")
-            fn_fp = derive_fn_fp(metrics)
-            if fn_fp is None:
-                continue
-            rows_per_nt[nt_val].append({
-                "tag": tag,
-                "candidate": cand,
-                "f1": f1,
-                "fn": fn_fp[0],
-                "fp": fn_fp[1],
-            })
 
-    if not rows_per_nt:
+        def at(nt_key: str) -> tuple[int, int, float | None] | None:
+            payload = ntr.get(nt_key)
+            if not isinstance(payload, dict):
+                return None
+            fnfp = derive_fn_fp(payload.get("metrics"))
+            if fnfp is None:
+                return None
+            return fnfp[0], fnfp[1], payload.get("f1")
+
+        no_nt = at("0.5")
+        nt = at("0.9")
+        if no_nt is None or nt is None:
+            continue
+        # Drop collapsed runs (any side > collapse threshold).
+        if no_nt[0] >= args.collapse_threshold or no_nt[1] >= args.collapse_threshold or \
+           nt[0] >= args.collapse_threshold or nt[1] >= args.collapse_threshold:
+            skipped_collapsed += 1
+            continue
+
+        matched_candidates.add(cand)
+        paired_runs.append({
+            "tag": tag, "candidate": cand,
+            "no_nt_fn": no_nt[0], "no_nt_fp": no_nt[1], "no_nt_f1": no_nt[2],
+            "nt_fn": nt[0], "nt_fp": nt[1], "nt_f1": nt[2],
+        })
+
+    if not paired_runs:
         raise SystemExit(
-            f"no normal_threshold_results found under {args.logs_dir} with filter "
-            f"prefix='{args.candidate_prefix}' contains='{args.candidate_contains}'"
+            f"no paired NT results found under {args.logs_dir} (filter "
+            f"prefix='{args.candidate_prefix}' contains='{args.candidate_contains}')"
         )
 
-    # 2-row aggregate: 그냥(no NT, argmax → NT=0.5) vs NT applied (NT=0.9 default).
-    LABELS = [(0.5, "그냥 (no NT)"), (0.9, "NT=0.9")]
-    agg = []
-    for nt_val, label in LABELS:
-        rs = rows_per_nt.get(nt_val, [])
-        if not rs:
-            continue
-        f1s = [r["f1"] for r in rs if isinstance(r["f1"], (int, float))]
-        agg.append({
-            "label": label,
-            "nt": nt_val,
-            "n_runs": len(rs),
-            "f1_mean": mean(f1s) if f1s else None,
-            "fn_mean": mean(r["fn"] for r in rs),
-            "fp_mean": mean(r["fp"] for r in rs),
-        })
+    runs_seen = len(paired_runs)
+    f1_no = [r["no_nt_f1"] for r in paired_runs if isinstance(r["no_nt_f1"], (int, float))]
+    f1_nt = [r["nt_f1"] for r in paired_runs if isinstance(r["nt_f1"], (int, float))]
+    agg = [
+        {
+            "label": "그냥 (no NT)",
+            "nt": 0.5,
+            "n_runs": runs_seen,
+            "f1_mean": mean(f1_no) if f1_no else None,
+            "fn_mean": mean(r["no_nt_fn"] for r in paired_runs),
+            "fp_mean": mean(r["no_nt_fp"] for r in paired_runs),
+        },
+        {
+            "label": "NT=0.9",
+            "nt": 0.9,
+            "n_runs": runs_seen,
+            "f1_mean": mean(f1_nt) if f1_nt else None,
+            "fn_mean": mean(r["nt_fn"] for r in paired_runs),
+            "fp_mean": mean(r["nt_fp"] for r in paired_runs),
+        },
+    ]
 
     # Markdown
     args.out_md.parent.mkdir(parents=True, exist_ok=True)
     md_lines = [
         "# NT (normal_threshold) effect",
         "",
-        f"- runs scanned: {runs_seen}",
-        f"- candidate(s) matched: {len(matched_candidates)} ({', '.join(sorted(matched_candidates)[:5])}{'...' if len(matched_candidates) > 5 else ''})",
+        f"- paired runs (no-NT and NT both available): **{runs_seen}**",
+        f"- collapsed runs dropped (any FN/FP ≥ {args.collapse_threshold}): {skipped_collapsed}",
+        f"- candidates matched: {len(matched_candidates)}",
         "",
         f"![NT effect]({args.out_plot.name})",
         "",

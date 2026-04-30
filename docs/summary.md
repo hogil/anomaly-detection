@@ -18,6 +18,9 @@
 ![display images by class](images/sample_overview_display.png)
 
 ### Legend Axis Image
+
+같은 `device/step/item` group 의 chart 라도 `legend_axis` 를 `eqp_id`, `chamber`, `recipe` 로 바꾸면 fleet member 와 legend 가 달라지므로 별도 이미지로 생성합니다. 각 column 은 다른 member 축으로 그린 같은 chart 의 변형 — 왼쪽 `eqp_id` (장비 단위), 가운데 `chamber` (챔버 단위), 오른쪽 `recipe` (레시피 단위). `highlighted_member` 는 빨강으로 강조되는 member 이고, 회색 가로 기준선이 `target` 값.
+
 ![display images by legend_axis](images/sample_overview_legend_axis.png)
 
 불량 class는 `mean_shift`, `standard_deviation`, `spike`, `drift`, `context` 다섯 종류이고, 각 이미지는 해당 class label로 학습됩니다.

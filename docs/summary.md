@@ -29,19 +29,11 @@
 
 같은 `legend_axis` chart를 member별 class 판단 이미지로 확장합니다. **불량인 EQP를 highlight 한 이미지만 anomaly class**, **나머지 EQP를 highlight 한 이미지는 normal class** 로 학습됩니다 (family 전체 이상 감지가 아니라 highlighted_member 단위 label).
 
-전체 보기 — 같은 chart `ch_09100` 의 5개 EQP 이미지를 한 장에:
+같은 chart `ch_09100` 의 5개 EQP 이미지를 한 장에:
 
 ![logical member class examples](images/logical_member_targets_ch09100.png)
 
-| highlighted EQP | label | 이미지 |
-|---|---|---|
-| `CH_A` | normal | ![EQP A normal](images/logical_members_ch09100/ch_09100_target_CH_A.png) |
-| `CH_B` | normal | ![EQP B normal](images/logical_members_ch09100/ch_09100_target_CH_B.png) |
-| **`CH_C`** | **anomaly** | ![EQP C anomaly](images/logical_members_ch09100/ch_09100_target_CH_C.png) |
-| `CH_D` | normal | ![EQP D normal](images/logical_members_ch09100/ch_09100_target_CH_D.png) |
-| `CH_E` | normal | ![EQP E normal](images/logical_members_ch09100/ch_09100_target_CH_E.png) |
-
-회색 점들은 같은 `legend_axis` 안의 비교 fleet, 컬러 점들이 highlighted_member 의 trend. class 텍스트는 normal=검정, anomaly=빨강. 같은 chart 데이터에서도 어떤 EQP를 highlight 하느냐에 따라 label 이 달라지므로, 한 chart 가 EQP 수만큼의 학습 샘플을 만듭니다. 5 EQP 면 5 sample, 4 EQP 면 4 sample.
+회색 점들은 같은 `legend_axis` 안의 비교 fleet, 컬러 점들이 highlighted_member 의 trend. class 텍스트는 normal=검정, anomaly=빨강. 위 예시에서는 `CH_C` 만 anomaly, 나머지 4 EQP 는 normal. 같은 chart 데이터에서도 어떤 EQP를 highlight 하느냐에 따라 label 이 달라지므로 한 chart 가 EQP 수만큼의 학습 샘플을 만듭니다. 5 EQP 면 5 sample, 4 EQP 면 4 sample.
 
 ## Grad-CAM / Postprocess Check
 

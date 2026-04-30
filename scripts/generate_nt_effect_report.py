@@ -181,27 +181,32 @@ def main() -> int:
         for row in agg:
             w.writerow(row)
 
-    # Plot — 2 conditions side by side
-    labels = [r["label"] for r in agg]
+    # Plot — 2 conditions side by side, compact + pastel
+    # English x-labels avoid matplotlib Korean-font box-glyph issues.
+    en_labels = ["no NT (argmax)", "NT = 0.9"]
+
     fns = [r["fn_mean"] for r in agg]
     fps = [r["fp_mean"] for r in agg]
 
     args.out_plot.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(6.5, 4.5))
-    width = 0.35
-    x = list(range(len(labels)))
-    ax.bar([i - width / 2 for i in x], fns, width=width, label="FN (mean)", color="#E43320")
-    ax.bar([i + width / 2 for i in x], fps, width=width, label="FP (mean)", color="#F5B041")
+    fig, ax = plt.subplots(figsize=(4.6, 3.2))
+    width = 0.32
+    x = list(range(len(en_labels)))
+    ax.bar([i - width / 2 for i in x], fns, width=width, label="FN", color="#F4B6C2")  # pastel pink
+    ax.bar([i + width / 2 for i in x], fps, width=width, label="FP", color="#A8D8EA")  # pastel blue
     for i, (fn, fp) in enumerate(zip(fns, fps)):
-        ax.text(i - width / 2, fn + 0.1, f"{fn:.1f}", ha="center", fontsize=9)
-        ax.text(i + width / 2, fp + 0.1, f"{fp:.1f}", ha="center", fontsize=9)
+        ax.text(i - width / 2, fn + 0.05, f"{fn:.2f}", ha="center", fontsize=8)
+        ax.text(i + width / 2, fp + 0.05, f"{fp:.2f}", ha="center", fontsize=8)
     ax.set_xticks(x)
-    ax.set_xticklabels(labels)
-    ax.set_ylabel("count (mean over runs)")
-    ax.set_title(f"NT effect on FN / FP ({runs_seen} runs)")
-    ax.legend()
+    ax.set_xticklabels(en_labels, fontsize=9)
+    ax.set_ylabel("count (mean)", fontsize=9)
+    ax.set_title(f"NT effect ({runs_seen} runs)", fontsize=10)
+    ax.legend(fontsize=8, loc="upper left")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.tick_params(axis="y", labelsize=8)
     fig.tight_layout()
-    fig.savefig(args.out_plot, dpi=130)
+    fig.savefig(args.out_plot, dpi=140)
     plt.close(fig)
 
     print(f"[nt_effect] runs={runs_seen} candidates={len(matched_candidates)}")

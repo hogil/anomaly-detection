@@ -103,21 +103,23 @@ def main() -> int:
                 return None
             return fnfp[0], fnfp[1], payload.get("f1")
 
-        no_nt = at("0.5")
-        nt = at("0.9")
-        if no_nt is None or nt is None:
+        # 4 NT levels: no NT (argmax / 0.5), 0.9, 0.99, 0.999. require all four.
+        per_run = {nk: at(nk) for nk in ("0.5", "0.9", "0.99", "0.999")}
+        if any(v is None for v in per_run.values()):
             continue
-        # Drop collapsed runs (any side > collapse threshold).
-        if no_nt[0] >= args.collapse_threshold or no_nt[1] >= args.collapse_threshold or \
-           nt[0] >= args.collapse_threshold or nt[1] >= args.collapse_threshold:
+        if any(
+            v[0] >= args.collapse_threshold or v[1] >= args.collapse_threshold
+            for v in per_run.values()
+        ):
             skipped_collapsed += 1
             continue
 
         matched_candidates.add(cand)
         paired_runs.append({
             "tag": tag, "candidate": cand,
-            "no_nt_fn": no_nt[0], "no_nt_fp": no_nt[1], "no_nt_f1": no_nt[2],
-            "nt_fn": nt[0], "nt_fp": nt[1], "nt_f1": nt[2],
+            **{f"nt_{nk.replace('.', 'p')}_fn": per_run[nk][0] for nk in per_run},
+            **{f"nt_{nk.replace('.', 'p')}_fp": per_run[nk][1] for nk in per_run},
+            **{f"nt_{nk.replace('.', 'p')}_f1": per_run[nk][2] for nk in per_run},
         })
 
     if not paired_runs:
@@ -127,26 +129,23 @@ def main() -> int:
         )
 
     runs_seen = len(paired_runs)
-    f1_no = [r["no_nt_f1"] for r in paired_runs if isinstance(r["no_nt_f1"], (int, float))]
-    f1_nt = [r["nt_f1"] for r in paired_runs if isinstance(r["nt_f1"], (int, float))]
-    agg = [
-        {
-            "label": "그냥 (no NT)",
-            "nt": 0.5,
-            "n_runs": runs_seen,
-            "f1_mean": mean(f1_no) if f1_no else None,
-            "fn_mean": mean(r["no_nt_fn"] for r in paired_runs),
-            "fp_mean": mean(r["no_nt_fp"] for r in paired_runs),
-        },
-        {
-            "label": "NT=0.9",
-            "nt": 0.9,
-            "n_runs": runs_seen,
-            "f1_mean": mean(f1_nt) if f1_nt else None,
-            "fn_mean": mean(r["nt_fn"] for r in paired_runs),
-            "fp_mean": mean(r["nt_fp"] for r in paired_runs),
-        },
+    NT_SPECS = [
+        (0.5,   "no NT (argmax)", "0p5"),
+        (0.9,   "NT=0.9",         "0p9"),
+        (0.99,  "NT=0.99",        "0p99"),
+        (0.999, "NT=0.999",       "0p999"),
     ]
+    agg = []
+    for nt_val, label, slug in NT_SPECS:
+        f1s = [r[f"nt_{slug}_f1"] for r in paired_runs if isinstance(r[f"nt_{slug}_f1"], (int, float))]
+        agg.append({
+            "label": label,
+            "nt": nt_val,
+            "n_runs": runs_seen,
+            "f1_mean": mean(f1s) if f1s else None,
+            "fn_mean": mean(r[f"nt_{slug}_fn"] for r in paired_runs),
+            "fp_mean": mean(r[f"nt_{slug}_fp"] for r in paired_runs),
+        })
 
     # Markdown
     args.out_md.parent.mkdir(parents=True, exist_ok=True)
@@ -181,16 +180,14 @@ def main() -> int:
         for row in agg:
             w.writerow(row)
 
-    # Plot — 2 conditions side by side, compact + pastel
-    # English x-labels avoid matplotlib Korean-font box-glyph issues.
-    en_labels = ["no NT (argmax)", "NT = 0.9"]
-
+    # Plot — 4 conditions side by side, pastel, legend pulled out to the right.
+    en_labels = [r["label"] for r in agg]
     fns = [r["fn_mean"] for r in agg]
     fps = [r["fp_mean"] for r in agg]
 
     args.out_plot.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(4.6, 3.2))
-    width = 0.32
+    fig, ax = plt.subplots(figsize=(6.6, 3.4))
+    width = 0.36
     x = list(range(len(en_labels)))
     ax.bar([i - width / 2 for i in x], fns, width=width, label="FN", color="#F4B6C2")  # pastel pink
     ax.bar([i + width / 2 for i in x], fps, width=width, label="FP", color="#A8D8EA")  # pastel blue
@@ -201,12 +198,12 @@ def main() -> int:
     ax.set_xticklabels(en_labels, fontsize=9)
     ax.set_ylabel("count (mean)", fontsize=9)
     ax.set_title(f"NT effect ({runs_seen} runs)", fontsize=10)
-    ax.legend(fontsize=8, loc="upper left")
+    ax.legend(fontsize=9, loc="center left", bbox_to_anchor=(1.02, 0.5), frameon=False)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.tick_params(axis="y", labelsize=8)
     fig.tight_layout()
-    fig.savefig(args.out_plot, dpi=140)
+    fig.savefig(args.out_plot, dpi=140, bbox_inches="tight")
     plt.close(fig)
 
     print(f"[nt_effect] runs={runs_seen} candidates={len(matched_candidates)}")

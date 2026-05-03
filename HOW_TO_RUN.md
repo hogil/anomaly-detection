@@ -229,6 +229,55 @@ scaling 적용 항목:
 - noise: `gaussian.sigma_range`, `laplacian.b_range`, `correlated.sigma_range` 전부에 factor 곱함
 - anomaly: `mean_shift.shift_sigma_range`, `standard_deviation.scale_range`, `spike.magnitude_sigma_range` (+ `min_magnitude_sigma`), `drift.slope_sigma_range` (+ `min_max_drift_sigma`, `visual_floor_sigma`), 그리고 `defect.enforcement.*_floor_sigma` 도 같이 올려서 약한 case 가 floor 에 잘리지 않게 함
 
+### 한방 — 모든 dataset × 모든 axis × 모든 backbone 한 번에
+
+`scripts/all-dataset-backbone.sh` 한 줄. 각 yaml 마다 (1) weights/data/baseline 준비 → (2) `00_all.sh` 실행 (모든 axis + sample_skip + 모든 backbone + logical_train + gc-last + bkm_combined + postprocess). 전부 끝나면 dataset 별 결과를 모아 `validations/cross_dataset_report_<timestamp>/` 에 비교 표·plot 생성.
+
+```bash
+bash scripts/all-dataset-backbone.sh
+# 기본 7 yaml 순차: dataset.yaml + dataset{1..6}_*.yaml
+# 끝나고:
+#   validations/cross_dataset_report_<ts>/cross_dataset_summary.md
+#   validations/cross_dataset_report_<ts>/cross_dataset_summary.csv
+#   validations/cross_dataset_report_<ts>/cross_dataset_f1.png
+#   validations/cross_dataset_report_<ts>/cross_dataset_backbone.png
+```
+
+옵션:
+```bash
+# yaml 부분집합만
+bash scripts/all-dataset-backbone.sh --datasets dataset.yaml,dataset1_noise_15.yaml
+
+# prep 이미 끝났을 때 (weights/data/baseline 모두 있음)
+bash scripts/all-dataset-backbone.sh --skip-prep
+
+# 끝의 cross-dataset 리포트만 다시
+bash scripts/all-dataset-backbone.sh --skip-prep --skip-full
+
+# 00_all.sh 로 forward 할 인자는 `--` 뒤에
+bash scripts/all-dataset-backbone.sh -- --max-launched 1 --force
+```
+
+서버에서 SSH 끊어도 계속:
+```bash
+nohup bash scripts/all-dataset-backbone.sh > /tmp/all_dsbk.log 2>&1 &
+disown
+tail -f /tmp/all_dsbk.log
+```
+
+GPU 카드 분배(yaml 별로 GPU 다르게):
+```bash
+nohup env CUDA_VISIBLE_DEVICES=0 bash scripts/all-dataset-backbone.sh \
+  --datasets dataset.yaml,dataset1_noise_15.yaml,dataset2_noise_30.yaml \
+  > /tmp/all_dsbk_gpu0.log 2>&1 &
+nohup env CUDA_VISIBLE_DEVICES=1 bash scripts/all-dataset-backbone.sh \
+  --datasets dataset3_anomaly_15.yaml,dataset4_anomaly_30.yaml,dataset5_all_15.yaml,dataset6_all_30.yaml \
+  > /tmp/all_dsbk_gpu1.log 2>&1 &
+disown
+```
+
+각 dataset 의 group 폴더는 `<timestamp>_run_paper_<config-stem>/` (예: `logs/20260504_120000_run_paper_dataset1_noise_15/`, `validations/20260504_120000_run_paper_dataset1_noise_15/`).
+
 ### 주말 한 GPU 순차 실행 (7개 yaml 자동, GUI/터미널 끊어도 계속 돔)
 
 ```bash

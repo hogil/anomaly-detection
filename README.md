@@ -41,6 +41,8 @@
 - `scripts/gradcam_error_report.py`: Grad-CAM overlays for FP/FN samples
 - `scripts/generate_log_history_report.py`: tables and plots from flat or grouped `logs/**/`
 - `scripts/sweeps_server/00_all.sh`: current paper experiment pipeline, ending with color -> sample_skip -> backbone -> logical_train -> gc -> BKM combined
+- `scripts/all-dataset-backbone.sh`: one-shot wrapper that runs the full sweep for every dataset yaml (weights/data/baseline prep, all axes, all backbones, gc-last, bkm_combined, postprocess) and emits a cross-dataset comparison report
+- `scripts/generate_cross_dataset_report.py`: per-dataset baseline/BKM/backbone comparison table and bar plots
 - `docs/summary.md`: current experiment summary
 
 Generated folders such as `data/`, `images/`, `display/`, `logs/`, `weights/`, and `validations/` are gitignored.

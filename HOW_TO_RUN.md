@@ -278,6 +278,56 @@ disown
 
 각 dataset 의 group 폴더는 `<timestamp>_run_paper_<config-stem>/` (예: `logs/20260504_120000_run_paper_dataset1_noise_15/`, `validations/20260504_120000_run_paper_dataset1_noise_15/`).
 
+### 한방 + DDP — 모든 dataset × 모든 axis × 모든 backbone, 시스템 GPU 전부 사용
+
+`scripts/all-dataset-backbone-ddp.sh` 한 줄. 시스템 GPU 개수를 `nvidia-smi` 로 자동 감지해서 매 train.py 호출을 `torchrun --standalone --nnodes=1 --nproc_per_node=N` 로 띄움. train.py 가 `LOCAL_RANK / WORLD_SIZE` 를 읽고 `DistributedSampler` 로 batch 를 N등분, model 을 `DistributedDataParallel` 로 wrap, gradient 를 step 마다 sync. 모든 file 쓰기·checkpoint·summary 는 rank 0 에서만.
+
+```bash
+bash scripts/all-dataset-backbone-ddp.sh
+# nvidia-smi 가 8개 보면 → torchrun --nproc_per_node=8
+# 효과: 같은 dataset 의 1 epoch 가 8배 빠름 (data-parallel)
+# effective batch per step = args.batch_size × 8
+```
+
+옵션: `all-dataset-backbone.sh` 의 모든 인자 그대로 forward.
+
+```bash
+# 부분집합 + 인자 forward
+bash scripts/all-dataset-backbone-ddp.sh --datasets dataset.yaml -- --max-launched 1
+
+# GPU 개수 강제 지정 (환경변수 override)
+DDP_NPROC_PER_NODE=4 bash scripts/all-dataset-backbone-ddp.sh
+
+# 특정 GPU 만
+CUDA_VISIBLE_DEVICES=0,1,2,3 DDP_NPROC_PER_NODE=4 bash scripts/all-dataset-backbone-ddp.sh
+
+# nohup 백그라운드
+nohup bash scripts/all-dataset-backbone-ddp.sh > /tmp/all_dsbk_ddp.log 2>&1 &
+disown
+```
+
+내부 동작:
+1. wrapper 가 `nvidia-smi` 로 GPU 수 N 감지 → `export DDP_NPROC_PER_NODE=N`.
+2. `all-dataset-backbone.sh` 그대로 exec — 매 dataset prep + `00_all.sh` 호출.
+3. 모든 stage 의 `adaptive_experiment_controller.py::build_command()` 가 `DDP_NPROC_PER_NODE` 보고 `torchrun ... train.py ...` 로 launch.
+4. train.py 의 DDP gate (LOCAL_RANK 감지) → DistributedSampler + DDP wrap.
+5. 끝나면 cross-dataset 비교 표/plot 자동 생성 (단일 GPU 버전과 동일).
+
+검증 (서버 진입 직후 한 번):
+```bash
+# 2-GPU smoke 로 DDP 경로 확인
+CUDA_VISIBLE_DEVICES=0,1 DDP_NPROC_PER_NODE=2 \
+  torchrun --standalone --nnodes=1 --nproc_per_node=2 train.py \
+  --config dataset.yaml --mode binary --epochs 2 --batch_size 8 \
+  --normal_ratio 50 --seed 42 --log_dir _ddp_smoke
+# → logs/<...>_ddp_smoke_F.._R..의 best_model.pth, history.json, best_info.json 한 세트만 (rank 0 만 저장)
+```
+
+단일-GPU 와 DDP 차이:
+- 단일-GPU 는 `WeightedRandomSampler` 등 `--train_sampler` 옵션 그대로 사용.
+- DDP 는 `DistributedSampler` 강제 (rank 별 1/N 데이터). `--train_sampler` 가 `shuffle` 외 값이면 무시됨 (rank 0 가 warning).
+- 효과적 batch = per-process batch × world_size. logging 은 rank 0 만.
+
 ### 주말 한 GPU 순차 실행 (7개 yaml 자동, GUI/터미널 끊어도 계속 돔)
 
 ```bash

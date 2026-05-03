@@ -1,5 +1,7 @@
 # docs
 
+- `problem_setting.md`: binary-first defect detection framing, supporting literature, and evaluation gates
+- `two_stage_workflow.md`: binary gate + anomaly_type 2-stage training, inference, output, and FP/FN diagnosis workflow
 - `summary.md`: current experiment summary
 - `plots/`: summary plots
 - `images/`: report example images and Grad-CAM galleries

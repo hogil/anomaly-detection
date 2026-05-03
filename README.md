@@ -6,12 +6,16 @@
 
 | step | command | output |
 | --- | --- | --- |
+| problem setting | see `docs/problem_setting.md` | binary gate as primary, multiclass/anomaly baselines as secondary |
 | data | `python generate_data.py --config dataset.yaml --workers 24` | `data/timeseries.csv`, `data/scenarios.csv` |
 | images | `python generate_images.py --config dataset.yaml --workers 24` | `images/`, `display/` |
-| train | `python train.py --config dataset.yaml --log_dir my_run` | `logs/<run>/best_model.pth`, `best_info.json`, `history.json` |
+| train | `python train.py --config dataset.yaml --mode binary --log_dir my_run` | `logs/<run>/best_model.pth`, `best_info.json`, `history.json` |
+| train stage2 type | `python train.py --config dataset.yaml --mode anomaly_type --log_dir type_run` | abnormal-only defect type classifier |
 | grouped train | `python train.py --config dataset.yaml --log_dir my_run --log_dir_group run_YYYYMMDD_HHMMSS` | `logs/<group>/<run>/best_model.pth`, grouped paper-run logs |
 | inference images | `python scripts/generate_inference_images.py --timeseries data/timeseries.csv --scenarios data/scenarios.csv --out-dir inference_inputs` | flat model-input images and manifest |
 | inference | `python inference.py --model logs/<run>/best_model.pth` | predictions/metrics |
+| two-stage inference | `python scripts/two_stage_predict.py --binary-model-run logs/<binary_run> --type-model-run logs/<type_run>` | binary gate + defect type CSV |
+| binary threshold report | `python scripts/binary_threshold_report.py --predictions <inference_output>/predictions.csv` | AUROC + threshold별 FN/FP table |
 | add training | `python scripts/add_training_from_folders.py --model-run logs/<run> --image-root extra_images` | fine-tuned `logs/addtrain_*/best_model.pth` |
 | batch inference | `python scripts/server_batch_predict.py --model-run logs/<run>` | server inference outputs |
 | Grad-CAM | `python scripts/gradcam_report.py --model-run logs/<run> --image-root images/test --out-dir validations/gradcam_probe --save-heat-only` | trend+CAM overlays, transparent heat masks, heat CSV |
@@ -22,10 +26,14 @@
 ## Main Files
 
 - `dataset.yaml`: active dataset/rendering config
+- `docs/problem_setting.md`: binary/multiclass/anomaly problem framing and evaluation gates
+- `docs/two_stage_workflow.md`: detailed two-stage training, inference, output, and FP/FN diagnosis workflow
 - `generate_data.py`: tabular data generator
 - `generate_images.py`: training/display image renderer
 - `train.py`: training entrypoint
 - `inference.py`: single-model inference
+- `scripts/two_stage_predict.py`: stage-1 binary gate followed by stage-2 defect type classification
+- `scripts/binary_threshold_report.py`: AUROC and threshold sweep report from labeled inference predictions
 - `scripts/server_batch_predict.py`: batch inference
 - `scripts/generate_inference_images.py`: inference image renderer from existing trend CSVs
 - `scripts/add_training_from_folders.py`: fine-tune a best model from `normal/` and `abnormal/` image folders

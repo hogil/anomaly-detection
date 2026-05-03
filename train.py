@@ -1480,10 +1480,6 @@ def main():
             ep_log_extras = {
                 "test_f1": round(ep_test_f1, 4),
                 "test_recall": round(ep_test_recall, 4),
-                "test_nor_R": round(ep_test_metrics["normal"]["recall"], 4),
-                "test_abn_R": round(ep_test_metrics["abnormal"]["recall"], 4),
-                "val_nor_R": round(val_metrics["normal"]["recall"], 4),
-                "val_abn_R": round(val_metrics["abnormal"]["recall"], 4),
             }
             if ep_test_cm is not None:
                 ep_log_extras.update({
@@ -1491,6 +1487,18 @@ def main():
                     "test_fn": ep_test_cm["fn"],
                     "test_fp": ep_test_cm["fp"],
                     "test_tp": ep_test_cm["tp"],
+                })
+            if args.mode == "binary":
+                ep_log_extras.update({
+                    "test_nor_R": round(ep_test_metrics["normal"]["recall"], 4),
+                    "test_abn_R": round(ep_test_metrics["abnormal"]["recall"], 4),
+                    "val_nor_R": round(val_metrics["normal"]["recall"], 4),
+                    "val_abn_R": round(val_metrics["abnormal"]["recall"], 4),
+                })
+            else:
+                ep_log_extras.update({
+                    "test_macro_R": round(ep_test_recall, 4),
+                    "val_macro_R": round(val_recall, 4),
                 })
             epoch_log.update(ep_log_extras)
         history.append(epoch_log)
@@ -1532,13 +1540,20 @@ def main():
             trigger_text = ",".join(test_triggers) if test_triggers else "scheduled"
             fn = ep_test_cm["fn"] if ep_test_cm is not None else "?"
             fp = ep_test_cm["fp"] if ep_test_cm is not None else "?"
-            print(
-                f"  TestEpoch[{trigger_text}]: "
-                f"f1={ep_test_f1:.4f} recall={ep_test_recall:.4f} "
-                f"normal_R={ep_test_metrics['normal']['recall']:.4f} "
-                f"abn_R={ep_test_metrics['abnormal']['recall']:.4f} "
-                f"FN={fn} FP={fp}"
-            )
+            if args.mode == "binary":
+                print(
+                    f"  TestEpoch[{trigger_text}]: "
+                    f"f1={ep_test_f1:.4f} recall={ep_test_recall:.4f} "
+                    f"normal_R={ep_test_metrics['normal']['recall']:.4f} "
+                    f"abn_R={ep_test_metrics['abnormal']['recall']:.4f} "
+                    f"FN={fn} FP={fp}"
+                )
+            else:
+                print(
+                    f"  TestEpoch[{trigger_text}]: "
+                    f"macro_f1={ep_test_f1:.4f} macro_recall={ep_test_recall:.4f} "
+                    f"binary_view_FN={fn} binary_view_FP={fp}"
+                )
 
         # 클래스별 성능 테이블
         print_class_table(val_metrics, title="Val Class Performance")
@@ -1661,33 +1676,34 @@ def main():
                 title="Confusion Matrix (argmax)",
             )
 
-            # Normal threshold 평가: paper run은 selected NT 하나만 기록한다.
-            selected_nt = float(args.normal_threshold)
-            nt_thresholds = [selected_nt]
+            # Normal threshold is defined only when class 0 is normal.
+            selected_nt = float(args.normal_threshold) if args.mode in {"binary", "multiclass"} else None
             nt_results = {}
             selected_nt_result = None
+            if selected_nt is not None:
+                nt_thresholds = [selected_nt]
 
-            print(f"\n  Normal Threshold 평가:")
-            for nt in nt_thresholds:
-                _, nt_acc, nt_recall, nt_f1, nt_metrics_t, nt_preds_t, nt_labels_t = evaluate(
-                    eval_model, test_loader, criterion, device, classes,
-                    desc=f"NT={nt}", normal_threshold=nt, amp_dtype=amp_dtype,
-                )
-                nt_result = {
-                    "acc": round(nt_acc, 4), "recall": round(nt_recall, 4),
-                    "f1": round(nt_f1, 4), "metrics": nt_metrics_t,
-                }
-                nt_results[f"{nt:g}"] = nt_result
-                is_selected_nt = abs(nt - selected_nt) < 1e-12
-                marker = " ★" if is_selected_nt else ""
-                print(f"    NT={nt}: acc={nt_acc:.3f} recall={nt_recall:.3f} f1={nt_f1:.3f}{marker}")
-
-                if is_selected_nt:
-                    selected_nt_result = nt_result
-                    save_confusion_matrix(
-                        nt_labels_t, nt_preds_t, classes, log_dir / "confusion_matrix_nt.png",
-                        title=f"Confusion Matrix (NT={nt:g})",
+                print(f"\n  Normal Threshold 평가:")
+                for nt in nt_thresholds:
+                    _, nt_acc, nt_recall, nt_f1, nt_metrics_t, nt_preds_t, nt_labels_t = evaluate(
+                        eval_model, test_loader, criterion, device, classes,
+                        desc=f"NT={nt}", normal_threshold=nt, amp_dtype=amp_dtype,
                     )
+                    nt_result = {
+                        "acc": round(nt_acc, 4), "recall": round(nt_recall, 4),
+                        "f1": round(nt_f1, 4), "metrics": nt_metrics_t,
+                    }
+                    nt_results[f"{nt:g}"] = nt_result
+                    is_selected_nt = abs(nt - selected_nt) < 1e-12
+                    marker = " ★" if is_selected_nt else ""
+                    print(f"    NT={nt}: acc={nt_acc:.3f} recall={nt_recall:.3f} f1={nt_f1:.3f}{marker}")
+
+                    if is_selected_nt:
+                        selected_nt_result = nt_result
+                        save_confusion_matrix(
+                            nt_labels_t, nt_preds_t, classes, log_dir / "confusion_matrix_nt.png",
+                            title=f"Confusion Matrix (NT={nt:g})",
+                        )
 
             # Best 조건 저장
             best_info = {

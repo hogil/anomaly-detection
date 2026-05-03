@@ -8,6 +8,8 @@ dataset.yaml  →  데이터/이미지 생성  →  학습  →  추론
                   현업 CSV는 generate_inference_images.py 로 끼워넣음
 ```
 
+문제 설정은 `docs/problem_setting.md`에 고정합니다. 기본 운영 목표는 `normal`/`abnormal` binary gate이고, multiclass는 defect type 분석용 보조 실험입니다.
+
 목차:
 1. 데이터셋 정의 (`dataset.yaml`)
 2. 데이터/이미지 생성
@@ -402,6 +404,28 @@ python inference.py --model logs/<run>/best_model.pth --split test
 python scripts/server_batch_predict.py --model-run logs/<group>/<run>
 ```
 
+2-stage 추론은 1차 binary 모델과 2차 `anomaly_type` 모델을 따로 학습해 둔 뒤 실행합니다. 1차에서 `p_normal > normal_threshold`이면 normal로 종료하고, 그 외 sample만 2차 모델이 `mean_shift`, `spike`, `drift`, `context` 같은 defect type을 붙입니다. 상세한 해석과 FP/FN 진단법은 `docs/two_stage_workflow.md`를 봅니다.
+
+```bash
+# 1차 pass/fail gate
+python train.py --config dataset.yaml --mode binary --log_dir binary_gate
+
+# 2차 abnormal-only type classifier
+python train.py --config dataset.yaml --mode anomaly_type --log_dir type_classifier
+
+# 1차 결과가 abnormal인 chart만 2차로 분류
+python scripts/two_stage_predict.py \
+  --binary-model-run logs/<binary_gate_run> \
+  --type-model-run logs/<type_classifier_run> \
+  --dataset-dir data \
+  --split test \
+  --normal-threshold 0.9 \
+  --output-dir two_stage_test \
+  --device cpu
+```
+
+출력은 `two_stage_predictions.csv`와 `summary.json`입니다. CSV에는 `p_normal`, `p_abnormal`, `binary_pred`, `stage2_ran`, `stage2_pred`, `final_pred`, `bucket`이 들어가므로 binary FN/FP와 defect type별 실패 원인을 같이 볼 수 있습니다.
+
 ---
 
 ## 7. 현업 CSV 가져왔을 때
@@ -482,6 +506,15 @@ python scripts/generate_log_history_report.py \
 `logs/<group>/<run>/history.json` 까지 자동으로 추적합니다. 특정 group만 보고 싶으면 `--contains 20260430_120000_run_paper` 처럼 지정.
 
 출력: markdown / CSV / PNG (candidate F1 막대, val_f1 곡선, grad p99 곡선, FN/FP 산점).
+
+Labeled inference output에서 AUROC와 threshold별 FN/FP를 바로 보고 싶으면:
+
+```bash
+python scripts/binary_threshold_report.py \
+  --predictions <inference_output>/predictions.csv
+```
+
+`normal_threshold=0.9`는 `p_normal > 0.9`일 때만 normal로 통과시키는 train.py 기준입니다. 즉 `p_abnormal >= 0.1`이면 abnormal로 보내는 운영점입니다.
 
 ---
 

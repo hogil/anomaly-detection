@@ -219,6 +219,30 @@ python scripts/server_batch_predict.py --model-run logs/run_20260430_120000/<run
 bash scripts/run_server_batch_predict.sh logs/run_20260430_120000/<run>
 ```
 
+### `two_stage_predict.py`
+1차 binary gate 결과가 `abnormal`인 chart만 2차 `anomaly_type` classifier로 넘겨 defect type을 붙입니다. 2차 모델은 별도로 학습되어 있어야 합니다. 상세한 결과 해석과 FP/FN 진단법은 `docs/two_stage_workflow.md`를 봅니다.
+
+```bash
+# 1차 모델: pass/fail
+python train.py --config dataset.yaml --mode binary --log_dir binary_gate
+
+# 2차 모델: normal 제외 defect type 분류
+python train.py --config dataset.yaml --mode anomaly_type --log_dir type_classifier
+
+python scripts/two_stage_predict.py \
+  --binary-model-run logs/<binary_gate_run> \
+  --type-model-run logs/<type_classifier_run> \
+  --dataset-dir data \
+  --split test \
+  --limit 20 \
+  --normal-threshold 0.9 \
+  --output-dir two_stage_test \
+  --device cpu
+# 출력: two_stage_test/two_stage_predictions.csv, two_stage_test/summary.json
+```
+
+`stage2_ran=false`이면 1차에서 normal로 통과된 sample이라 2차 분류가 없습니다. `stage2_ran=true`인 row만 `stage2_pred`가 채워지며, labeled test에서는 `bucket`으로 `fn_abnormal`, `fp_normal`, `tp_abnormal`, `tn_normal`을 바로 확인합니다.
+
 ---
 
 ## 4. 결과 분석 / 보고서
@@ -242,6 +266,15 @@ python scripts/generate_group_report.py --group-dir logs/run_20260430_120000
 # 출력: <group>/group_report.md, group_report_f1.png, group_report_val_f1_curves.png
 ```
 candidate 평균 표 + per-run 표 + F1 막대 + val_f1 곡선.
+
+### `binary_threshold_report.py`
+labeled inference `predictions.csv`에서 binary AUROC와 `normal_threshold`별 FN/FP table을 생성. `true_class`가 없는 production CSV는 metric 계산 대상이 아닙니다.
+
+```bash
+python scripts/binary_threshold_report.py \
+  --predictions <inference_output>/predictions.csv
+# 출력: <inference_output>/binary_threshold_report.{md,csv}
+```
 
 ### `generate_strict_one_factor_report.py`
 **postprocess stage가 호출**하는 종합 리포트 + 축별 plot 생성기. `02_sweep_results.json` 을 읽고 `02_sweep_report.md`, `02_sweep_results.md`, `02_sweep_plots/<axis>.png` 14개를 생성.

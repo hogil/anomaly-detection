@@ -1037,18 +1037,23 @@ def main():
     # 모든 random seed 고정 (재현성). DDP 에서는 rank 별로 다른 seed 를 줘서
     # DataLoader worker 간 중복 추출을 막는다 (DistributedSampler 가 rank 별 데이터를
     # 분할하므로 worker 내부 augmentation 도 rank 별로 달라야 한다).
-    effective_seed = args.seed + RANK
+    # Seed 정책:
+    # - 모델 생성 (head Linear 등 random init) 은 rank 무관하게 동일해야 DDP
+    #   broadcast 단계에서 disturb 가 없다 → torch.* seed 는 args.seed 그대로.
+    # - DataLoader worker / augmentation 은 rank 별로 달라야 batch 중복이 안 남
+    #   → numpy/random/_GLOBAL_WORKER_SEED 만 effective_seed (args.seed + RANK).
+    effective_seed = args.seed + RANK   # DataLoader/worker 용
     import random
     random.seed(effective_seed)
     np.random.seed(effective_seed)
-    torch.manual_seed(effective_seed)
+    torch.manual_seed(args.seed)        # 모델 init 은 모든 rank 동일
     if torch.cuda.is_available():
-        torch.cuda.manual_seed(effective_seed)
+        torch.cuda.manual_seed(args.seed)
         # DDP: manual_seed_all 은 visible GPU 모두에 CUDA context 를 만들므로
         # rank 별 process 가 자기 device 외에도 context 를 잡아 NCCL IPC handle
         # 충돌의 원인이 됨. DDP 에서는 자기 device 만 seed.
         if not IS_DDP:
-            torch.cuda.manual_seed_all(effective_seed)
+            torch.cuda.manual_seed_all(args.seed)
     # OLD v9_noise_sparse 스타일 — 빠른 non-deterministic 경로 (benchmark=True)
     # 재현성 약간 손해 보되 학습 dynamics 안정성 복원
     torch.backends.cudnn.deterministic = False

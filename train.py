@@ -44,43 +44,9 @@ from src.data.schema import highlighted_member as read_highlighted_member
 TQDM_DISABLE = False
 
 
-# =============================================================================
-# DDP helpers — env-driven (LOCAL_RANK / WORLD_SIZE set by torchrun).
-# Single-GPU path stays untouched when env vars are absent.
-# =============================================================================
-def _ddp_init():
-    """Returns (is_ddp, rank, local_rank, world_size). No-op without LOCAL_RANK."""
-    if "LOCAL_RANK" not in os.environ:
-        return False, 0, 0, 1
-    import torch.distributed as dist
-    local_rank = int(os.environ["LOCAL_RANK"])
-    world_size = int(os.environ.get("WORLD_SIZE", "1"))
-    rank = int(os.environ.get("RANK", "0"))
-    if torch.cuda.is_available():
-        torch.cuda.set_device(local_rank)
-    backend = "nccl" if torch.cuda.is_available() else "gloo"
-    if not dist.is_initialized():
-        dist.init_process_group(backend=backend)
-    return True, rank, local_rank, world_size
-
-
-def _ddp_cleanup(is_ddp):
-    if not is_ddp:
-        return
-    import torch.distributed as dist
-    try:
-        dist.barrier()
-    except Exception:
-        pass
-    try:
-        dist.destroy_process_group()
-    except Exception:
-        pass
-
-
 def _unwrap(m):
-    """Return underlying module for DDP / OptimizedModule wrappers."""
-    return m.module if hasattr(m, "module") else m
+    """nn.DataParallel wrapper 의 underlying module 반환. plain 이면 그대로."""
+    return m.module if isinstance(m, nn.DataParallel) else m
 
 
 # =============================================================================
@@ -513,7 +479,8 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
             grad_norms_pre_clip.append(gn)
             optimizer.step()
 
-        # EMA update (after optimizer.step)
+        # EMA update (after optimizer.step). DataParallel wrap 시 _unwrap 으로
+        # underlying module 을 넘겨야 EMA 의 state_dict keys 가 일치.
         if ema is not None:
             ema.update(_unwrap(model))
 
@@ -1025,47 +992,24 @@ def main():
     args = parser.parse_args()
     TQDM_DISABLE = bool(args.no_progress or not sys.stderr.isatty())
 
-    # DDP init (no-op without LOCAL_RANK env). torchrun sets LOCAL_RANK/WORLD_SIZE.
-    IS_DDP, RANK, LOCAL_RANK, WORLD_SIZE = _ddp_init()
-    IS_RANK0 = (RANK == 0)
-    if IS_DDP and not IS_RANK0:
-        TQDM_DISABLE = True
-
     with open(args.config, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
-    # 모든 random seed 고정 (재현성). DDP 에서는 rank 별로 다른 seed 를 줘서
-    # DataLoader worker 간 중복 추출을 막는다 (DistributedSampler 가 rank 별 데이터를
-    # 분할하므로 worker 내부 augmentation 도 rank 별로 달라야 한다).
-    # Seed 정책:
-    # - 모델 생성 (head Linear 등 random init) 은 rank 무관하게 동일해야 DDP
-    #   broadcast 단계에서 disturb 가 없다 → torch.* seed 는 args.seed 그대로.
-    # - DataLoader worker / augmentation 은 rank 별로 달라야 batch 중복이 안 남
-    #   → numpy/random/_GLOBAL_WORKER_SEED 만 effective_seed (args.seed + RANK).
-    effective_seed = args.seed + RANK   # DataLoader/worker 용
+    # 모든 random seed 고정 (재현성)
     import random
-    random.seed(effective_seed)
-    np.random.seed(effective_seed)
-    torch.manual_seed(args.seed)        # 모델 init 은 모든 rank 동일
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(args.seed)
-        # DDP: manual_seed_all 은 visible GPU 모두에 CUDA context 를 만들므로
-        # rank 별 process 가 자기 device 외에도 context 를 잡아 NCCL IPC handle
-        # 충돌의 원인이 됨. DDP 에서는 자기 device 만 seed.
-        if not IS_DDP:
-            torch.cuda.manual_seed_all(args.seed)
+        torch.cuda.manual_seed_all(args.seed)
     # OLD v9_noise_sparse 스타일 — 빠른 non-deterministic 경로 (benchmark=True)
     # 재현성 약간 손해 보되 학습 dynamics 안정성 복원
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = True
-    if IS_RANK0:
-        print(f"  Random seed: {args.seed} (cudnn.benchmark=True, non-deterministic)"
-              + (f" [DDP rank={RANK}/{WORLD_SIZE}, effective_seed={effective_seed}]" if IS_DDP else ""))
+    print(f"  Random seed: {args.seed} (cudnn.benchmark=True, non-deterministic)")
 
-    if IS_DDP and torch.cuda.is_available():
-        device = torch.device(f"cuda:{LOCAL_RANK}")
-    else:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Precision 결정 — bf16은 GradScaler 불필요 (H100/H200 권장)
     # use_amp 호환: fp16이 default. --precision bf16/fp32로 override.
@@ -1079,20 +1023,16 @@ def main():
         amp_dtype = None  # fp32
         scaler = None
 
-    if IS_RANK0:
-        print(f"\n{'='*60}")
-        print(f"  Device: {device}" + (f"  (DDP world_size={WORLD_SIZE})" if IS_DDP else ""))
+    print(f"\n{'='*60}")
+    print(f"  Device: {device}")
     if torch.cuda.is_available():
+        print(f"  GPU: {torch.cuda.get_device_name(0)}")
+        print(f"  VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f}GB")
         # H100/H200 같은 SM 9.0은 TF32 + bf16이 가장 빠름
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
-        if IS_RANK0:
-            gpu_idx = LOCAL_RANK if IS_DDP else 0
-            print(f"  GPU: {torch.cuda.get_device_name(gpu_idx)}")
-            print(f"  VRAM: {torch.cuda.get_device_properties(gpu_idx).total_memory / 1024**3:.1f}GB")
-    if IS_RANK0:
-        print(f"  Precision: {args.precision} (amp_dtype={amp_dtype}, scaler={'on' if scaler else 'off'})")
-        print(f"  Compile: {args.compile}")
+    print(f"  Precision: {args.precision} (amp_dtype={amp_dtype}, scaler={'on' if scaler else 'off'})")
+    print(f"  Compile: {args.compile}")
     print(f"{'='*60}")
 
     # ========================================================================
@@ -1236,9 +1176,9 @@ def main():
     print(f"  Images: train={len(train_ds)}, val={len(val_ds)}, test={len(test_ds)}")
 
     num_workers = args.num_workers
-    # 전역 변수로 seed 전달 (multiprocessing pickle 위해). DDP 에서는 rank 별로 다른 값.
+    # 전역 변수로 seed 전달 (multiprocessing pickle 위해)
     global _GLOBAL_WORKER_SEED
-    _GLOBAL_WORKER_SEED = effective_seed
+    _GLOBAL_WORKER_SEED = args.seed
 
     common = dict(
         num_workers=num_workers,
@@ -1247,62 +1187,28 @@ def main():
         prefetch_factor=args.prefetch_factor if num_workers > 0 else None,
         worker_init_fn=_worker_init_fn if num_workers > 0 else None,
     )
-    # DDP per-rank batch sizing.
-    # 사용자 의도: --batch_size = "1 step 의 effective batch" (single-GPU 기준 동일).
-    # DDP 에서는 N rank 가 batch 를 나눠 들고 gradient 를 average all-reduce 하므로
-    # per_rank_batch = args.batch_size / N 로 두면 averaged gradient 가 single-GPU
-    # 의 batch=args.batch_size 한 번 step 과 동일한 update 가 된다.
-    if IS_DDP:
-        if args.batch_size < WORLD_SIZE:
-            raise SystemExit(
-                f"--batch_size ({args.batch_size}) 가 world_size ({WORLD_SIZE}) 보다 작음. "
-                f"DDP 는 per-rank batch >= 1 을 요구. --batch_size 를 늘리거나 GPU 수를 줄여라."
-            )
-        per_rank_batch = args.batch_size // WORLD_SIZE
-        effective_batch = per_rank_batch * WORLD_SIZE
-        if effective_batch != args.batch_size and IS_RANK0:
-            print(f"  [ddp][warn] --batch_size {args.batch_size} 가 world_size {WORLD_SIZE} 로 "
-                  f"나눠떨어지지 않음 → effective batch = {effective_batch} (per_rank={per_rank_batch}). "
-                  f"권장: --batch_size 를 {WORLD_SIZE} 의 배수로.")
-    else:
-        per_rank_batch = args.batch_size
-
-    if IS_DDP:
-        from torch.utils.data.distributed import DistributedSampler
-        train_sampler = DistributedSampler(
-            train_ds, num_replicas=WORLD_SIZE, rank=RANK, shuffle=True, drop_last=False,
-        )
-        sampler_info = {"label_name": "ddp", "counts": {"world_size": WORLD_SIZE}}
-        if IS_RANK0 and args.train_sampler != "shuffle":
-            print(f"  [ddp] train_sampler={args.train_sampler!r} 무시 — DistributedSampler 강제")
-    else:
-        train_sampler, sampler_info = build_train_sampler(train_df, args.mode, args.train_sampler, args.seed)
+    train_sampler, sampler_info = build_train_sampler(train_df, args.mode, args.train_sampler, args.seed)
     train_loader = DataLoader(
         train_ds,
-        batch_size=per_rank_batch,
-        shuffle=(train_sampler is None and not IS_DDP),
+        batch_size=args.batch_size,
+        shuffle=train_sampler is None,
         sampler=train_sampler,
         **common,
     )
-    val_loader = DataLoader(val_ds, batch_size=per_rank_batch, shuffle=False, **common)
-    test_loader = DataLoader(test_ds, batch_size=per_rank_batch, shuffle=False, **common)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, **common)
+    test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, **common)
     effective_prefetch = args.prefetch_factor if num_workers > 0 else None
-    if IS_RANK0:
-        print(
-            "  DataLoader: "
-            f"num_workers={num_workers}, pin_memory=True, "
-            f"prefetch_factor={effective_prefetch}, "
-            f"persistent_workers={num_workers > 0}"
-        )
-        if IS_DDP:
-            print(f"  Train sampler: DistributedSampler (world_size={WORLD_SIZE}, "
-                  f"per-rank batch={per_rank_batch}, effective batch={per_rank_batch * WORLD_SIZE} "
-                  f"= --batch_size 와 동일 → single-GPU update 와 등가)")
-        elif sampler_info is None:
-            print("  Train sampler: shuffle")
-        else:
-            counts_str = ", ".join(f"{k}={v}" for k, v in sampler_info["counts"].items())
-            print(f"  Train sampler: {args.train_sampler} ({sampler_info['label_name']}: {counts_str})")
+    print(
+        "  DataLoader: "
+        f"num_workers={num_workers}, pin_memory=True, "
+        f"prefetch_factor={effective_prefetch}, "
+        f"persistent_workers={num_workers > 0}"
+    )
+    if sampler_info is None:
+        print("  Train sampler: shuffle")
+    else:
+        counts_str = ", ".join(f"{k}={v}" for k, v in sampler_info["counts"].items())
+        print(f"  Train sampler: {args.train_sampler} ({sampler_info['label_name']}: {counts_str})")
 
     # 모델 — weights/<short>.pth 자동 매핑 (없으면 FileNotFoundError)
     model = create_model(
@@ -1326,25 +1232,20 @@ def main():
             print(f"  torch.compile requested but unsupported (cpu or old torch)")
 
     # EMA of weights (Mean Teacher / ConvNeXt-V2 스타일).
-    # NOTE: EMA 는 DDP wrap 이전에 만들어 underlying module 을 deepcopy 한다.
-    # 그래야 ema.module.state_dict() 와 _unwrap(model).state_dict() 키가 일치.
+    # NOTE: EMA 는 DataParallel 이전에 만들어 underlying module 을 deepcopy 한다.
     ema = None
     if args.ema_decay > 0:
         ema = ModelEMA(model, decay=args.ema_decay)
-        if IS_RANK0:
-            print(f"  EMA enabled: decay={args.ema_decay}")
-    elif IS_RANK0:
+        print(f"  EMA enabled: decay={args.ema_decay}")
+    else:
         print(f"  EMA disabled (ema_decay=0)")
 
-    # DDP wrap (after EMA so ema.module is plain). gradient sync 자동.
-    if IS_DDP:
-        from torch.nn.parallel import DistributedDataParallel as _DDP
-        model = _DDP(
-            model, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK,
-            find_unused_parameters=False,
-        )
-        if IS_RANK0:
-            print(f"  DDP wrapped (world_size={WORLD_SIZE}, find_unused_parameters=False)")
+    # Multi-GPU via nn.DataParallel — visible GPU 가 2개 이상이면 자동 활성화.
+    # 단일 process 가 batch 를 N 등분해서 각 GPU 에 forward, gradient 는 GPU 0 에
+    # gather 후 optimizer step → single-GPU 와 의미적으로 동일한 update.
+    if torch.cuda.device_count() > 1:
+        print(f"  nn.DataParallel: {torch.cuda.device_count()} GPUs (effective batch = args.batch_size, scatter 내부 자동)")
+        model = nn.DataParallel(model)
 
     # Freeze backbone (선택)
     if args.freeze_backbone_epochs > 0:
@@ -1455,31 +1356,29 @@ def main():
         if group:
             logs_root = logs_root / group
     log_dir = logs_root / base_prefix
+    log_dir.mkdir(parents=True, exist_ok=True)
     predictions_dir = log_dir / "predictions"
-    if IS_RANK0:
-        log_dir.mkdir(parents=True, exist_ok=True)
-        predictions_dir.mkdir(exist_ok=True)
-        print(f"  Run folder: {log_dir}")
+    predictions_dir.mkdir(exist_ok=True)
+    print(f"  Run folder: {log_dir}")
 
-    # ⭐ Config YAML 자동 snapshot — 재현성 + 추적성 (rank 0 only)
+    # ⭐ Config YAML 자동 snapshot — 재현성 + 추적성
     # 1) train_config_used.yaml = effective config (CLI override 반영된 최종 args)
     # 2) data_config_used.yaml  = 학습 당시의 dataset.yaml (데이터 생성 config)
-    if IS_RANK0:
-        try:
-            _effective_train = vars(args).copy()
-            # Path / non-serializable 정리
-            _effective_train = {k: (str(v) if not isinstance(v, (int, float, str, bool, list, dict, type(None))) else v)
-                                for k, v in _effective_train.items()}
-            with open(log_dir / "train_config_used.yaml", "w", encoding="utf-8") as _f:
-                yaml.safe_dump(_effective_train, _f, sort_keys=False, allow_unicode=True)
-            # 원본 data config (dataset.yaml) 도 함께 복사
-            _src_cfg = Path(args.config)
-            if _src_cfg.exists():
-                import shutil as _sh
-                _sh.copy2(_src_cfg, log_dir / "data_config_used.yaml")
-            print(f"  Config snapshot: {log_dir}/train_config_used.yaml + data_config_used.yaml")
-        except Exception as _e:
-            print(f"  [warn] config snapshot failed: {_e}")
+    try:
+        _effective_train = vars(args).copy()
+        # Path / non-serializable 정리
+        _effective_train = {k: (str(v) if not isinstance(v, (int, float, str, bool, list, dict, type(None))) else v)
+                            for k, v in _effective_train.items()}
+        with open(log_dir / "train_config_used.yaml", "w", encoding="utf-8") as _f:
+            yaml.safe_dump(_effective_train, _f, sort_keys=False, allow_unicode=True)
+        # 원본 data config (dataset.yaml) 도 함께 복사
+        _src_cfg = Path(args.config)
+        if _src_cfg.exists():
+            import shutil as _sh
+            _sh.copy2(_src_cfg, log_dir / "data_config_used.yaml")
+        print(f"  Config snapshot: {log_dir}/train_config_used.yaml + data_config_used.yaml")
+    except Exception as _e:
+        print(f"  [warn] config snapshot failed: {_e}")
     history = []
 
     best_val_recall = 0.0
@@ -1511,10 +1410,6 @@ def main():
 
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
-
-        # DDP DistributedSampler 는 epoch 마다 set_epoch() 호출해야 셔플이 바뀐다.
-        if IS_DDP and hasattr(train_sampler, "set_epoch"):
-            train_sampler.set_epoch(epoch)
 
         # Backbone unfreeze
         if args.freeze_backbone_epochs > 0 and epoch == args.freeze_backbone_epochs + 1:
@@ -1622,27 +1517,26 @@ def main():
             epoch_log.update(ep_log_extras)
         history.append(epoch_log)
 
-        # 매 epoch마다 history.json + training_curves.png 갱신 (rank 0 only)
-        if IS_RANK0:
-            with open(log_dir / "history.json", "w", encoding="utf-8") as f:
-                json.dump(history, f, indent=2)
+        # 매 epoch마다 history.json + training_curves.png 갱신
+        with open(log_dir / "history.json", "w", encoding="utf-8") as f:
+            json.dump(history, f, indent=2)
 
-            # per-step grad_norm raw dump (spike 분석용)
-            if grad_norms_per_step:
-                step_file = log_dir / "step_grad_norms.json"
-                if step_file.exists():
-                    with open(step_file, encoding="utf-8") as f:
-                        all_steps = json.load(f)
-                else:
-                    all_steps = {}
-                all_steps[str(epoch)] = [round(g, 5) for g in grad_norms_per_step]
-                with open(step_file, "w", encoding="utf-8") as f:
-                    json.dump(all_steps, f, indent=2)
+        # per-step grad_norm raw dump (spike 분석용)
+        if grad_norms_per_step:
+            step_file = log_dir / "step_grad_norms.json"
+            if step_file.exists():
+                with open(step_file, encoding="utf-8") as f:
+                    all_steps = json.load(f)
+            else:
+                all_steps = {}
+            all_steps[str(epoch)] = [round(g, 5) for g in grad_norms_per_step]
+            with open(step_file, "w", encoding="utf-8") as f:
+                json.dump(all_steps, f, indent=2)
 
-            try:
-                save_training_plots(history, log_dir)
-            except Exception:
-                pass
+        try:
+            save_training_plots(history, log_dir)
+        except Exception:
+            pass
 
         # Epoch 요약
         print(f"\n{'─'*60}")
@@ -1725,13 +1619,12 @@ def main():
             best_epoch = epoch
             if best_val_loss_seen is None or val_loss < best_val_loss_seen:
                 best_val_loss_seen = val_loss
-            # best_model.pth 저장: EMA 있으면 EMA weights, 없으면 raw (rank 0 only)
-            # DDP wrap 시 model.state_dict() 는 "module." prefix 가 붙으므로 _unwrap 사용.
-            if IS_RANK0:
-                save_state = ema.module.state_dict() if ema is not None else _unwrap(model).state_dict()
-                torch.save(save_state, str(log_dir / "best_model.pth"))
-                tag = "NEW BEST"
-                print(f"\n  * {tag} (target={val_target_recall:.4f}) -> model saved{' (EMA)' if ema is not None else ''}")
+            # best_model.pth 저장: EMA 있으면 EMA weights, 없으면 raw.
+            # DataParallel wrap 시 _unwrap 으로 plain state_dict (no "module." prefix).
+            save_state = ema.module.state_dict() if ema is not None else _unwrap(model).state_dict()
+            torch.save(save_state, str(log_dir / "best_model.pth"))
+            tag = "NEW BEST"
+            print(f"\n  * {tag} (target={val_target_recall:.4f}) -> model saved{' (EMA)' if ema is not None else ''}")
 
             # Best 시 test 평가 (eval_model 사용 — EMA 있으면 EMA)
             test_loss, test_acc, test_recall, test_f1, test_metrics, test_preds, test_labels = evaluate(
@@ -1789,15 +1682,14 @@ def main():
             }
             test_history.append(test_entry)
 
-            # 오분류 이미지 저장 (rank 0 only)
-            if IS_RANK0:
-                save_predictions(test_ds, test_preds, test_labels, classes, predictions_dir, correct_cap=100)
+            # 오분류 이미지 저장
+            save_predictions(test_ds, test_preds, test_labels, classes, predictions_dir, correct_cap=100)
 
-                # Confusion matrix 저장
-                save_confusion_matrix(
-                    test_labels, test_preds, classes, log_dir / "confusion_matrix.png",
-                    title="Confusion Matrix (argmax)",
-                )
+            # Confusion matrix 저장
+            save_confusion_matrix(
+                test_labels, test_preds, classes, log_dir / "confusion_matrix.png",
+                title="Confusion Matrix (argmax)",
+            )
 
             # Normal threshold is defined only when class 0 is normal.
             selected_nt = float(args.normal_threshold) if args.mode in {"binary", "multiclass"} else None
@@ -1823,11 +1715,10 @@ def main():
 
                     if is_selected_nt:
                         selected_nt_result = nt_result
-                        if IS_RANK0:
-                            save_confusion_matrix(
-                                nt_labels_t, nt_preds_t, classes, log_dir / "confusion_matrix_nt.png",
-                                title=f"Confusion Matrix (NT={nt:g})",
-                            )
+                        save_confusion_matrix(
+                            nt_labels_t, nt_preds_t, classes, log_dir / "confusion_matrix_nt.png",
+                            title=f"Confusion Matrix (NT={nt:g})",
+                        )
 
             # Best 조건 저장
             best_info = {
@@ -1845,17 +1736,16 @@ def main():
                 "test_history": test_history,
                 "hparams": hparams,
             }
-            if IS_RANK0:
-                with open(log_dir / "best_info.json", "w", encoding="utf-8") as f:
-                    json.dump(best_info, f, indent=2, ensure_ascii=False)
-                # test_history 별도 파일로도 저장 (가독성)
-                with open(log_dir / "test_history.json", "w", encoding="utf-8") as f:
-                    json.dump(test_history, f, indent=2, ensure_ascii=False)
+            with open(log_dir / "best_info.json", "w", encoding="utf-8") as f:
+                json.dump(best_info, f, indent=2, ensure_ascii=False)
+            # test_history 별도 파일로도 저장 (가독성)
+            with open(log_dir / "test_history.json", "w", encoding="utf-8") as f:
+                json.dump(test_history, f, indent=2, ensure_ascii=False)
 
-                # 폴더명에 best 성능 반영 (rename). 실패해도 학습은 계속.
-                log_dir, predictions_dir = _rename_to_best_metrics(
-                    log_dir, base_prefix, best_test_f1, best_test_recall
-                )
+            # 폴더명에 best 성능 반영 (rename). 실패해도 학습은 계속.
+            log_dir, predictions_dir = _rename_to_best_metrics(
+                log_dir, base_prefix, best_test_f1, best_test_recall
+            )
         elif is_candidate:
             # Tie: save_strict_only (default True) 면 저장 안 함. patience counter 만.
             if epoch >= early_stop_start:
@@ -1913,7 +1803,7 @@ def main():
         # Model averaging: 매 epoch 끝에 state_dict snapshot 저장
         if avg_buffer is not None:
             import copy as _copy
-            avg_buffer.append({k: v.detach().cpu().clone() for k, v in model.state_dict().items()})
+            avg_buffer.append({k: v.detach().cpu().clone() for k, v in _unwrap(model).state_dict().items()})
 
         # Early stopping (절대규칙 #15):
         #   - min_training_epochs = early_stop_start + patience 전엔 종료 금지
@@ -1943,7 +1833,7 @@ def main():
             avg_state[k] = stacked.mean(dim=0).to(avg_buffer[0][k].dtype)
 
         # averaged 모델로 평가
-        model.load_state_dict(avg_state)
+        _unwrap(model).load_state_dict(avg_state)
 
         # val
         val_loss_a, val_acc_a, val_recall_a, val_f1_a, val_metrics_a, _, _ = evaluate(
@@ -1960,18 +1850,17 @@ def main():
         print(f"  Averaged test: f1={test_f1_a:.4f}  recall={test_recall_a:.4f}")
         print_class_table(test_metrics_a, title="Averaged Test Performance")
 
-        # averaged 모델 저장 → best_model.pth 대체 (rank 0 only)
-        if IS_RANK0:
-            torch.save({k: v.to(device) for k, v in avg_state.items()},
-                       str(log_dir / "best_model.pth"))
-            # confusion matrix 갱신
-            save_confusion_matrix(
-                test_labels_a, test_preds_a, classes, log_dir / "confusion_matrix.png",
-                title="Confusion Matrix (argmax, averaged)",
-            )
-            # predictions 갱신
-            save_predictions(test_ds, test_preds_a, test_labels_a, classes,
-                             predictions_dir, correct_cap=100)
+        # averaged 모델 저장 → best_model.pth 대체
+        torch.save({k: v.to(device) for k, v in avg_state.items()},
+                   str(log_dir / "best_model.pth"))
+        # confusion matrix 갱신
+        save_confusion_matrix(
+            test_labels_a, test_preds_a, classes, log_dir / "confusion_matrix.png",
+            title="Confusion Matrix (argmax, averaged)",
+        )
+        # predictions 갱신
+        save_predictions(test_ds, test_preds_a, test_labels_a, classes,
+                         predictions_dir, correct_cap=100)
 
         # NT 평가 on averaged: selected NT 하나만 기록한다.
         selected_nt = float(args.normal_threshold)
@@ -1990,11 +1879,10 @@ def main():
             nt_results_a[f"{nt:g}"] = nt_result_a
             if abs(nt - selected_nt) < 1e-12:
                 selected_nt_result_a = nt_result_a
-                if IS_RANK0:
-                    save_confusion_matrix(
-                        nt_labels_t, nt_preds_t, classes, log_dir / "confusion_matrix_nt.png",
-                        title=f"Confusion Matrix (NT={nt:g}, averaged)",
-                    )
+                save_confusion_matrix(
+                    nt_labels_t, nt_preds_t, classes, log_dir / "confusion_matrix_nt.png",
+                    title=f"Confusion Matrix (NT={nt:g}, averaged)",
+                )
 
         # best metrics를 averaged로 교체
         best_test_metrics = test_metrics_a
@@ -2009,17 +1897,16 @@ def main():
         avg_nt_results = None
         avg_selected_nt_result = None
 
-    # Training plots (rank 0 only)
-    if IS_RANK0:
-        save_training_plots(history, log_dir)
+    # Training plots
+    save_training_plots(history, log_dir)
 
     # best_info.json 갱신/생성 (timing + averaging 정보)
     info_path = log_dir / "best_info.json"
-    if IS_RANK0 and info_path.exists():
+    if info_path.exists():
         with open(info_path, encoding="utf-8") as f:
             bi = json.load(f)
     else:
-        # NEW BEST 없었으면 새로 생성. 비-rank 0 도 placeholder 만 둠 (write 안 함).
+        # NEW BEST 없었으면 새로 생성
         bi = {"hparams": hparams}
 
     # averaging 적용 시 상위 메트릭 averaged 값으로 교체
@@ -2046,21 +1933,20 @@ def main():
     bi["params_M"] = round(params_M, 2)
     bi["input_size"] = list(input_size)
     bi["normalize"] = {"mean": input_mean, "std": input_std}
-    if IS_RANK0:
-        with open(info_path, "w", encoding="utf-8") as f:
-            json.dump(bi, f, indent=2, ensure_ascii=False)
+    with open(info_path, "w", encoding="utf-8") as f:
+        json.dump(bi, f, indent=2, ensure_ascii=False)
 
-        # 최종 rename: averaging 으로 best 가 갱신된 경우 폴더명도 반영. (rank 0 only)
-        # (averaging 없더라도 호출은 no-op — 같은 이름이면 skip)
-        if best_test_f1 > 0 or best_test_recall > 0:
-            log_dir, predictions_dir = _rename_to_best_metrics(
-                log_dir, base_prefix, best_test_f1, best_test_recall
-            )
-            info_path = log_dir / "best_info.json"
+    # 최종 rename: averaging 으로 best 가 갱신된 경우 폴더명도 반영.
+    # (averaging 없더라도 호출은 no-op — 같은 이름이면 skip)
+    if best_test_f1 > 0 or best_test_recall > 0:
+        log_dir, predictions_dir = _rename_to_best_metrics(
+            log_dir, base_prefix, best_test_f1, best_test_recall
+        )
+        info_path = log_dir / "best_info.json"
 
-        # 전체 히스토리 저장
-        with open(log_dir / "history.json", "w", encoding="utf-8") as f:
-            json.dump(history, f, indent=2)
+    # 전체 히스토리 저장
+    with open(log_dir / "history.json", "w", encoding="utf-8") as f:
+        json.dump(history, f, indent=2)
 
     # `학습 완료` 출력 뒤 controller가 바로 다음 run으로 넘어가도록 worker cleanup을 먼저 끝낸다.
     cleanup_start = time.time()
@@ -2071,35 +1957,30 @@ def main():
         torch.cuda.empty_cache()
     cleanup_elapsed = time.time() - cleanup_start
 
-    # 최종 요약 (rank 0 only)
-    if IS_RANK0:
-        print(f"\n{'='*60}")
-        print(f"  학습 완료")
-        print(f"{'='*60}")
-        print(f"  Best epoch: {best_epoch}")
-        print(f"  Val:  recall={best_val_recall:.4f}")
-        if best_test_metrics:
-            print(f"  Test: recall={best_test_recall:.4f}  f1={best_test_f1:.4f}")
-            print_class_table(best_test_metrics, title="Final Test Performance (Best Model)")
-        print(f"  Time: total={total_train_time/60:.1f}min, avg_epoch={avg_epoch_time:.1f}s")
-        print(f"  Cleanup: dataloaders={stopped_loaders}, elapsed={cleanup_elapsed:.1f}s")
-        print(f"  Params: {params_M:.2f}M")
-        print(f"\n  저장:")
-        print(f"    모델: {log_dir}/best_model.pth")
-        print(f"    로그: {log_dir}/best_info.json")
-        print(f"    곡선: {log_dir}/training_curves.png")
-        print(f"    예측: {predictions_dir}/ (TN/TP cap 100)")
-        print(f"    CM:   {log_dir}/confusion_matrix.png")
-        print(f"    CM_NT{args.normal_threshold:g}: {log_dir}/confusion_matrix_nt.png")
-
-    # DDP 종료 — 모든 rank 가 barrier 후 process group 정리.
-    _ddp_cleanup(IS_DDP)
+    # 최종 요약
+    print(f"\n{'='*60}")
+    print(f"  학습 완료")
+    print(f"{'='*60}")
+    print(f"  Best epoch: {best_epoch}")
+    print(f"  Val:  recall={best_val_recall:.4f}")
+    if best_test_metrics:
+        print(f"  Test: recall={best_test_recall:.4f}  f1={best_test_f1:.4f}")
+        print_class_table(best_test_metrics, title="Final Test Performance (Best Model)")
+    print(f"  Time: total={total_train_time/60:.1f}min, avg_epoch={avg_epoch_time:.1f}s")
+    print(f"  Cleanup: dataloaders={stopped_loaders}, elapsed={cleanup_elapsed:.1f}s")
+    print(f"  Params: {params_M:.2f}M")
+    print(f"\n  저장:")
+    print(f"    모델: {log_dir}/best_model.pth")
+    print(f"    로그: {log_dir}/best_info.json")
+    print(f"    곡선: {log_dir}/training_curves.png")
+    print(f"    예측: {predictions_dir}/ (TN/TP cap 100)")
+    print(f"    CM:   {log_dir}/confusion_matrix.png")
+    print(f"    CM_NT{args.normal_threshold:g}: {log_dir}/confusion_matrix_nt.png")
 
     # Queue runs must release the controller immediately after successful saves.
     # This bypasses slow Python/CUDA/worker finalizers that can keep the process
-    # alive after "학습 완료" has already been printed. Non-rank-0 ranks return
-    # 정상적으로 main() 에서 빠져나가 torchrun 이 회수.
-    if IS_RANK0 and not args.no_fast_exit:
+    # alive after "학습 완료" has already been printed.
+    if not args.no_fast_exit:
         sys.stdout.flush()
         sys.stderr.flush()
         os._exit(0)

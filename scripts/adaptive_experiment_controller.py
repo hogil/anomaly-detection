@@ -283,15 +283,7 @@ def flatten_train_args(run: dict[str, Any]) -> list[str]:
 
 
 def build_command(run: dict[str, Any], log_dir_group: str = "") -> list[str]:
-    # DDP launch when DDP_NPROC_PER_NODE >= 2 (set by all-dataset-backbone-ddp.sh).
-    # torchrun spawns nproc workers; train.py sees LOCAL_RANK / WORLD_SIZE env vars
-    # and switches to DistributedSampler + DDP wrap automatically.
-    nproc = int(os.environ.get("DDP_NPROC_PER_NODE", "1") or "1")
-    if nproc > 1:
-        cmd = ["torchrun", "--standalone", "--nnodes=1",
-               f"--nproc_per_node={nproc}", "train.py"]
-    else:
-        cmd = [sys.executable, "-u", "train.py"]
+    cmd = [sys.executable, "-u", "train.py"]
     cmd.extend(flatten_train_args(run))
     cmd.extend(["--seed", str(run["seed"]), "--log_dir", str(run["tag"])])
     if log_dir_group:

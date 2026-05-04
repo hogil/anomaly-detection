@@ -10,6 +10,24 @@ dataset.yaml  →  데이터/이미지 생성  →  학습  →  추론
 
 문제 설정은 `docs/problem_setting.md`에 고정합니다. 기본 운영 목표는 `normal`/`abnormal` binary gate이고, multiclass는 defect type 분석용 보조 실험입니다.
 
+## Python 3.11 환경
+
+서버 검증 환경은 Python 3.11 + torch 2.3.1+cu121 + torchvision 0.18.1+cu121 + numpy 1.26.4입니다.
+
+```bash
+conda env create -f environment-py311.yml
+conda activate anomaly-py311
+python - <<'PY'
+import torch, numpy, yaml
+print("torch", torch.__version__, "cuda", torch.version.cuda)
+print("nccl", torch.cuda.nccl.version() if torch.cuda.is_available() else None)
+print("numpy", numpy.__version__)
+print("cuda", torch.cuda.is_available(), torch.cuda.device_count())
+PY
+```
+
+사내망에서 `torch`/`torchvision` CUDA wheel 이름이 별도로 관리되면, 먼저 사내 패키지명으로 cu121 torch 조합을 설치한 뒤 `python -m pip install -r requirements.txt`를 실행합니다. 실행할 때는 같은 환경을 쓰도록 `--python "$(which python)"`을 붙이는 것을 권장합니다.
+
 목차:
 1. 데이터셋 정의 (`dataset.yaml`)
 2. 데이터/이미지 생성

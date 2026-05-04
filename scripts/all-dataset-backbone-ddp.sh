@@ -39,7 +39,16 @@ fi
 
 export DDP_NPROC_PER_NODE="$NPROC"
 echo "[ddp] DDP_NPROC_PER_NODE=$NPROC (each train.py launched via torchrun)"
-echo "[ddp] effective batch per step = args.batch_size * $NPROC"
-echo "[ddp] all other behavior identical to all-dataset-backbone.sh"
+echo "[ddp] per-rank batch = args.batch_size / $NPROC, effective batch = args.batch_size (single-GPU 와 등가)"
+
+# NCCL 안정성 옵션. 서버 환경에서 Cuda failure 1 'invalid argument' 같은
+# IPC/SHM 관련 에러가 나면 다음 두 줄을 주석 해제(또는 환경변수로 export).
+# Docker / 컨테이너 / 일부 multi-node 환경에서 P2P 또는 /dev/shm 가 막혀
+# NCCL 의 cudaIpcOpenMemHandle 이 실패하는 경우가 흔함.
+#   export NCCL_P2P_DISABLE=1   # GPU 간 P2P (NVLink/PCIe) 비활성화
+#   export NCCL_SHM_DISABLE=1   # /dev/shm IPC 비활성화 → socket fallback
+#   export NCCL_IB_DISABLE=1    # InfiniBand 비활성화 (single-node 면 OK)
+# 진단: NCCL 동작 로그를 보려면
+#   export NCCL_DEBUG=INFO
 
 exec bash "$D/all-dataset-backbone.sh" "$@"

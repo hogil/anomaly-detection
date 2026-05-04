@@ -1044,7 +1044,11 @@ def main():
     torch.manual_seed(effective_seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(effective_seed)
-        torch.cuda.manual_seed_all(effective_seed)
+        # DDP: manual_seed_all 은 visible GPU 모두에 CUDA context 를 만들므로
+        # rank 별 process 가 자기 device 외에도 context 를 잡아 NCCL IPC handle
+        # 충돌의 원인이 됨. DDP 에서는 자기 device 만 seed.
+        if not IS_DDP:
+            torch.cuda.manual_seed_all(effective_seed)
     # OLD v9_noise_sparse 스타일 — 빠른 non-deterministic 경로 (benchmark=True)
     # 재현성 약간 손해 보되 학습 dynamics 안정성 복원
     torch.backends.cudnn.deterministic = False

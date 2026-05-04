@@ -1238,6 +1238,26 @@ def main():
         prefetch_factor=args.prefetch_factor if num_workers > 0 else None,
         worker_init_fn=_worker_init_fn if num_workers > 0 else None,
     )
+    # DDP per-rank batch sizing.
+    # 사용자 의도: --batch_size = "1 step 의 effective batch" (single-GPU 기준 동일).
+    # DDP 에서는 N rank 가 batch 를 나눠 들고 gradient 를 average all-reduce 하므로
+    # per_rank_batch = args.batch_size / N 로 두면 averaged gradient 가 single-GPU
+    # 의 batch=args.batch_size 한 번 step 과 동일한 update 가 된다.
+    if IS_DDP:
+        if args.batch_size < WORLD_SIZE:
+            raise SystemExit(
+                f"--batch_size ({args.batch_size}) 가 world_size ({WORLD_SIZE}) 보다 작음. "
+                f"DDP 는 per-rank batch >= 1 을 요구. --batch_size 를 늘리거나 GPU 수를 줄여라."
+            )
+        per_rank_batch = args.batch_size // WORLD_SIZE
+        effective_batch = per_rank_batch * WORLD_SIZE
+        if effective_batch != args.batch_size and IS_RANK0:
+            print(f"  [ddp][warn] --batch_size {args.batch_size} 가 world_size {WORLD_SIZE} 로 "
+                  f"나눠떨어지지 않음 → effective batch = {effective_batch} (per_rank={per_rank_batch}). "
+                  f"권장: --batch_size 를 {WORLD_SIZE} 의 배수로.")
+    else:
+        per_rank_batch = args.batch_size
+
     if IS_DDP:
         from torch.utils.data.distributed import DistributedSampler
         train_sampler = DistributedSampler(
@@ -1250,13 +1270,13 @@ def main():
         train_sampler, sampler_info = build_train_sampler(train_df, args.mode, args.train_sampler, args.seed)
     train_loader = DataLoader(
         train_ds,
-        batch_size=args.batch_size,
+        batch_size=per_rank_batch,
         shuffle=(train_sampler is None and not IS_DDP),
         sampler=train_sampler,
         **common,
     )
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, **common)
-    test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, **common)
+    val_loader = DataLoader(val_ds, batch_size=per_rank_batch, shuffle=False, **common)
+    test_loader = DataLoader(test_ds, batch_size=per_rank_batch, shuffle=False, **common)
     effective_prefetch = args.prefetch_factor if num_workers > 0 else None
     if IS_RANK0:
         print(
@@ -1267,7 +1287,8 @@ def main():
         )
         if IS_DDP:
             print(f"  Train sampler: DistributedSampler (world_size={WORLD_SIZE}, "
-                  f"per-rank batch={args.batch_size}, effective batch={args.batch_size * WORLD_SIZE})")
+                  f"per-rank batch={per_rank_batch}, effective batch={per_rank_batch * WORLD_SIZE} "
+                  f"= --batch_size 와 동일 → single-GPU update 와 등가)")
         elif sampler_info is None:
             print("  Train sampler: shuffle")
         else:

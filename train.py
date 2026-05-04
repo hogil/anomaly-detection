@@ -15,6 +15,7 @@ Usage:
 """
 
 import argparse
+import builtins
 import gc
 import json
 import os
@@ -26,7 +27,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler, Sampler
+from torch.utils.data.distributed import DistributedSampler
 from torchvision import transforms
 from pathlib import Path
 from PIL import Image
@@ -45,8 +49,74 @@ TQDM_DISABLE = False
 
 
 def _unwrap(m):
-    """nn.DataParallel wrapper 의 underlying module 반환. plain 이면 그대로."""
-    return m.module if isinstance(m, nn.DataParallel) else m
+    """DataParallel/DDP wrapper 의 underlying module 반환. plain 이면 그대로."""
+    return m.module if isinstance(m, (nn.DataParallel, DistributedDataParallel)) else m
+
+
+def _dist_ready() -> bool:
+    return dist.is_available() and dist.is_initialized()
+
+
+def _rank() -> int:
+    return dist.get_rank() if _dist_ready() else 0
+
+
+def _world_size() -> int:
+    return dist.get_world_size() if _dist_ready() else 1
+
+
+def _is_main_process() -> bool:
+    return _rank() == 0
+
+
+def setup_distributed() -> tuple[bool, int, int, int | None]:
+    """Initialize torchrun DDP from env:// when WORLD_SIZE > 1."""
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    if world_size <= 1:
+        return False, 0, 1, None
+    if not torch.cuda.is_available():
+        raise RuntimeError("DDP requested by WORLD_SIZE>1, but CUDA is not available")
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    torch.cuda.set_device(local_rank)
+    dist.init_process_group(backend="nccl", init_method="env://")
+    return True, dist.get_rank(), dist.get_world_size(), local_rank
+
+
+class DistributedWeightedSampler(Sampler[int]):
+    """Weighted sampler split by DDP rank with one shared global draw stream."""
+
+    def __init__(
+        self,
+        weights: torch.Tensor,
+        *,
+        num_replicas: int,
+        rank: int,
+        seed: int,
+    ):
+        self.weights = torch.as_tensor(weights, dtype=torch.double)
+        self.num_replicas = int(num_replicas)
+        self.rank = int(rank)
+        self.seed = int(seed)
+        self.epoch = 0
+        self.num_samples = int(np.ceil(len(self.weights) / self.num_replicas))
+        self.total_size = self.num_samples * self.num_replicas
+
+    def __iter__(self):
+        generator = torch.Generator()
+        generator.manual_seed(self.seed + self.epoch)
+        indices = torch.multinomial(
+            self.weights,
+            self.total_size,
+            replacement=True,
+            generator=generator,
+        ).tolist()
+        return iter(indices[self.rank:self.total_size:self.num_replicas])
+
+    def __len__(self):
+        return self.num_samples
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = int(epoch)
 
 
 # =============================================================================
@@ -63,7 +133,16 @@ def _worker_init_fn(worker_id):
     random.seed(seed)
 
 
-def build_train_sampler(train_df: pd.DataFrame, mode: str, sampler_name: str, seed: int):
+def build_train_sampler(
+    train_df: pd.DataFrame,
+    mode: str,
+    sampler_name: str,
+    seed: int,
+    *,
+    distributed: bool = False,
+    num_replicas: int = 1,
+    rank: int = 0,
+):
     """Create an optional weighted sampler to compensate for train prior skew."""
     if sampler_name == "shuffle":
         return None, None
@@ -83,14 +162,22 @@ def build_train_sampler(train_df: pd.DataFrame, mode: str, sampler_name: str, se
 
     counts = keys.value_counts().to_dict()
     weights = torch.as_tensor([1.0 / counts[k] for k in keys], dtype=torch.double)
-    generator = torch.Generator()
-    generator.manual_seed(seed)
-    sampler = WeightedRandomSampler(
-        weights=weights,
-        num_samples=len(weights),
-        replacement=True,
-        generator=generator,
-    )
+    if distributed:
+        sampler = DistributedWeightedSampler(
+            weights,
+            num_replicas=num_replicas,
+            rank=rank,
+            seed=seed,
+        )
+    else:
+        generator = torch.Generator()
+        generator.manual_seed(seed)
+        sampler = WeightedRandomSampler(
+            weights=weights,
+            num_samples=len(weights),
+            replacement=True,
+            generator=generator,
+        )
     return sampler, {"label_name": label_name, "counts": counts}
 
 
@@ -437,11 +524,26 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
             else:
                 return lam * criterion(outputs, labels_a) + (1 - lam) * criterion(outputs, labels_b), int(images.size(0))
 
+        def sync_loss_or_skip(outputs, loss, loss_samples):
+            if loss is None and _dist_ready():
+                loss = outputs.sum() * 0.0
+                loss_samples = 0
+            if filter_nonfinite_loss and _dist_ready():
+                valid_count = torch.tensor([int(loss_samples)], dtype=torch.int64, device=device)
+                dist.all_reduce(valid_count, op=dist.ReduceOp.SUM)
+                global_valid = int(valid_count.item())
+                if global_valid == 0:
+                    return None, 0
+                if loss is not None and loss_samples > 0:
+                    loss = loss * (float(loss_samples) * _world_size() / float(global_valid))
+            return loss, loss_samples
+
         if scaler is not None:
             # fp16 path with GradScaler
             with torch.amp.autocast("cuda", dtype=torch.float16):
                 outputs = model(images)
                 loss, loss_samples = compute_loss(outputs)
+                loss, loss_samples = sync_loss_or_skip(outputs, loss, loss_samples)
                 if loss is None:
                     continue
                 if weights is not None and ohem_ratio == 0:
@@ -458,6 +560,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
             with torch.amp.autocast("cuda", dtype=amp_dtype):
                 outputs = model(images)
                 loss, loss_samples = compute_loss(outputs)
+                loss, loss_samples = sync_loss_or_skip(outputs, loss, loss_samples)
                 if loss is None:
                     continue
                 if weights is not None and ohem_ratio == 0:
@@ -470,6 +573,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
             # fp32 path
             outputs = model(images)
             loss, loss_samples = compute_loss(outputs)
+            loss, loss_samples = sync_loss_or_skip(outputs, loss, loss_samples)
             if loss is None:
                 continue
             if weights is not None and ohem_ratio == 0:
@@ -509,6 +613,33 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_ep
         }
     else:
         gn_stats = None
+
+    if _dist_ready():
+        totals = torch.tensor(
+            [total_loss, total_loss_samples, correct, total],
+            dtype=torch.float64,
+            device=device,
+        )
+        dist.all_reduce(totals, op=dist.ReduceOp.SUM)
+        total_loss = float(totals[0].item())
+        total_loss_samples = int(totals[1].item())
+        correct = int(totals[2].item())
+        total = int(totals[3].item())
+
+        loss_keys = [
+            "nonfinite_samples",
+            "nonfinite_batches",
+            "skipped_batches",
+            "valid_samples",
+            "total_samples",
+        ]
+        loss_totals = torch.tensor(
+            [loss_filter_stats[k] for k in loss_keys],
+            dtype=torch.int64,
+            device=device,
+        )
+        dist.all_reduce(loss_totals, op=dist.ReduceOp.SUM)
+        loss_filter_stats.update({k: int(v.item()) for k, v in zip(loss_keys, loss_totals)})
 
     return (
         total_loss / max(total_loss_samples, 1),
@@ -990,7 +1121,11 @@ def main():
     parser.add_argument("--prefetch_factor", type=int, default=td("prefetch_factor", 4),
                         help="DataLoader prefetch_factor (서버: 8~16)")
     args = parser.parse_args()
-    TQDM_DISABLE = bool(args.no_progress or not sys.stderr.isatty())
+    ddp_enabled, ddp_rank, ddp_world_size, ddp_local_rank = setup_distributed()
+    is_main = _is_main_process()
+    TQDM_DISABLE = bool(args.no_progress or not sys.stderr.isatty() or (ddp_enabled and not is_main))
+    if ddp_enabled and not is_main:
+        builtins.print = lambda *args, **kwargs: None
 
     with open(args.config, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
@@ -1009,7 +1144,16 @@ def main():
     torch.backends.cudnn.benchmark = True
     print(f"  Random seed: {args.seed} (cudnn.benchmark=True, non-deterministic)")
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if ddp_enabled:
+        device = torch.device("cuda", ddp_local_rank)
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if ddp_enabled and args.batch_size % ddp_world_size != 0:
+        raise ValueError(
+            f"DDP requires --batch_size to be divisible by GPU count: "
+            f"batch_size={args.batch_size}, world_size={ddp_world_size}"
+        )
+    train_batch_size = args.batch_size // ddp_world_size if ddp_enabled else args.batch_size
 
     # Precision 결정 — bf16은 GradScaler 불필요 (H100/H200 권장)
     # use_amp 호환: fp16이 default. --precision bf16/fp32로 override.
@@ -1026,8 +1170,11 @@ def main():
     print(f"\n{'='*60}")
     print(f"  Device: {device}")
     if torch.cuda.is_available():
-        print(f"  GPU: {torch.cuda.get_device_name(0)}")
-        print(f"  VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f}GB")
+        gpu_index = device.index or 0
+        print(f"  GPU: {torch.cuda.get_device_name(gpu_index)}")
+        print(f"  VRAM: {torch.cuda.get_device_properties(gpu_index).total_memory / 1024**3:.1f}GB")
+        if ddp_enabled:
+            print(f"  DDP: rank={ddp_rank}/{ddp_world_size} local_rank={ddp_local_rank}")
         # H100/H200 같은 SM 9.0은 TF32 + bf16이 가장 빠름
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
@@ -1085,7 +1232,10 @@ def main():
         "num_classes": num_classes,
         "classes": classes,
         "device": str(device),
-        "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU",
+        "gpu": torch.cuda.get_device_name(device.index or 0) if torch.cuda.is_available() else "CPU",
+        "ddp": ddp_enabled,
+        "ddp_world_size": ddp_world_size,
+        "local_batch_size": train_batch_size,
         "mode": args.mode,
         "amp": args.use_amp,
         "mixup": args.use_mixup,
@@ -1178,7 +1328,7 @@ def main():
     num_workers = args.num_workers
     # 전역 변수로 seed 전달 (multiprocessing pickle 위해)
     global _GLOBAL_WORKER_SEED
-    _GLOBAL_WORKER_SEED = args.seed
+    _GLOBAL_WORKER_SEED = args.seed + ddp_rank * 100_000
 
     common = dict(
         num_workers=num_workers,
@@ -1187,11 +1337,29 @@ def main():
         prefetch_factor=args.prefetch_factor if num_workers > 0 else None,
         worker_init_fn=_worker_init_fn if num_workers > 0 else None,
     )
-    train_sampler, sampler_info = build_train_sampler(train_df, args.mode, args.train_sampler, args.seed)
+    if ddp_enabled and args.train_sampler == "shuffle":
+        train_sampler = DistributedSampler(
+            train_ds,
+            num_replicas=ddp_world_size,
+            rank=ddp_rank,
+            shuffle=True,
+            seed=args.seed,
+        )
+        sampler_info = {"label_name": "distributed_shuffle", "counts": {}}
+    else:
+        train_sampler, sampler_info = build_train_sampler(
+            train_df,
+            args.mode,
+            args.train_sampler,
+            args.seed,
+            distributed=ddp_enabled,
+            num_replicas=ddp_world_size,
+            rank=ddp_rank,
+        )
     train_loader = DataLoader(
         train_ds,
-        batch_size=args.batch_size,
-        shuffle=train_sampler is None,
+        batch_size=train_batch_size,
+        shuffle=(train_sampler is None and not ddp_enabled),
         sampler=train_sampler,
         **common,
     )
@@ -1201,11 +1369,14 @@ def main():
     print(
         "  DataLoader: "
         f"num_workers={num_workers}, pin_memory=True, "
+        f"global_batch={args.batch_size}, train_batch_per_rank={train_batch_size}, "
         f"prefetch_factor={effective_prefetch}, "
         f"persistent_workers={num_workers > 0}"
     )
     if sampler_info is None:
         print("  Train sampler: shuffle")
+    elif sampler_info["label_name"] == "distributed_shuffle":
+        print("  Train sampler: distributed shuffle")
     else:
         counts_str = ", ".join(f"{k}={v}" for k, v in sampler_info["counts"].items())
         print(f"  Train sampler: {args.train_sampler} ({sampler_info['label_name']}: {counts_str})")
@@ -1240,10 +1411,20 @@ def main():
     else:
         print(f"  EMA disabled (ema_decay=0)")
 
-    # Multi-GPU via nn.DataParallel — visible GPU 가 2개 이상이면 자동 활성화.
-    # 단일 process 가 batch 를 N 등분해서 각 GPU 에 forward, gradient 는 GPU 0 에
-    # gather 후 optimizer step → single-GPU 와 의미적으로 동일한 update.
-    if torch.cuda.device_count() > 1:
+    # Multi-GPU: torchrun DDP. --batch_size 는 global batch 로 유지하고,
+    # 각 rank 의 DataLoader batch 만 global/world_size micro-batch 로 낮춘다.
+    if ddp_enabled:
+        print(
+            f"  DDP: world_size={ddp_world_size}, "
+            f"global_batch={args.batch_size}, local_batch={train_batch_size}"
+        )
+        model = DistributedDataParallel(
+            model,
+            device_ids=[ddp_local_rank],
+            output_device=ddp_local_rank,
+            find_unused_parameters=args.freeze_backbone_epochs > 0,
+        )
+    elif torch.cuda.device_count() > 1:
         print(f"  nn.DataParallel: {torch.cuda.device_count()} GPUs (effective batch = args.batch_size, scatter 내부 자동)")
         model = nn.DataParallel(model)
 
@@ -1356,29 +1537,31 @@ def main():
         if group:
             logs_root = logs_root / group
     log_dir = logs_root / base_prefix
-    log_dir.mkdir(parents=True, exist_ok=True)
     predictions_dir = log_dir / "predictions"
-    predictions_dir.mkdir(exist_ok=True)
-    print(f"  Run folder: {log_dir}")
+    if is_main:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        predictions_dir.mkdir(exist_ok=True)
+        print(f"  Run folder: {log_dir}")
 
     # ⭐ Config YAML 자동 snapshot — 재현성 + 추적성
     # 1) train_config_used.yaml = effective config (CLI override 반영된 최종 args)
     # 2) data_config_used.yaml  = 학습 당시의 dataset.yaml (데이터 생성 config)
-    try:
-        _effective_train = vars(args).copy()
-        # Path / non-serializable 정리
-        _effective_train = {k: (str(v) if not isinstance(v, (int, float, str, bool, list, dict, type(None))) else v)
-                            for k, v in _effective_train.items()}
-        with open(log_dir / "train_config_used.yaml", "w", encoding="utf-8") as _f:
-            yaml.safe_dump(_effective_train, _f, sort_keys=False, allow_unicode=True)
-        # 원본 data config (dataset.yaml) 도 함께 복사
-        _src_cfg = Path(args.config)
-        if _src_cfg.exists():
-            import shutil as _sh
-            _sh.copy2(_src_cfg, log_dir / "data_config_used.yaml")
-        print(f"  Config snapshot: {log_dir}/train_config_used.yaml + data_config_used.yaml")
-    except Exception as _e:
-        print(f"  [warn] config snapshot failed: {_e}")
+    if is_main:
+        try:
+            _effective_train = vars(args).copy()
+            # Path / non-serializable 정리
+            _effective_train = {k: (str(v) if not isinstance(v, (int, float, str, bool, list, dict, type(None))) else v)
+                                for k, v in _effective_train.items()}
+            with open(log_dir / "train_config_used.yaml", "w", encoding="utf-8") as _f:
+                yaml.safe_dump(_effective_train, _f, sort_keys=False, allow_unicode=True)
+            # 원본 data config (dataset.yaml) 도 함께 복사
+            _src_cfg = Path(args.config)
+            if _src_cfg.exists():
+                import shutil as _sh
+                _sh.copy2(_src_cfg, log_dir / "data_config_used.yaml")
+            print(f"  Config snapshot: {log_dir}/train_config_used.yaml + data_config_used.yaml")
+        except Exception as _e:
+            print(f"  [warn] config snapshot failed: {_e}")
     history = []
 
     best_val_recall = 0.0
@@ -1410,6 +1593,8 @@ def main():
 
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
+        if hasattr(train_sampler, "set_epoch"):
+            train_sampler.set_epoch(epoch)
 
         # Backbone unfreeze
         if args.freeze_backbone_epochs > 0 and epoch == args.freeze_backbone_epochs + 1:
@@ -1518,11 +1703,12 @@ def main():
         history.append(epoch_log)
 
         # 매 epoch마다 history.json + training_curves.png 갱신
-        with open(log_dir / "history.json", "w", encoding="utf-8") as f:
-            json.dump(history, f, indent=2)
+        if is_main:
+            with open(log_dir / "history.json", "w", encoding="utf-8") as f:
+                json.dump(history, f, indent=2)
 
         # per-step grad_norm raw dump (spike 분석용)
-        if grad_norms_per_step:
+        if is_main and grad_norms_per_step:
             step_file = log_dir / "step_grad_norms.json"
             if step_file.exists():
                 with open(step_file, encoding="utf-8") as f:
@@ -1533,10 +1719,11 @@ def main():
             with open(step_file, "w", encoding="utf-8") as f:
                 json.dump(all_steps, f, indent=2)
 
-        try:
-            save_training_plots(history, log_dir)
-        except Exception:
-            pass
+        if is_main:
+            try:
+                save_training_plots(history, log_dir)
+            except Exception:
+                pass
 
         # Epoch 요약
         print(f"\n{'─'*60}")
@@ -1621,8 +1808,9 @@ def main():
                 best_val_loss_seen = val_loss
             # best_model.pth 저장: EMA 있으면 EMA weights, 없으면 raw.
             # DataParallel wrap 시 _unwrap 으로 plain state_dict (no "module." prefix).
-            save_state = ema.module.state_dict() if ema is not None else _unwrap(model).state_dict()
-            torch.save(save_state, str(log_dir / "best_model.pth"))
+            if is_main:
+                save_state = ema.module.state_dict() if ema is not None else _unwrap(model).state_dict()
+                torch.save(save_state, str(log_dir / "best_model.pth"))
             tag = "NEW BEST"
             print(f"\n  * {tag} (target={val_target_recall:.4f}) -> model saved{' (EMA)' if ema is not None else ''}")
 
@@ -1683,13 +1871,15 @@ def main():
             test_history.append(test_entry)
 
             # 오분류 이미지 저장
-            save_predictions(test_ds, test_preds, test_labels, classes, predictions_dir, correct_cap=100)
+            if is_main:
+                save_predictions(test_ds, test_preds, test_labels, classes, predictions_dir, correct_cap=100)
 
             # Confusion matrix 저장
-            save_confusion_matrix(
-                test_labels, test_preds, classes, log_dir / "confusion_matrix.png",
-                title="Confusion Matrix (argmax)",
-            )
+            if is_main:
+                save_confusion_matrix(
+                    test_labels, test_preds, classes, log_dir / "confusion_matrix.png",
+                    title="Confusion Matrix (argmax)",
+                )
 
             # Normal threshold is defined only when class 0 is normal.
             selected_nt = float(args.normal_threshold) if args.mode in {"binary", "multiclass"} else None
@@ -1715,10 +1905,11 @@ def main():
 
                     if is_selected_nt:
                         selected_nt_result = nt_result
-                        save_confusion_matrix(
-                            nt_labels_t, nt_preds_t, classes, log_dir / "confusion_matrix_nt.png",
-                            title=f"Confusion Matrix (NT={nt:g})",
-                        )
+                        if is_main:
+                            save_confusion_matrix(
+                                nt_labels_t, nt_preds_t, classes, log_dir / "confusion_matrix_nt.png",
+                                title=f"Confusion Matrix (NT={nt:g})",
+                            )
 
             # Best 조건 저장
             best_info = {
@@ -1736,16 +1927,18 @@ def main():
                 "test_history": test_history,
                 "hparams": hparams,
             }
-            with open(log_dir / "best_info.json", "w", encoding="utf-8") as f:
-                json.dump(best_info, f, indent=2, ensure_ascii=False)
-            # test_history 별도 파일로도 저장 (가독성)
-            with open(log_dir / "test_history.json", "w", encoding="utf-8") as f:
-                json.dump(test_history, f, indent=2, ensure_ascii=False)
+            if is_main:
+                with open(log_dir / "best_info.json", "w", encoding="utf-8") as f:
+                    json.dump(best_info, f, indent=2, ensure_ascii=False)
+                # test_history 별도 파일로도 저장 (가독성)
+                with open(log_dir / "test_history.json", "w", encoding="utf-8") as f:
+                    json.dump(test_history, f, indent=2, ensure_ascii=False)
 
             # 폴더명에 best 성능 반영 (rename). 실패해도 학습은 계속.
-            log_dir, predictions_dir = _rename_to_best_metrics(
-                log_dir, base_prefix, best_test_f1, best_test_recall
-            )
+            if is_main:
+                log_dir, predictions_dir = _rename_to_best_metrics(
+                    log_dir, base_prefix, best_test_f1, best_test_recall
+                )
         elif is_candidate:
             # Tie: save_strict_only (default True) 면 저장 안 함. patience counter 만.
             if epoch >= early_stop_start:
@@ -1791,8 +1984,9 @@ def main():
             print(f"  [VAL_PEAK@ep{epoch:02d}] raw val_f1 {val_f1:.4f} > prev {best_raw_val_f1_seen:.4f}  "
                   f"| test_f1={ep_test_f1:.4f} abn_R={_abn_R:.4f} FN={_fn_p} FP={_fp_p}")
             # 파일에도 즉시 persist (run 중단 대비)
-            with open(log_dir / "test_history.json", "w", encoding="utf-8") as f:
-                json.dump(test_history, f, indent=2, ensure_ascii=False)
+            if is_main:
+                with open(log_dir / "test_history.json", "w", encoding="utf-8") as f:
+                    json.dump(test_history, f, indent=2, ensure_ascii=False)
 
         if is_raw_val_peak:
             best_raw_val_f1_seen = val_f1
@@ -1812,6 +2006,23 @@ def main():
                 and epoch >= min_training_epochs):
             print(f"\n  ! Early stopping at epoch {epoch} (min={min_training_epochs})")
             break
+
+    if ddp_enabled and not is_main:
+        stopped_loaders = _shutdown_dataloader_workers(train_loader, val_loader, test_loader)
+        del train_loader, val_loader, test_loader
+        gc.collect()
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+        if _dist_ready():
+            dist.destroy_process_group()
+        if not args.no_fast_exit:
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os._exit(0)
+        return
+
+    if ddp_enabled:
+        model = _unwrap(model)
 
     # 전체 학습 시간
     total_train_time = time.time() - train_start_time
@@ -1981,9 +2192,14 @@ def main():
     # This bypasses slow Python/CUDA/worker finalizers that can keep the process
     # alive after "학습 완료" has already been printed.
     if not args.no_fast_exit:
+        if _dist_ready():
+            dist.destroy_process_group()
         sys.stdout.flush()
         sys.stderr.flush()
         os._exit(0)
+
+    if _dist_ready():
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":

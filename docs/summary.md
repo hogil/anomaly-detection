@@ -6,7 +6,7 @@
 | --- | --- |
 | 모델 | ConvNeXtV2-Tiny (timm, ImageNet-22k→1k pretrained) |
 | 입력 | trend chart PNG 224×224 (시계열 → 자체 렌더링) |
-| 학습 | PyTorch · AdamW · FocalLoss · EMA · 선택적 nn.DataParallel (visible GPU 자동) |
+| 학습 | PyTorch · AdamW · FocalLoss · EMA · 선택적 torchrun DDP |
 | 정밀도 | bf16 (H100/H200) / fp16 (4060 Ti) / fp32 |
 | 평가 | binary F1, FN, FP, normal_threshold sweep |
 | 추론 | 1차 binary gate → 2차 anomaly_type classifier |
@@ -19,7 +19,8 @@
 사용자 ─┐
         ▼
 [1] all-dataset-backbone-ddp.sh
-      └─ nvidia-smi 로 visible GPU 수 N 안내 (감지만, 별도 env 안 셋팅)
+      └─ torch.cuda.device_count() 로 visible GPU 수 N 확인
+      └─ N>=2 이면 AD_TRAIN_DDP_NPROC=N export
       └─ exec all-dataset-backbone.sh
         ▼
 [2] all-dataset-backbone.sh                 ◄── ① dataset yaml 7개 loop
@@ -34,21 +35,21 @@
       └─ 16_gc (last) / 17_bkm_combined / postprocess
         ▼
 [4] adaptive_experiment_controller.py       ◄── ③ run-level launch
-      └─ subprocess.Popen([python, -u, train.py, ...])
+      └─ DDP: subprocess.Popen([python, -m, torch.distributed.run, ...])
+      └─ single: subprocess.Popen([python, -u, train.py, ...])
       └─ 끝나면 best_info.json 파싱 → 다음 run
         ▼
-[5] train.py — 단일 process
+[5] train.py — single 또는 torchrun DDP
       └─ create_model → ModelEMA(model)
-      └─ if torch.cuda.device_count() > 1:
-            model = nn.DataParallel(model)        ◄ 자동 multi-GPU
+      └─ if WORLD_SIZE > 1:
+            model = DistributedDataParallel(model)
       └─ for epoch:
             ┌────────────────────────────────────────────────────┐
             │ 1 training step (batch B):                          │
-            │  · DataParallel 이 B 를 N 등분 (B/N per GPU)        │
-            │  · 각 GPU forward → 출력 GPU 0 에 gather            │
-            │  · loss + backward (gradient GPU 0 에 reduce)       │
-            │  · optimizer.step (master copy 갱신)                │
-            │  · 다음 forward 시 weight 자동 replicate            │
+            │  · 각 rank DataLoader batch = B/N                   │
+            │  · DistributedSampler 가 rank별 shard 제공          │
+            │  · backward 중 gradient all-reduce                  │
+            │  · 각 rank optimizer.step 1회                       │
             │ → single-GPU batch=B 한 step 과 의미적으로 동일     │
             └────────────────────────────────────────────────────┘
       └─ best_info.json / history.json / best_model.pth 저장

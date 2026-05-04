@@ -278,13 +278,13 @@ disown
 
 각 dataset 의 group 폴더는 `<timestamp>_run_paper_<config-stem>/` (예: `logs/20260504_120000_run_paper_dataset1_noise_15/`, `validations/20260504_120000_run_paper_dataset1_noise_15/`).
 
-### Multi-GPU (간단 data-parallel 방식)
+### Multi-GPU (torchrun DDP 방식)
 
-`scripts/all-dataset-backbone-ddp.sh` 한 줄. train.py 가 visible GPU 수가 2 이상이면 자동으로 `nn.DataParallel` 사용.
-- 단일 process 안에서 batch 가 모든 GPU 에 자동 scatter
-- gradient 는 GPU 0 에 reduce 후 optimizer step
-- 의미적으로 single-GPU 와 **완전히 동일한 update** (같은 effective batch, 같은 dynamics)
-- NCCL / torchrun / DistributedSampler 안 씀 → 환경 문제 없음
+`scripts/all-dataset-backbone-ddp.sh` 한 줄. wrapper가 visible GPU 수를 확인해서 각 queued `train.py` run을 `torch.distributed.run`으로 실행합니다.
+- `--batch_size`는 global batch로 유지
+- GPU 수가 `N`이면 rank-local micro-batch는 `batch_size / N`
+- 각 rank가 sampler로 자기 shard를 읽고, DDP all-reduce 뒤 optimizer update는 global batch 1번
+- `batch_size`가 GPU 수로 나누어떨어지지 않으면 실패시킴
 
 ```bash
 # 모든 visible GPU 사용
@@ -298,9 +298,9 @@ nohup bash scripts/all-dataset-backbone-ddp.sh > /tmp/all_dsbk_dp.log 2>&1 &
 disown
 ```
 
-`args.batch_size` 는 그대로 — DP 가 내부에서 GPU 수만큼 등분. 즉 batch_size=32 + 4 GPU = 각 GPU 가 8 samples 처리, optimizer 는 batch 32 한 step 적용. **LR/warmup 등 hparam 그대로 재사용 가능**.
+`args.batch_size` 는 그대로입니다. 예: batch_size=32 + 4 GPU = 각 rank가 8 samples 처리, optimizer는 batch 32 기준 한 step 적용. **LR/warmup 등 hparam 그대로 재사용 가능**.
 
-Trade-off: DP 는 ~3-5x speedup (DDP 의 ~7-8x 대비, GIL + master GPU bottleneck). 단순성 우선이면 적합.
+검증 명령: `python -m py_compile train.py scripts/adaptive_experiment_controller.py`, `AD_TRAIN_DDP_NPROC=2 python scripts/adaptive_experiment_controller.py --queue validations/01_baseline_queue.json --dry-run --force`.
 
 ### 주말 한 GPU 순차 실행 (7개 yaml 자동, GUI/터미널 끊어도 계속 돔)
 

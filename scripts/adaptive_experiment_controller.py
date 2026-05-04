@@ -283,7 +283,21 @@ def flatten_train_args(run: dict[str, Any]) -> list[str]:
 
 
 def build_command(run: dict[str, Any], log_dir_group: str = "") -> list[str]:
-    cmd = [sys.executable, "-u", "train.py"]
+    try:
+        ddp_nproc = int(os.environ.get("AD_TRAIN_DDP_NPROC", "1") or "1")
+    except ValueError:
+        ddp_nproc = 1
+    if ddp_nproc > 1:
+        cmd = [
+            sys.executable,
+            "-m",
+            "torch.distributed.run",
+            "--standalone",
+            f"--nproc_per_node={ddp_nproc}",
+            "train.py",
+        ]
+    else:
+        cmd = [sys.executable, "-u", "train.py"]
     cmd.extend(flatten_train_args(run))
     cmd.extend(["--seed", str(run["seed"]), "--log_dir", str(run["tag"])])
     if log_dir_group:

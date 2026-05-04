@@ -1,8 +1,9 @@
 # Core (데이터 생성 + 학습 + 추론)
+# Verified runtime: torch 2.3.1+cu121, torchvision 0.18.1+cu121, numpy 1.26.4.
 torch==2.3.1
 torchvision==0.18.1
 timm>=1.0.9
-numpy>=1.24.0,<2.0
+numpy==1.26.4
 pandas>=2.0.0
 matplotlib>=3.7.0
 Pillow>=10.0.0
@@ -13,5 +14,5 @@ seaborn>=0.13.0
 # scipy/sklearn: 더 이상 runtime dep 아님 (numpy-only로 대체됨)
 #   - train_test_split → generate_data.stratified_train_val_split
 #   - confusion_matrix → train._confusion_matrix_np
-# torch 2.3.x 환경에서는 numpy 2.x C-API 경고/오류를 피하려고 numpy<2.0 유지.
+# torch 2.3.x 환경에서는 numpy 2.x C-API 경고/오류를 피하려고 numpy 1.26.4 유지.
 # scipy/sklearn의 _spropack/_propack ABI mismatch 이슈도 runtime dep 제거로 회피.

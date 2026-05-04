@@ -1,5 +1,79 @@
 # 실험 요약
 
+## 기술 스택
+
+| 항목 | 값 |
+| --- | --- |
+| 모델 | ConvNeXtV2-Tiny (timm, ImageNet-22k→1k pretrained) |
+| 입력 | trend chart PNG 224×224 (시계열 → 자체 렌더링) |
+| 학습 | PyTorch · AdamW · FocalLoss · EMA · 선택적 DDP (DistributedSampler) |
+| 정밀도 | bf16 (H100/H200) / fp16 (4060 Ti) / fp32 |
+| 평가 | binary F1, FN, FP, normal_threshold sweep |
+| 추론 | 1차 binary gate → 2차 anomaly_type classifier |
+
+## 파이프라인 구조
+
+`bash scripts/all-dataset-backbone-ddp.sh` 한 줄로 다음이 모두 실행됩니다.
+
+```text
+사용자 ─┐
+        ▼
+[1] all-dataset-backbone-ddp.sh
+      └─ nvidia-smi 로 GPU 수 N 감지 → export DDP_NPROC_PER_NODE=N
+      └─ exec all-dataset-backbone.sh
+        ▼
+[2] all-dataset-backbone.sh                 ◄── ① dataset yaml 7개 loop
+      └─ for cfg in dataset.yaml dataset1_noise_15.yaml ... :
+            run_paper_server_all.sh --skip-round1 --skip-post  ◄ prep
+            sweeps_server/00_all.sh                            ◄ full sweep
+      └─ generate_cross_dataset_report.py (비교 표/plot)
+        ▼
+[3] sweeps_server/00_all.sh                 ◄── ② stage loop
+      └─ axis sweep (lr, warmup, normal_ratio, ...)
+      └─ 13_sample_skip / 14_backbone / 15_logical_train
+      └─ 16_gc (last) / 17_bkm_combined / postprocess
+        ▼
+[4] adaptive_experiment_controller.py       ◄── ③ run-level launch chokepoint
+      └─ build_command():
+            if DDP_NPROC_PER_NODE >= 2:
+                cmd = [torchrun, --nproc_per_node=N, train.py, ...]
+            else:
+                cmd = [python, -u, train.py, ...]
+      └─ subprocess.Popen(cmd) → 끝나면 best_info.json 파싱 → 다음 run
+        ▼  spawn N processes
+        ▼
+[5] torchrun ──┬─► train.py rank 0  (LOCAL_RANK=0)
+               ├─► train.py rank 1
+               ├─► ...
+               └─► train.py rank N-1
+                       │
+                       ▼
+              ┌────────────────────────────────────────────────┐
+              │ 각 rank 의 1 training step                      │
+              │  · DistributedSampler 가 batch 를 N등분          │
+              │    (per_rank_batch = args.batch_size / N)       │
+              │  · forward → loss → backward                    │
+              │  · DDP all-reduce ◄════════════ rank 간 gradient │
+              │    average (NCCL, peer-to-peer)                 │
+              │  · optimizer.step (모든 rank 가 동일 update)     │
+              │  · file save / print 은 rank 0 만               │
+              └────────────────────────────────────────────────┘
+                       │
+                       ▼ 종료 시 dist.barrier + destroy_process_group
+              torchrun ─► return code ─► controller 에 보고
+                       │
+                       ▼
+              best_info.json / history.json / best_model.pth
+              (rank 0 가 logs/<group>/<run>/ 에 기록)
+                       ▲
+                       │ 다음 run 으로 이어짐
+              controller 가 readback 하여 results 갱신
+```
+
+핵심: DDP 는 step 마다 **gradient 를 NCCL all-reduce 로 rank 간 평균**합니다. per-rank batch 가 `args.batch_size/N` 이므로 평균된 gradient = **single-GPU `args.batch_size` 한 step 의 gradient 와 수학적으로 동등**. LR / warmup 등 hparam 을 그대로 재사용 가능.
+
+상세 사용법은 `HOW_TO_RUN.md` 의 *한방 + DDP* 단락.
+
 ## 프로젝트 목적과 문제 설정
 
 이 repo는 시계열 데이터를 생성·렌더링한 trend chart image로 `normal`/`abnormal`을 판정하는 실험 파이프라인입니다. 운영 목표는 defect type 이름을 먼저 맞히는 것이 아니라 **불량 chart를 normal로 통과시키지 않는 pass/fail gate**입니다. 따라서 1차 문제는 `binary`이고, `multiclass`와 `anomaly_type`은 운영 판정을 대체하지 않고 원인 분석·리포트용 진단 모델로 둡니다.

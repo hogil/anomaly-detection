@@ -54,6 +54,7 @@ LOGS_DIR = ROOT / "logs"
 DEFAULT_SUMMARY = ROOT / "validations" / "adaptive_controller_summary.json"
 DEFAULT_MARKDOWN = ROOT / "validations" / "adaptive_controller_summary.md"
 DEFAULT_LIVE_SUMMARY_SCRIPT = ROOT / "scripts" / "update_live_summary_doc.py"
+DEFAULT_MODEL_NAME = "convnextv2_tiny.fcmae_ft_in22k_in1k"
 
 
 def configure_output_encoding() -> None:
@@ -257,6 +258,192 @@ def parse_metrics(run_dir: Path, run: dict[str, Any], target_min: int, target_ma
         "fp": fp,
         "target_hit": in_target,
         "completed_at": now_iso(),
+    }
+
+
+def normalize_config_key(raw: object) -> str:
+    text = str(raw or "dataset.yaml").replace("\\", "/").strip()
+    if not text:
+        return "dataset.yaml"
+    path = Path(text)
+    try:
+        resolved = path.resolve() if path.is_absolute() else (ROOT / path).resolve()
+        return resolved.relative_to(ROOT.resolve()).as_posix()
+    except Exception:
+        return text
+
+
+def read_train_config(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "train_config_used.yaml"
+    if not path.exists():
+        return {}
+    try:
+        import yaml
+
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def retention_rank(record: dict[str, Any]) -> tuple[float, int, int, float]:
+    f1 = record.get("test_f1")
+    try:
+        f1_value = float(f1)
+    except (TypeError, ValueError):
+        f1_value = float("-inf")
+    fn = record.get("fn")
+    fp = record.get("fp")
+    fn_value = int(fn) if fn is not None else 1_000_000_000
+    fp_value = int(fp) if fp is not None else 1_000_000_000
+    return (f1_value, -fn_value, -fp_value, float(record.get("mtime", 0.0)))
+
+
+def retention_record_from_dir(run_dir: Path) -> dict[str, Any] | None:
+    best_info = read_json(run_dir / "best_info.json")
+    if not isinstance(best_info, dict):
+        return None
+
+    event = last_metric_event(run_dir, best_info)
+    fn, fp = fallback_counts(best_info, event)
+    f1 = event.get("test_f1", best_info.get("test_f1"))
+    train_cfg = read_train_config(run_dir)
+    config_key = normalize_config_key(train_cfg.get("config"))
+    model_name = str(train_cfg.get("model_name") or DEFAULT_MODEL_NAME)
+    try:
+        rel_dir = run_dir.resolve().relative_to(ROOT.resolve()).as_posix()
+    except Exception:
+        rel_dir = str(run_dir)
+    return {
+        "run_dir": run_dir,
+        "run_dir_key": rel_dir,
+        "checkpoint": run_dir / "best_model.pth",
+        "dataset_config": config_key,
+        "model_name": model_name,
+        "group_key": f"{config_key}|{model_name}",
+        "test_f1": float(f1) if f1 is not None else None,
+        "fn": fn,
+        "fp": fp,
+        "mtime": run_dir.stat().st_mtime,
+    }
+
+
+def iter_retention_run_dirs(summary: dict[str, Any], scope: str, log_dir_group: str) -> list[Path]:
+    if scope == "summary":
+        dirs = []
+        for row in summary.get("runs", {}).values():
+            if row.get("status") != "complete" or not row.get("run_dir"):
+                continue
+            dirs.append(ROOT / str(row["run_dir"]))
+        return dirs
+
+    if scope == "log-group" and log_dir_group:
+        roots = [LOGS_DIR / log_dir_group]
+    else:
+        roots = [LOGS_DIR]
+
+    dirs: list[Path] = []
+    for root in roots:
+        if not root.exists():
+            continue
+        dirs.extend(path.parent for path in root.rglob("best_info.json"))
+    return dirs
+
+
+def apply_checkpoint_retention(
+    summary: dict[str, Any],
+    policy: str,
+    scope: str,
+    log_dir_group: str,
+) -> None:
+    if policy == "all":
+        summary["checkpoint_retention"] = {
+            "policy": policy,
+            "scope": scope,
+            "updated_at": now_iso(),
+            "deleted_count": 0,
+        }
+        return
+
+    records = []
+    seen_dirs: set[str] = set()
+    for run_dir in iter_retention_run_dirs(summary, scope, log_dir_group):
+        try:
+            key = run_dir.resolve().as_posix()
+        except Exception:
+            key = str(run_dir)
+        if key in seen_dirs:
+            continue
+        seen_dirs.add(key)
+        record = retention_record_from_dir(run_dir)
+        if record is not None:
+            records.append(record)
+
+    if not records:
+        summary["checkpoint_retention"] = {
+            "policy": policy,
+            "scope": scope,
+            "updated_at": now_iso(),
+            "deleted_count": 0,
+            "kept": [],
+        }
+        return
+
+    keep_dirs: set[Path] = set()
+    global_best = max(records, key=retention_rank)
+    keep_dirs.add(global_best["run_dir"].resolve())
+
+    by_group: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        by_group.setdefault(str(record["group_key"]), []).append(record)
+    group_best: dict[str, dict[str, Any]] = {}
+    for group, items in by_group.items():
+        winner = max(items, key=retention_rank)
+        group_best[group] = winner
+        keep_dirs.add(winner["run_dir"].resolve())
+
+    deleted: list[str] = []
+    kept: list[str] = []
+    for record in records:
+        run_dir = record["run_dir"].resolve()
+        checkpoint = record["checkpoint"]
+        if run_dir in keep_dirs:
+            if checkpoint.exists():
+                kept.append(record["run_dir_key"])
+            continue
+        if checkpoint.exists():
+            try:
+                checkpoint.unlink()
+            except OSError as exc:
+                print(f"[checkpoint] delete failed: {checkpoint} ({exc})", flush=True)
+                continue
+            deleted.append(record["run_dir_key"])
+            print(f"[checkpoint] deleted non-best checkpoint: {record['run_dir_key']}/best_model.pth", flush=True)
+
+    record_by_dir = {record["run_dir_key"]: record for record in records}
+    kept_set = set(kept)
+    deleted_set = set(deleted)
+    for row in summary.get("runs", {}).values():
+        run_dir_key = str(row.get("run_dir", "")).replace("\\", "/")
+        record = record_by_dir.get(run_dir_key)
+        if record is None:
+            continue
+        row["checkpoint_group"] = {
+            "dataset_config": record["dataset_config"],
+            "model_name": record["model_name"],
+        }
+        row["checkpoint_retained"] = run_dir_key in kept_set
+        row["checkpoint_deleted"] = run_dir_key in deleted_set
+
+    summary["checkpoint_retention"] = {
+        "policy": policy,
+        "scope": scope,
+        "updated_at": now_iso(),
+        "global_best": global_best["run_dir_key"],
+        "group_best": {group: record["run_dir_key"] for group, record in sorted(group_best.items())},
+        "kept": sorted(kept),
+        "deleted_count": len(deleted),
+        "deleted": sorted(deleted),
     }
 
 
@@ -480,6 +667,7 @@ def write_markdown(path: Path, summary: dict[str, Any]) -> None:
         f"- Decision: `{summary.get('decision')}`",
         f"- Target FN/FP: `{summary.get('target', {}).get('min')}` to `{summary.get('target', {}).get('max')}` per seed",
         f"- Stop mode: `{summary.get('stop_mode')}`",
+        f"- Checkpoint retention: `{summary.get('checkpoint_retention', {}).get('policy', 'all')}` / `{summary.get('checkpoint_retention', {}).get('scope', 'summary')}`",
         "",
         "## Candidates",
         "",
@@ -574,6 +762,21 @@ def main() -> int:
         default="",
         help="Group all train.py runs under logs/<group>/ instead of logs/. Forwarded to train.py via --log_dir_group.",
     )
+    parser.add_argument(
+        "--checkpoint-retention",
+        choices=["all", "dataset-backbone-best"],
+        default="all",
+        help=(
+            "Checkpoint cleanup policy. dataset-backbone-best keeps best_model.pth "
+            "only for the global best run and for each dataset config + backbone group winner."
+        ),
+    )
+    parser.add_argument(
+        "--checkpoint-retention-scope",
+        choices=["summary", "log-group", "logs"],
+        default="summary",
+        help="Scope used when selecting checkpoints to keep.",
+    )
     args = parser.parse_args()
 
     runs = load_queue(args.queue)
@@ -614,6 +817,9 @@ def main() -> int:
                 "target_hit": False,
             }
             update_aggregates(summary)
+            apply_checkpoint_retention(
+                summary, args.checkpoint_retention, args.checkpoint_retention_scope, args.log_dir_group
+            )
             summary["decision"] = "continue"
             save_json(args.summary, summary)
             write_markdown(args.markdown, summary)
@@ -649,6 +855,9 @@ def main() -> int:
                     summary["runs"][run["tag"]]["exit_code"] = code
                     summary["runs"][run["tag"]]["recovered_from_nonzero_exit"] = True
                     update_aggregates(summary)
+                    apply_checkpoint_retention(
+                        summary, args.checkpoint_retention, args.checkpoint_retention_scope, args.log_dir_group
+                    )
                     summary["decision"] = "continue"
                     save_json(args.summary, summary)
                     write_markdown(args.markdown, summary)
@@ -676,6 +885,9 @@ def main() -> int:
 
         summary["runs"][run["tag"]] = parse_metrics(existing, run, args.target_min, args.target_max)
         update_aggregates(summary)
+        apply_checkpoint_retention(
+            summary, args.checkpoint_retention, args.checkpoint_retention_scope, args.log_dir_group
+        )
         summary["decision"] = "continue"
         save_json(args.summary, summary)
         write_markdown(args.markdown, summary)
@@ -686,6 +898,9 @@ def main() -> int:
     if summary.get("decision") in ("not_started", "continue"):
         summary["decision"] = "queue_exhausted"
     update_aggregates(summary)
+    apply_checkpoint_retention(
+        summary, args.checkpoint_retention, args.checkpoint_retention_scope, args.log_dir_group
+    )
     save_json(args.summary, summary)
     write_markdown(args.markdown, summary)
     update_live_summary_doc(args.update_live_summary)

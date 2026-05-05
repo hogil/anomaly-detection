@@ -39,6 +39,8 @@ ROUND1_SKIP_COMPLETED=1
 DEFAULT_ROUND1_AXES="normal_ratio,per_class,lr,warmup,label_smoothing,stochastic_depth,focal_gamma,abnormal_weight,ema,allow_tie_save,color,gc"
 ROUND1_INCLUDE_AXES="$DEFAULT_ROUND1_AXES"
 LOG_DIR_GROUP="${LOG_DIR_GROUP:-}"
+CHECKPOINT_RETENTION="${CHECKPOINT_RETENTION:-dataset-backbone-best}"
+CHECKPOINT_RETENTION_SCOPE="${CHECKPOINT_RETENTION_SCOPE:-logs}"
 
 usage() {
   cat <<'EOF'
@@ -63,6 +65,8 @@ Options:
   --round1-start-after-candidate STR
   --skip-weights / --skip-dataset / --skip-refcheck / --skip-round1 / --skip-post
   --log-dir-group NAME   group all train.py runs under logs/<NAME>/ (default: run_<timestamp>)
+  --checkpoint-retention MODE      all | dataset-backbone-best (default: dataset-backbone-best)
+  --checkpoint-retention-scope S   summary | log-group | logs (default: logs)
   -h, --help             show this help
 EOF
 }
@@ -91,6 +95,8 @@ while [[ $# -gt 0 ]]; do
     --skip-round2) SKIP_ROUND2=1; shift ;;
     --skip-post) SKIP_POST=1; shift ;;
     --log-dir-group) LOG_DIR_GROUP="$2"; shift 2 ;;
+    --checkpoint-retention) CHECKPOINT_RETENTION="$2"; shift 2 ;;
+    --checkpoint-retention-scope) CHECKPOINT_RETENTION_SCOPE="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
   esac
@@ -151,6 +157,8 @@ run_controller() {
     --target-min 5 --target-max 15 --stop-mode never
     --candidate-min-runs-before-skip 0 --completion-exit-grace 15
     --update-live-summary
+    --checkpoint-retention "$CHECKPOINT_RETENTION"
+    --checkpoint-retention-scope "$CHECKPOINT_RETENTION_SCOPE"
   )
   [[ "$FORCE" -eq 1 ]] && args+=(--force)
   [[ "$MAX_LAUNCHED" -gt 0 ]] && args+=(--max-launched "$MAX_LAUNCHED")
@@ -182,7 +190,7 @@ main() {
   DISPLAY_DIR="$(config_path output.display_dir)"
   echo "dataset=$DATA_DIR images=$IMAGE_DIR display=$DISPLAY_DIR"
 
-  if [[ "$SKIP_WEIGHTS" -eq 0 && ! -f weights/convnextv2_tiny.fcmae_ft_in22k_in1k.pth ]]; then
+  if [[ "$SKIP_WEIGHTS" -eq 0 ]]; then
     run_cmd "$PYTHON" download.py
   fi
 

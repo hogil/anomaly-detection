@@ -24,6 +24,8 @@ NUM_WORKERS="${NUM_WORKERS:-$PROFILE_NUM_WORKERS}"
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-$PROFILE_PREFETCH}"
 MAX_LAUNCHED="${MAX_LAUNCHED:-$PROFILE_MAX_LAUNCHED}"
 LOG_DIR_GROUP="${LOG_DIR_GROUP:-$(date +%Y%m%d_%H%M%S)_bkm_combined}"
+CHECKPOINT_RETENTION="${CHECKPOINT_RETENTION:-dataset-backbone-best}"
+CHECKPOINT_RETENTION_SCOPE="${CHECKPOINT_RETENTION_SCOPE:-logs}"
 SEEDS="${SEEDS:-42,1,2,3,4}"
 FORCE=0
 
@@ -44,6 +46,8 @@ Options:
   --force              re-run completed tags
   --max-launched N     stop controller after launching N runs
   --log-dir-group NAME group runs under logs/<NAME>/
+  --checkpoint-retention MODE      all | dataset-backbone-best (default: dataset-backbone-best)
+  --checkpoint-retention-scope S   summary | log-group | logs (default: logs)
   -h, --help           show this help
 EOF
 }
@@ -58,6 +62,8 @@ while [[ $# -gt 0 ]]; do
     --force) FORCE=1; shift ;;
     --max-launched) MAX_LAUNCHED="$2"; shift 2 ;;
     --log-dir-group) LOG_DIR_GROUP="$2"; shift 2 ;;
+    --checkpoint-retention) CHECKPOINT_RETENTION="$2"; shift 2 ;;
+    --checkpoint-retention-scope) CHECKPOINT_RETENTION_SCOPE="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
   esac
@@ -149,6 +155,8 @@ cmd=(
   --candidate-min-runs-before-skip 0
   --completion-exit-grace 15
   --update-live-summary
+  --checkpoint-retention "$CHECKPOINT_RETENTION"
+  --checkpoint-retention-scope "$CHECKPOINT_RETENTION_SCOPE"
 )
 [[ "$FORCE" -eq 1 ]] && cmd+=(--force)
 [[ "$MAX_LAUNCHED" -gt 0 ]] && cmd+=(--max-launched "$MAX_LAUNCHED")

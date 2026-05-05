@@ -14,6 +14,8 @@ NUM_WORKERS="${NUM_WORKERS:-$PROFILE_NUM_WORKERS}"
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-$PROFILE_PREFETCH}"
 LOGICAL_SEEDS="${LOGICAL_SEEDS:-42}"
 LOG_DIR_GROUP="${LOG_DIR_GROUP:-$(date +%Y%m%d_%H%M%S)_logical_train}"
+CHECKPOINT_RETENTION="${CHECKPOINT_RETENTION:-dataset-backbone-best}"
+CHECKPOINT_RETENTION_SCOPE="${CHECKPOINT_RETENTION_SCOPE:-logs}"
 FORCE=0
 MAX_LAUNCHED="${MAX_LAUNCHED:-$PROFILE_MAX_LAUNCHED}"
 
@@ -32,6 +34,9 @@ Options:
   --seeds CSV          Logical train seeds (default: 42)
   --force              Re-run completed tag and regenerate logical artifacts
   --max-launched N     Stop controller after launching N new runs
+  --log-dir-group NAME Group runs under logs/<NAME>/
+  --checkpoint-retention MODE      all | dataset-backbone-best (default: dataset-backbone-best)
+  --checkpoint-retention-scope S   summary | log-group | logs (default: logs)
   -h, --help           Show this help
 EOF
 }
@@ -48,6 +53,8 @@ while [[ $# -gt 0 ]]; do
     --force) FORCE=1; shift ;;
     --max-launched) MAX_LAUNCHED="$2"; shift 2 ;;
     --log-dir-group) LOG_DIR_GROUP="$2"; shift 2 ;;
+    --checkpoint-retention) CHECKPOINT_RETENTION="$2"; shift 2 ;;
+    --checkpoint-retention-scope) CHECKPOINT_RETENTION_SCOPE="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
   esac
@@ -188,6 +195,8 @@ cmd=(
   --candidate-min-runs-before-skip 0
   --completion-exit-grace 15
   --update-live-summary
+  --checkpoint-retention "$CHECKPOINT_RETENTION"
+  --checkpoint-retention-scope "$CHECKPOINT_RETENTION_SCOPE"
 )
 if [[ "$FORCE" -eq 1 ]]; then
   cmd+=(--force)

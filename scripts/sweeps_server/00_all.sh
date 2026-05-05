@@ -54,7 +54,7 @@ idx=0
 while [[ "$idx" -lt "${#ALL_ARGS[@]}" ]]; do
   arg="${ALL_ARGS[$idx]}"
   case "$arg" in
-    --python|--config|--num-workers|--prefetch-factor|--max-launched|--log-dir-group)
+    --python|--config|--num-workers|--prefetch-factor|--max-launched|--log-dir-group|--checkpoint-retention|--checkpoint-retention-scope)
       if [[ "$((idx + 1))" -ge "${#ALL_ARGS[@]}" ]]; then
         echo "Missing value for $arg" >&2
         exit 2

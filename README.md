@@ -46,4 +46,6 @@
 - `scripts/generate_cross_dataset_report.py`: per-dataset baseline/BKM/backbone comparison table and bar plots
 - `docs/summary.md`: current experiment summary
 
-Generated folders such as `data/`, `images/`, `display/`, `logs/`, `weights/`, and `validations/` are gitignored.
+Generated folders such as `data/`, `images/`, `display/`, `logs/`, `weights/`, and `validations/<group>/` are gitignored. Root queue templates under `validations/*.json` that server sweeps require are tracked.
+
+Server sweep wrappers keep checkpoint storage bounded by default: after each controlled run, `best_model.pth` is retained only for the global best run and the best run for each dataset-config + backbone pair. Metrics, summaries, plots, and `best_info.json` remain for every run.

@@ -126,7 +126,10 @@ data_*/
 data_per_member_*/
 preview/
 experiments/
-validations/
+validations/*
+!validations/01_baseline_queue.json
+!validations/02_sweep_queue.json
+!validations/03_sample_skip_queue.json
 weak_anomaly_samples/
 configs/runs/
 experiment_summary/

@@ -11,6 +11,10 @@
 #
 # Default datasets: dataset.yaml + 6 variants (matches HOW_TO_RUN weekend).
 # Override with --datasets dataset.yaml,dataset1_noise_15.yaml,...
+#
+# Closed-network: this wrapper passes --skip-weights to run_paper_server_all.sh
+# so download.py (HuggingFace) is never invoked. weights/*.pth must already be
+# present (copy from an internet-connected machine if needed).
 set -euo pipefail
 
 D="$(cd "$(dirname "$0")" && pwd)"
@@ -122,11 +126,12 @@ for cfg in "${RESOLVED[@]}"; do
   echo "============================================================"
 
   if [[ "$SKIP_PREP" -eq 0 ]]; then
-    echo "[step 1/2] prep (weights + data + baseline)"
+    echo "[step 1/2] prep (data + baseline; --skip-weights enforced for closed-network)"
     bash scripts/run_paper_server_all.sh \
       --config "$cfg" \
       --python "$PYTHON" \
       --log-dir-group "$group" \
+      --skip-weights \
       --skip-round1 \
       --skip-post
   else

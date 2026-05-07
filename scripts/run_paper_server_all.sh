@@ -39,8 +39,8 @@ ROUND1_SKIP_COMPLETED=1
 DEFAULT_ROUND1_AXES="normal_ratio,per_class,lr,warmup,label_smoothing,stochastic_depth,focal_gamma,abnormal_weight,ema,allow_tie_save,color,gc"
 ROUND1_INCLUDE_AXES="$DEFAULT_ROUND1_AXES"
 LOG_DIR_GROUP="${LOG_DIR_GROUP:-}"
-CHECKPOINT_RETENTION="${CHECKPOINT_RETENTION:-dataset-backbone-best}"
-CHECKPOINT_RETENTION_SCOPE="${CHECKPOINT_RETENTION_SCOPE:-logs}"
+CHECKPOINT_RETENTION="${CHECKPOINT_RETENTION:-all}"
+CHECKPOINT_RETENTION_SCOPE="${CHECKPOINT_RETENTION_SCOPE:-summary}"
 
 usage() {
   cat <<'EOF'
@@ -65,8 +65,8 @@ Options:
   --round1-start-after-candidate STR
   --skip-weights / --skip-dataset / --skip-refcheck / --skip-round1 / --skip-post
   --log-dir-group NAME   group all train.py runs under logs/<NAME>/ (default: run_<timestamp>)
-  --checkpoint-retention MODE      all | dataset-backbone-best (default: dataset-backbone-best)
-  --checkpoint-retention-scope S   summary | log-group | logs (default: logs)
+  --checkpoint-retention MODE      all | dataset-backbone-best (default: all — never delete)
+  --checkpoint-retention-scope S   summary | log-group | logs (default: summary — minimal scan)
   -h, --help             show this help
 EOF
 }

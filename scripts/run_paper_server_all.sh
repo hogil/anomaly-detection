@@ -13,6 +13,10 @@
 #   run.log                      combined stdout
 set -euo pipefail
 
+# Force Python utf-8 output so Korean prints render on Windows cp949 consoles.
+export PYTHONUTF8=1
+export PYTHONIOENCODING=utf-8
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 source "$ROOT_DIR/scripts/sweeps_server/_common.sh"

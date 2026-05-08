@@ -7,6 +7,10 @@
 # global batch and uses global_batch/world_size as the rank-local micro-batch.
 set -euo pipefail
 
+# Force Python utf-8 output so Korean prints render on Windows cp949 consoles.
+export PYTHONUTF8=1
+export PYTHONIOENCODING=utf-8
+
 D="$(cd "$(dirname "$0")" && pwd)"
 
 PYTHON="${PYTHON:-python}"

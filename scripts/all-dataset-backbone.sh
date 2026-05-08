@@ -17,6 +17,11 @@
 # present (copy from an internet-connected machine if needed).
 set -euo pipefail
 
+# Force Python utf-8 output so Korean prints render on Windows cp949 consoles
+# without users having to set env vars themselves.
+export PYTHONUTF8=1
+export PYTHONIOENCODING=utf-8
+
 D="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$D/.." && pwd)"
 cd "$REPO_ROOT"

@@ -17,6 +17,10 @@
 
 set -uo pipefail
 
+# Force Python utf-8 output so Korean prints render on Windows cp949 consoles.
+export PYTHONUTF8=1
+export PYTHONIOENCODING=utf-8
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 

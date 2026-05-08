@@ -8,11 +8,14 @@ pandas>=2.0.0
 matplotlib>=3.7.0
 Pillow>=10.0.0
 tqdm>=4.65.0
-pyyaml>=6.0
+pyyaml>=6.0          # imported as `yaml`
 seaborn>=0.13.0
 
-# scipy/sklearn: 더 이상 runtime dep 아님 (numpy-only로 대체됨)
-#   - train_test_split → generate_data.stratified_train_val_split
-#   - confusion_matrix → train._confusion_matrix_np
-# torch 2.3.x 환경에서는 numpy 2.x C-API 경고/오류를 피하려고 numpy 1.26.4 유지.
-# scipy/sklearn의 _spropack/_propack ABI mismatch 이슈도 runtime dep 제거로 회피.
+# Optional analysis (scripts/analyze_hunting_intervention.py uses scipy.stats).
+# Cap <1.13 to avoid the _spropack/_propack ABI breakage seen on Ubuntu 24 numpy 2.x.
+scipy>=1.10,<1.13
+
+# Notes:
+# - sklearn no longer a runtime dep (numpy-only replacements in train.py/generate_data.py).
+# - numpy pinned to 1.26.4 for torch 2.3.x C-API compat.
+# - Install everything: `pip install -r requirements.txt` (forgetting one line breaks imports).

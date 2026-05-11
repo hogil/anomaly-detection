@@ -9,7 +9,7 @@ Output: inference_output/
 
 Usage:
   python inference.py --model logs/v8seed_n2800_s42/best_model.pth --limit 20
-  python inference.py --model logs/v8seed_n1400_s42/best_model.pth --output_dir infer_v8seed
+  python inference.py --model logs/v8seed_n1400_s42 --output_dir infer_v8seed
 
 파일명: {device}_{step}_{item}_{yymmddhh24}.png
   - yymmddhh24는 데이터의 x_col에서 추출 (datetime이면 포맷, numeric이면 chart_id 기반)
@@ -37,9 +37,19 @@ from src.data.schema import members as read_members
 from src.data.schema import target as read_target
 
 
-def _build_model(model_name: str, num_classes: int, dropout: float, device):
+def _build_model(
+    model_name: str,
+    num_classes: int,
+    dropout: float,
+    device,
+    stochastic_depth_rate: float = 0.0,
+):
     """train.py의 create_model과 동일한 구조 (pretrained=False, head만 교체)"""
-    model = timm.create_model(model_name, pretrained=False)
+    model = timm.create_model(
+        model_name,
+        pretrained=False,
+        drop_path_rate=stochastic_depth_rate,
+    )
 
     if hasattr(model, 'head') and hasattr(model.head, 'fc'):
         in_features = model.head.fc.in_features
@@ -72,6 +82,9 @@ def _build_model(model_name: str, num_classes: int, dropout: float, device):
 
 def _load_model_from_best_info(log_dir: Path, device):
     """best_info.json 읽어 hparams 추출 → 모델 생성 → best_model.pth 로드"""
+    log_dir = Path(log_dir)
+    if log_dir.is_file():
+        log_dir = log_dir.parent
     info_path = log_dir / "best_info.json"
     if not info_path.exists():
         raise FileNotFoundError(f"best_info.json not found: {info_path}")
@@ -79,12 +92,26 @@ def _load_model_from_best_info(log_dir: Path, device):
     with open(info_path, encoding="utf-8") as f:
         bi = json.load(f)
     hp = bi["hparams"]
-    model_name = hp.get("pretrained", "convnextv2_tiny.fcmae_ft_in22k_in1k")
-    num_classes = hp.get("num_classes", 2)
-    # dropout은 best_info에 없을 수 있음 (v8_init는 0.0)
-    dropout = 0.0
 
-    model = _build_model(model_name, num_classes, dropout, device)
+    train_cfg = {}
+    train_cfg_path = log_dir / "train_config_used.yaml"
+    if train_cfg_path.exists():
+        with open(train_cfg_path, encoding="utf-8") as f:
+            train_cfg = yaml.safe_load(f) or {}
+
+    model_name = (
+        train_cfg.get("model_name")
+        or hp.get("model_name")
+        or hp.get("pretrained")
+        or "convnextv2_tiny.fcmae_ft_in22k_in1k"
+    )
+    num_classes = hp.get("num_classes", 2)
+    dropout = float(train_cfg.get("dropout", hp.get("dropout", 0.0)))
+    stochastic_depth_rate = float(
+        train_cfg.get("stochastic_depth_rate", hp.get("stochastic_depth_rate", 0.0))
+    )
+
+    model = _build_model(model_name, num_classes, dropout, device, stochastic_depth_rate)
     weights = torch.load(log_dir / "best_model.pth", map_location=device, weights_only=True)
     model.load_state_dict(weights)
     model.eval()
@@ -352,7 +379,7 @@ def run_inference(
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True,
-                        help="학습 log 디렉토리 (e.g., logs/v8seed_n2800_s42)")
+                        help="학습 log 디렉토리 또는 direct best_model.pth 경로")
     parser.add_argument("--data_dir", default="data",
                         help="timeseries.csv + scenarios.csv 가 있는 폴더")
     parser.add_argument("--output_dir", default="inference_output",

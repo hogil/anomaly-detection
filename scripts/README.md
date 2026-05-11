@@ -204,10 +204,31 @@ python scripts/generate_inference_images.py \
   --scenarios  fab_export/scenarios.csv \
   --out-dir    inference_inputs
 # 결과: inference_inputs/{model_inputs/, display/, manifest.csv}
+```
 
-# 그 다음 inference.py 로 분류
-python inference.py --model logs/<run>/best_model.pth \
-  --data_dir inference_inputs --output_dir fab_results
+### `generate_field_images.py`
+현업 `timeseries.csv`를 predict용 이미지로 렌더링. `chart_id`가 없으면 `device,step,item`으로 만들고, `legend_axis`는 `eqp_id/chamber/recipe` 등을 자동 감지합니다. `--label-col`을 주면 값을 합성하지 않고 이미지만 `dev_model_inputs/{normal,abnormal}/`로 라우팅합니다.
+
+```bash
+python scripts/generate_field_images.py \
+  --timeseries fab_export/timeseries.csv \
+  --out-dir fab_images
+
+# 양호/불량 컬럼이 있는 개발용 현업 데이터
+python scripts/generate_field_images.py \
+  --timeseries fab_export/timeseries_labeled.csv \
+  --label-col 판정 \
+  --out-dir fab_dev_images
+```
+
+### `predict_images.py`
+이미 렌더링된 이미지 폴더 또는 `manifest.csv`를 특정 `best_model.pth`로 바로 분류합니다. `--model`은 run 폴더 또는 direct `best_model.pth` 경로 둘 다 허용합니다.
+
+```bash
+python scripts/predict_images.py \
+  --model logs/<run>/best_model.pth \
+  --manifest fab_images/manifest.csv \
+  --output-dir fab_predictions
 ```
 
 ### `server_batch_predict.py` + `run_server_batch_predict.sh`

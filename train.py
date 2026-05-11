@@ -1216,8 +1216,9 @@ def main():
 
     # 하이퍼파라미터
     hparams = {
-        "model": "ConvNeXtV2-Tiny",
-        "pretrained": "convnextv2_tiny.fcmae_ft_in22k_in1k",
+        "model": args.model_name,
+        "model_name": args.model_name,
+        "pretrained": args.model_name,
         "epochs": args.epochs,
         "batch_size": args.batch_size,
         "lr_backbone": args.lr_backbone,

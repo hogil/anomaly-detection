@@ -12,9 +12,9 @@
 # Default datasets: dataset.yaml + 6 variants (matches HOW_TO_RUN weekend).
 # Override with --datasets dataset.yaml,dataset1_noise_15.yaml,...
 #
-# Closed-network: this wrapper passes --skip-weights to run_paper_server_all.sh
-# so download.py (HuggingFace) is never invoked. weights/*.pth must already be
-# present (copy from an internet-connected machine if needed).
+# By default this wrapper lets run_paper_server_all.sh run download.py so
+# weights/{model_name}.pth exists before training. Use --skip-weights only when
+# weights/*.pth was already copied into place on a closed-network machine.
 set -euo pipefail
 
 # Force Python utf-8 output so Korean prints render on Windows cp949 consoles
@@ -33,6 +33,7 @@ SKIP_FULL=0
 SKIP_REPORT=0
 RESET_DATA=0
 PREP_DATA_ONLY=0
+SKIP_WEIGHTS=0
 PASS_ARGS=()
 
 DEFAULT_DATASETS=(
@@ -64,6 +65,7 @@ Options:
   --skip-report          Skip cross-dataset report at the end
   --reset-data           Delete the config's data/image/display outputs before prep
   --prep-data-only       Prep only data/images/validation; skip baseline refcheck
+  --skip-weights         Do not run download.py during prep; require weights/*.pth already present
   -h, --help             Show this help
 
 Anything after `--` is forwarded verbatim to 00_all.sh, e.g.:
@@ -84,6 +86,7 @@ while [[ $# -gt 0 ]]; do
     --skip-report) SKIP_REPORT=1; shift ;;
     --reset-data) RESET_DATA=1; shift ;;
     --prep-data-only) PREP_DATA_ONLY=1; shift ;;
+    --skip-weights) SKIP_WEIGHTS=1; shift ;;
     --) shift; PASS_ARGS=("$@"); break ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
@@ -116,7 +119,7 @@ fi
 WRAPPER_TS="$(date +%Y%m%d_%H%M%S)"
 echo "== all-dataset-backbone start: $(date -Is) =="
 echo "datasets: ${RESOLVED[*]}"
-echo "skip_prep=$SKIP_PREP skip_full=$SKIP_FULL skip_report=$SKIP_REPORT reset_data=$RESET_DATA prep_data_only=$PREP_DATA_ONLY"
+echo "skip_prep=$SKIP_PREP skip_full=$SKIP_FULL skip_report=$SKIP_REPORT reset_data=$RESET_DATA prep_data_only=$PREP_DATA_ONLY skip_weights=$SKIP_WEIGHTS"
 
 GROUP_NAMES=()
 GROUP_CONFIGS=()
@@ -165,16 +168,18 @@ for key in ("data_dir", "image_dir", "display_dir"):
 PY
     fi
 
-    echo "[step 1/2] prep (data + baseline; --skip-weights enforced for closed-network)"
+    echo "[step 1/2] prep (weights + data + baseline)"
     PREP_EXTRA=()
     if [[ "$PREP_DATA_ONLY" -eq 1 ]]; then
       PREP_EXTRA+=(--skip-refcheck)
+    fi
+    if [[ "$SKIP_WEIGHTS" -eq 1 ]]; then
+      PREP_EXTRA+=(--skip-weights)
     fi
     bash scripts/run_paper_server_all.sh \
       --config "$cfg" \
       --python "$PYTHON" \
       --log-dir-group "$group" \
-      --skip-weights \
       --skip-round1 \
       --skip-post \
       "${PREP_EXTRA[@]}"

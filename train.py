@@ -384,7 +384,7 @@ def create_model(
         pretrained=False,
         drop_path_rate=stochastic_depth_rate,
     )
-    state_dict = torch.load(weights_path, map_location="cpu", weights_only=True)
+    state_dict = torch.load(weights_path, map_location="cpu")
     model.load_state_dict(state_dict)
     print(f"  가중치 로드: {weights_path}")
 

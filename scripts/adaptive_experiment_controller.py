@@ -169,9 +169,23 @@ def run_dir_matches_tag(path: Path, tag: str) -> bool:
     return condition == tag or condition.startswith(f"{tag}_F")
 
 
-def find_completed_run_dir(tag: str) -> Path | None:
+def find_completed_run_dir(tag: str, log_dir_group: str = "") -> Path | None:
+    if log_dir_group:
+        root = LOGS_DIR / log_dir_group
+        if not root.exists():
+            return None
+        matches = [
+            path
+            for path in root.glob(f"*_{tag}*")
+            if path.is_dir() and (path / "best_info.json").exists() and run_dir_matches_tag(path, tag)
+        ]
+        direct = root / tag
+        if direct.is_dir() and (direct / "best_info.json").exists():
+            matches.append(direct)
+        return max(matches, key=lambda path: path.stat().st_mtime) if matches else None
+
     # Search both logs/ and logs/<group>/ subdirectories so older flat runs and
-    # new grouped runs are both visible.
+    # new grouped runs are both visible when no explicit group was requested.
     matches: list[Path] = []
     for pattern in (f"*_{tag}*", f"*/*_{tag}*"):
         matches.extend(
@@ -826,7 +840,7 @@ def main() -> int:
             update_live_summary_doc(args.update_live_summary)
             continue
 
-        existing = None if args.force else find_completed_run_dir(run["tag"])
+        existing = None if args.force else find_completed_run_dir(run["tag"], args.log_dir_group)
         launched_this_run = False
         if existing is None:
             code = launch_run(run, args.dry_run, args.completion_exit_grace, log_dir_group=args.log_dir_group)
@@ -844,7 +858,7 @@ def main() -> int:
                 }
                 continue
             if code != 0:
-                existing = find_completed_run_dir(run["tag"])
+                existing = find_completed_run_dir(run["tag"], args.log_dir_group)
                 if existing is not None:
                     print(
                         f"[controller] train.py exited with code {code}, "
@@ -879,7 +893,7 @@ def main() -> int:
                 write_markdown(args.markdown, summary)
                 update_live_summary_doc(args.update_live_summary)
                 return code
-            existing = find_completed_run_dir(run["tag"])
+            existing = find_completed_run_dir(run["tag"], args.log_dir_group)
             if existing is None:
                 raise RuntimeError(f"train.py finished but no best_info.json was found for tag {run['tag']}")
 

@@ -118,6 +118,31 @@ Type별 1차 error: `normal FP 4/750`, `standard_deviation FN 1/150`, 나머지 
 - baseline은 `fresh0412_v11_refcheck_raw_n700` (raw smoothing, `grad_clip=0`, `label_smoothing=0`, `NT=0.9`).
 - 실행: `bash scripts/sweeps_server/00_all.sh` 한 줄. GPU 메모리·CPU 수로 `server`/`pc`/`minimal` 프로필을 자동 선택합니다.
 
+## Run Reliability Incident Log
+
+Updated on 2026-05-12:
+
+- Pretrained backbone load rule: `download.py` saves `timm.create_model(model_name, pretrained=True).state_dict()` to `weights/{model_name}.pth`. `train.py::create_model` must load the same file with `torch.load(weights_path, map_location="cpu")` and pass that object directly to `model.load_state_dict(state_dict)`. Do not pass misspelled or version-sensitive `weights_only` kwargs here. Changed file: `train.py`. Verification command used:
+
+```powershell
+@'
+import torch, timm
+from pathlib import Path
+name = "convnextv2_tiny.fcmae_ft_in22k_in1k"
+path = Path("weights") / f"{name}.pth"
+model = timm.create_model(name, pretrained=False)
+state = torch.load(path, map_location="cpu")
+print(model.load_state_dict(state))
+'@ | python -
+```
+
+Result: `missing=[]`, `unexpected=[]` for `weights/convnextv2_tiny.fcmae_ft_in22k_in1k.pth`.
+
+- Inference checkpoint load should also treat `best_model.pth` as a plain state_dict. Changed file: `inference.py`, replacing `torch.load(..., weights_only=True)` with `torch.load(..., map_location=device)`.
+- `scripts/all-dataset-backbone.sh` previously forced `--skip-weights` during prep, so `download.py` was skipped even when weights were missing. That made prep look like it progressed until training failed at weight load. Default behavior is now weights + data + baseline prep; `--skip-weights` is explicit and only for closed-network machines where `weights/*.pth` already exists.
+- `scripts/adaptive_experiment_controller.py` previously searched all of `logs/` for a completed tag even when a fresh `--log_dir_group` was supplied. A new run could therefore reuse an old same-tag run from another group and end early. Completed-run lookup is now scoped to `logs/<log_dir_group>/` when the group is provided.
+- Log grouping convention remains `logs/<YYYYMMDD_HHMMSS>_run_paper_<config-stem>/...` for batch wrappers and `logs/<group>/<YYMMDD_HHMMSS>_<tag>_F.../` for train runs. If a run appears to finish immediately at `prep` or `paper stage: needed_pre_color`, first check whether the active queue is empty or whether completed-run reuse occurred inside the current group.
+
 ## 학습 이미지 예시
 
 학습 데이터는 `normal`과 불량 class별 이미지로 구성합니다. 모델 입력은 training image이고, display image는 같은 sample을 사람이 확인하기 쉽게 축/legend/색을 붙인 렌더링입니다.

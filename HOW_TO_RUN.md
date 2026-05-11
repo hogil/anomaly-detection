@@ -251,6 +251,8 @@ scaling 적용 항목:
 
 `scripts/all-dataset-backbone.sh` 한 줄. 각 yaml 마다 (1) weights/data/baseline 준비 → (2) `00_all.sh` 실행 (모든 axis + sample_skip + 모든 backbone + logical_train + gc-last + bkm_combined + postprocess). 전부 끝나면 dataset 별 결과를 모아 `validations/cross_dataset_report_<timestamp>/` 에 비교 표·plot 생성.
 
+기본값은 prep 단계에서 `download.py`를 실행해 `weights/{model_name}.pth`를 준비합니다. 폐쇄망 서버처럼 `weights/*.pth`를 이미 복사해 둔 경우에만 `--skip-weights`를 붙입니다.
+
 ```bash
 bash scripts/all-dataset-backbone.sh
 # 기본 7 yaml 순차: dataset.yaml + dataset{1..6}_*.yaml
@@ -268,6 +270,9 @@ bash scripts/all-dataset-backbone.sh --datasets dataset.yaml,dataset1_noise_15.y
 
 # prep 이미 끝났을 때 (weights/data/baseline 모두 있음)
 bash scripts/all-dataset-backbone.sh --skip-prep
+
+# 폐쇄망: weights/*.pth가 이미 있을 때만 다운로드 생략
+bash scripts/all-dataset-backbone.sh --skip-weights
 
 # 끝의 cross-dataset 리포트만 다시
 bash scripts/all-dataset-backbone.sh --skip-prep --skip-full

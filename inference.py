@@ -112,7 +112,7 @@ def _load_model_from_best_info(log_dir: Path, device):
     )
 
     model = _build_model(model_name, num_classes, dropout, device, stochastic_depth_rate)
-    weights = torch.load(log_dir / "best_model.pth", map_location=device, weights_only=True)
+    weights = torch.load(log_dir / "best_model.pth", map_location=device)
     model.load_state_dict(weights)
     model.eval()
 

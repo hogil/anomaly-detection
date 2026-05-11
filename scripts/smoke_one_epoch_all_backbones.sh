@@ -27,6 +27,9 @@ cd "$ROOT"
 PYTHON="${PYTHON:-python}"
 GEN_WORKERS="${GEN_WORKERS:-4}"
 MAX_SAMPLES="${MAX_SAMPLES:-10}"   # train.py --max_samples_per_split (per train/val/test)
+BATCH_SIZE="${BATCH_SIZE:-8}"
+NORMAL_RATIO="${NORMAL_RATIO:-8}"
+FORCE_CPU="${FORCE_CPU:-0}"
 SKIP_MISSING_DATA="${SKIP_MISSING_DATA:-1}"  # 1 = skip yamls without generated data; 0 = generate first
 DATASETS_CSV=""
 
@@ -46,6 +49,9 @@ while [[ $# -gt 0 ]]; do
     --python)   PYTHON="$2"; shift 2 ;;
     --gen-workers) GEN_WORKERS="$2"; shift 2 ;;
     --max-samples) MAX_SAMPLES="$2"; shift 2 ;;
+    --batch-size) BATCH_SIZE="$2"; shift 2 ;;
+    --normal-ratio) NORMAL_RATIO="$2"; shift 2 ;;
+    --cpu) FORCE_CPU=1; shift ;;
     --skip-missing-data) SKIP_MISSING_DATA=1; shift ;;
     --gen-missing-data)  SKIP_MISSING_DATA=0; shift ;;
     -h|--help)
@@ -101,6 +107,9 @@ fi
   echo "- backbones (${#BACKBONES[@]}): ${BACKBONES[*]}"
   echo "- python: ${PYTHON}"
   echo "- max_samples_per_split: ${MAX_SAMPLES}"
+  echo "- batch_size: ${BATCH_SIZE}"
+  echo "- normal_ratio: ${NORMAL_RATIO}"
+  echo "- force_cpu: ${FORCE_CPU}"
   echo "- skip_missing_data: ${SKIP_MISSING_DATA}"
   echo
   echo "| # | Dataset | Backbone | Status | Elapsed | Last log line |"
@@ -182,18 +191,27 @@ for cfg in "${DATASETS[@]}"; do
     run_log="${OUT_DIR}/${tag}.log"
     log "[$ROW_INDEX/$((${#DATASETS[@]} * ${#BACKBONES[@]}))] $cfg × $bb → $tag"
     start=$(date +%s)
+    precision="fp16"
+    device_arg="auto"
+    train_env=()
+    if [[ "$FORCE_CPU" -eq 1 ]]; then
+      precision="fp32"
+      device_arg="cpu"
+      train_env=(env CUDA_VISIBLE_DEVICES="")
+    fi
     set +e
-    "$PYTHON" -u train.py \
+    "${train_env[@]}" "$PYTHON" -u train.py \
       --mode binary \
       --config "$cfg" \
       --epochs 1 \
       --patience 0 \
-      --batch_size 32 \
+      --batch_size "$BATCH_SIZE" \
       --dropout 0.0 \
-      --precision fp16 \
+      --precision "$precision" \
+      --device "$device_arg" \
       --num_workers 0 \
       --prefetch_factor 1 \
-      --normal_ratio 700 \
+      --normal_ratio "$NORMAL_RATIO" \
       --smooth_window 1 \
       --smooth_method median \
       --lr_backbone 2e-5 \

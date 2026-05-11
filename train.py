@@ -1129,6 +1129,9 @@ def main():
     parser.add_argument("--precision", type=str, default=td("precision", "fp16"),
                         choices=["fp16", "bf16", "fp32"],
                         help="학습 정밀도 (H100/H200: bf16 권장 — overflow 없음, GradScaler 불필요)")
+    parser.add_argument("--device", type=str, default=td("device", "auto"),
+                        choices=["auto", "cpu", "cuda"],
+                        help="학습 device 선택 (auto/cpu/cuda)")
     parser.add_argument("--compile", action="store_true", default=td("compile", False),
                         help="torch.compile 활성화 (H100/H200에서 20~50%% 가속)")
     parser.add_argument("--prefetch_factor", type=int, default=td("prefetch_factor", 4),
@@ -1158,7 +1161,15 @@ def main():
     print(f"  Random seed: {args.seed} (cudnn.benchmark=True, non-deterministic)")
 
     if ddp_enabled:
+        if args.device == "cpu":
+            raise RuntimeError("--device cpu cannot be used with DDP/torchrun")
         device = torch.device("cuda", ddp_local_rank)
+    elif args.device == "cpu":
+        device = torch.device("cpu")
+    elif args.device == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError("--device cuda was requested, but CUDA is not available")
+        device = torch.device("cuda")
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if ddp_enabled and args.batch_size % ddp_world_size != 0:
@@ -1182,7 +1193,7 @@ def main():
 
     print(f"\n{'='*60}")
     print(f"  Device: {device}")
-    if torch.cuda.is_available():
+    if device.type == "cuda":
         gpu_index = device.index or 0
         print(f"  GPU: {torch.cuda.get_device_name(gpu_index)}")
         print(f"  VRAM: {torch.cuda.get_device_properties(gpu_index).total_memory / 1024**3:.1f}GB")
@@ -1246,7 +1257,7 @@ def main():
         "num_classes": num_classes,
         "classes": classes,
         "device": str(device),
-        "gpu": torch.cuda.get_device_name(device.index or 0) if torch.cuda.is_available() else "CPU",
+        "gpu": torch.cuda.get_device_name(device.index or 0) if device.type == "cuda" else "CPU",
         "ddp": ddp_enabled,
         "ddp_world_size": ddp_world_size,
         "local_batch_size": train_batch_size,
@@ -1436,7 +1447,7 @@ def main():
             output_device=ddp_local_rank,
             find_unused_parameters=args.freeze_backbone_epochs > 0,
         )
-    elif torch.cuda.device_count() > 1:
+    elif device.type == "cuda" and torch.cuda.device_count() > 1:
         print(f"  nn.DataParallel: {torch.cuda.device_count()} GPUs (effective batch = args.batch_size, scatter 내부 자동)")
         model = nn.DataParallel(model)
 

@@ -37,6 +37,16 @@ server_outputs/
 *.safetensors
 *.bin
 
+# Required pretrained backbones for all-dataset-backbone sweeps.
+# These are tracked through Git LFS; generated best_model.pth stays ignored.
+!weights/
+!weights/convnextv2_base.fcmae_ft_in22k_in1k.pth
+!weights/convnextv2_tiny.fcmae_ft_in22k_in1k.pth
+!weights/maxvit_tiny_tf_224.in1k.pth
+!weights/swin_tiny_patch4_window7_224.ms_in22k_ft_in1k.pth
+!weights/tf_efficientnetv2_s.in21k_ft_in1k.pth
+!weights/vit_base_patch16_clip_224.laion2b_ft_in12k_in1k.pth
+
 # ============================================================================
 # Python
 # ============================================================================

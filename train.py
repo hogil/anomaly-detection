@@ -207,6 +207,19 @@ def sample_stratified_rows(df: pd.DataFrame, max_samples: int, seed: int) -> pd.
     return sampled.sample(frac=1.0, random_state=seed + 1997).reset_index(drop=True)
 
 
+def sample_max_per_class(df: pd.DataFrame, max_per_class: int, seed: int) -> pd.DataFrame:
+    """Cap rows per original class while preserving the class column."""
+    if max_per_class <= 0 or df.empty:
+        return df.reset_index(drop=True)
+    parts = []
+    for _, group in df.groupby("class", sort=True):
+        n = min(len(group), max_per_class)
+        parts.append(group.sample(n=n, random_state=seed))
+    if not parts:
+        return df.iloc[0:0].copy().reset_index(drop=True)
+    return pd.concat(parts, ignore_index=True)
+
+
 # =============================================================================
 # EMA of weights (Mean Teacher / ConvNeXt-V2 스타일)
 # =============================================================================
@@ -1276,9 +1289,7 @@ def main():
 
     # 클래스당 최대 수 제한
     if args.max_per_class > 0:
-        train_df = train_df.groupby("class").apply(
-            lambda x: x.sample(n=min(len(x), args.max_per_class), random_state=42)
-        ).reset_index(drop=True)
+        train_df = sample_max_per_class(train_df, args.max_per_class, args.seed)
 
     # Normal 샘플 수 조절 (abnormal은 유지)
     if args.normal_ratio > 0 and args.mode == "binary":

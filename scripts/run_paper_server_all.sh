@@ -183,6 +183,68 @@ print(len(d) if isinstance(d, list) else len(d.get("runs", [])))
 PY
 }
 
+dataset_ready() {
+  "$PYTHON" - "$CONFIG" <<'PY'
+import sys
+from pathlib import Path
+
+import pandas as pd
+import yaml
+
+config_path = Path(sys.argv[1])
+cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+out = cfg["output"]
+data_dir = Path(out["data_dir"])
+image_dir = Path(out["image_dir"])
+scenarios = data_dir / "scenarios.csv"
+timeseries = data_dir / "timeseries.csv"
+
+issues = []
+
+if not scenarios.exists():
+    issues.append(f"missing {scenarios}")
+else:
+    try:
+        sc_cols = pd.read_csv(scenarios, nrows=1).columns.tolist()
+    except Exception as exc:
+        sc_cols = []
+        issues.append(f"cannot read {scenarios}: {exc}")
+    missing = [c for c in ["chart_id", "class", "split"] if c not in sc_cols]
+    if missing:
+        issues.append(f"{scenarios} missing columns: {','.join(missing)}; columns={sc_cols}")
+
+if not timeseries.exists():
+    issues.append(f"missing {timeseries}")
+else:
+    try:
+        ts_cols = pd.read_csv(timeseries, nrows=1).columns.tolist()
+    except Exception as exc:
+        ts_cols = []
+        issues.append(f"cannot read {timeseries}: {exc}")
+    missing = [c for c in ["chart_id", "value"] if c not in ts_cols]
+    if missing:
+        issues.append(f"{timeseries} missing columns: {','.join(missing)}; columns={ts_cols}")
+
+if not image_dir.exists():
+    issues.append(f"missing image dir {image_dir}")
+else:
+    try:
+        has_png = any(image_dir.rglob("*.png"))
+    except Exception as exc:
+        has_png = False
+        issues.append(f"cannot scan image dir {image_dir}: {exc}")
+    if not has_png:
+        issues.append(f"image dir has no png files: {image_dir}")
+
+if issues:
+    for issue in issues:
+        print(f"[dataset-check] {issue}")
+    raise SystemExit(1)
+
+print(f"[dataset-check] ready: {data_dir} / {image_dir}")
+PY
+}
+
 main() {
   exec > >(tee -a "$LOG") 2>&1
   echo "== run started: $(date -Is) =="
@@ -199,16 +261,18 @@ main() {
   fi
 
   if [[ "$SKIP_DATASET" -eq 0 ]]; then
-    if [[ ! -f "$DATA_DIR/scenarios.csv" || ! -f "$DATA_DIR/timeseries.csv" || ! -d "$IMAGE_DIR" ]]; then
+    if dataset_ready; then
+      echo "[skip] dataset/images already exist and schema is valid"
+    else
+      echo "[regen] dataset/images missing or invalid; regenerating"
       run_cmd "$PYTHON" generate_data.py --config "$CONFIG" --workers "$WORKERS"
       run_cmd "$PYTHON" generate_images.py --config "$CONFIG" --workers "$WORKERS"
+      dataset_ready
       run_cmd "$PYTHON" scripts/validate_dataset.py \
         --config "$CONFIG" \
         --scenarios "$DATA_DIR/scenarios.csv" \
         --timeseries "$DATA_DIR/timeseries.csv" \
         --display-dir "$DISPLAY_DIR"
-    else
-      echo "[skip] dataset/images already exist"
     fi
   fi
 

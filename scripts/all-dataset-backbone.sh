@@ -31,6 +31,8 @@ DATASETS_CSV=""
 SKIP_PREP=0
 SKIP_FULL=0
 SKIP_REPORT=0
+RESET_DATA=0
+PREP_DATA_ONLY=0
 PASS_ARGS=()
 
 DEFAULT_DATASETS=(
@@ -60,6 +62,8 @@ Options:
   --skip-prep            Skip weights/data/baseline prep (assume all present)
   --skip-full            Skip 00_all.sh (only do prep + report)
   --skip-report          Skip cross-dataset report at the end
+  --reset-data           Delete the config's data/image/display outputs before prep
+  --prep-data-only       Prep only data/images/validation; skip baseline refcheck
   -h, --help             Show this help
 
 Anything after `--` is forwarded verbatim to 00_all.sh, e.g.:
@@ -78,6 +82,8 @@ while [[ $# -gt 0 ]]; do
     --skip-prep) SKIP_PREP=1; shift ;;
     --skip-full) SKIP_FULL=1; shift ;;
     --skip-report) SKIP_REPORT=1; shift ;;
+    --reset-data) RESET_DATA=1; shift ;;
+    --prep-data-only) PREP_DATA_ONLY=1; shift ;;
     --) shift; PASS_ARGS=("$@"); break ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
@@ -110,7 +116,7 @@ fi
 WRAPPER_TS="$(date +%Y%m%d_%H%M%S)"
 echo "== all-dataset-backbone start: $(date -Is) =="
 echo "datasets: ${RESOLVED[*]}"
-echo "skip_prep=$SKIP_PREP skip_full=$SKIP_FULL skip_report=$SKIP_REPORT"
+echo "skip_prep=$SKIP_PREP skip_full=$SKIP_FULL skip_report=$SKIP_REPORT reset_data=$RESET_DATA prep_data_only=$PREP_DATA_ONLY"
 
 GROUP_NAMES=()
 GROUP_CONFIGS=()
@@ -131,14 +137,47 @@ for cfg in "${RESOLVED[@]}"; do
   echo "============================================================"
 
   if [[ "$SKIP_PREP" -eq 0 ]]; then
+    if [[ "$RESET_DATA" -eq 1 ]]; then
+      "$PYTHON" - "$cfg" "$REPO_ROOT" <<'PY'
+import shutil
+import sys
+from pathlib import Path
+
+import yaml
+
+cfg_path = Path(sys.argv[1])
+repo_root = Path(sys.argv[2]).resolve()
+cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+
+for key in ("data_dir", "image_dir", "display_dir"):
+    raw = Path(cfg["output"][key])
+    target = raw if raw.is_absolute() else repo_root / raw
+    target = target.resolve()
+    try:
+        target.relative_to(repo_root)
+    except ValueError:
+        raise SystemExit(f"refusing to delete outside repo: {target}")
+    if target == repo_root:
+        raise SystemExit("refusing to delete repo root")
+    if target.exists():
+        print(f"[reset-data] delete {target}")
+        shutil.rmtree(target)
+PY
+    fi
+
     echo "[step 1/2] prep (data + baseline; --skip-weights enforced for closed-network)"
+    PREP_EXTRA=()
+    if [[ "$PREP_DATA_ONLY" -eq 1 ]]; then
+      PREP_EXTRA+=(--skip-refcheck)
+    fi
     bash scripts/run_paper_server_all.sh \
       --config "$cfg" \
       --python "$PYTHON" \
       --log-dir-group "$group" \
       --skip-weights \
       --skip-round1 \
-      --skip-post
+      --skip-post \
+      "${PREP_EXTRA[@]}"
   else
     echo "[step 1/2] prep skipped"
   fi

@@ -2,8 +2,8 @@
 """Render field timeseries into images for prediction or future dev training.
 
 This script never synthesizes anomaly values. If a label column is provided,
-the label is used only to route already-rendered images into development
-folders and to write manifest metadata.
+the label is normalized into an output timeseries.csv `class` column and is
+used only to route already-rendered images into development folders.
 """
 
 from __future__ import annotations
@@ -205,6 +205,26 @@ def label_for_member(
     return class_label, binary_label, len(uniq) > 1
 
 
+def write_timeseries_with_class(
+    df: pd.DataFrame,
+    out_path: Path,
+    label_col: str | None,
+    normal_labels: set[str],
+    abnormal_labels: set[str],
+) -> None:
+    source_cols = [col for col in df.columns if col not in {"_field_chart_id", "class", "binary_class"}]
+    out_df = df[source_cols].copy()
+    classes = []
+    if label_col:
+        for value in df[label_col].tolist():
+            class_label, _ = normalized_label(value, normal_labels, abnormal_labels)
+            classes.append(class_label)
+    else:
+        classes = [""] * len(df)
+    out_df["class"] = classes
+    out_df.to_csv(out_path, index=False)
+
+
 def target_for_member(group: pd.DataFrame, member_id: str, legend_axis: str, value_col: str, target_col: str | None) -> float | None:
     if target_col and target_col in group.columns:
         vals = pd.to_numeric(group[target_col], errors="coerce").dropna()
@@ -308,6 +328,7 @@ def main() -> int:
     x_col = detect_x_col(df, args.x_col)
     legend_axis = detect_legend_axis(df, args.legend_axis)
     chart_cols = [col.strip() for col in args.chart_cols.split(",") if col.strip()]
+    label_col = args.label_col or ("class" if "class" in df.columns else None)
     df = add_chart_id(df, args.chart_id_col, chart_cols)
     df = maybe_parse_datetime(df, x_col)
 
@@ -319,7 +340,7 @@ def main() -> int:
         value_col=args.value_col,
         legend_axis=legend_axis,
         chart_cols=chart_cols,
-        label_col=args.label_col,
+        label_col=label_col,
         normal_labels=normal_labels,
         abnormal_labels=abnormal_labels,
         target_col=args.target_col,
@@ -336,7 +357,9 @@ def main() -> int:
     if not args.no_display:
         display_dir.mkdir()
 
-    write_dev = bool(args.label_col) and not args.no_dev_folders
+    write_timeseries_with_class(df, out / "timeseries.csv", label_col, normal_labels, abnormal_labels)
+
+    write_dev = bool(label_col) and not args.no_dev_folders
     dev_classes = sorted({str(row.get("class")) for row in rows if row.get("class")})
     if write_dev:
         for cls in dev_classes:
@@ -457,7 +480,8 @@ def main() -> int:
         "skipped": skipped,
         "x_col": x_col,
         "legend_axis": legend_axis,
-        "label_col": args.label_col or "",
+        "label_col": label_col or "",
+        "timeseries_out": "timeseries.csv",
         "class_counts": dict(counts),
         "binary_class_counts": dict(binary_counts),
         "note": "No anomaly values were synthesized; labels only route images and metadata.",

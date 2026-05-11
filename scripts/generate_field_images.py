@@ -2,7 +2,7 @@
 """Render field timeseries into images for prediction or future dev training.
 
 This script never synthesizes anomaly values. If a label column is provided,
-the label is used only to route already-rendered images into normal/abnormal
+the label is used only to route already-rendered images into development
 folders and to write manifest metadata.
 """
 
@@ -30,8 +30,8 @@ from src.data.image_renderer import ImageRenderer  # noqa: E402
 
 TQDM_DISABLE = not sys.stderr.isatty()
 
-DEFAULT_NORMAL_LABELS = {"normal", "good", "ok", "pass", "0", "false", "양호"}
-DEFAULT_ABNORMAL_LABELS = {"abnormal", "bad", "ng", "fail", "failed", "1", "true", "불량"}
+DEFAULT_NORMAL_LABELS = {"normal", "noraml", "good", "ok", "pass", "0", "false", "양호", "정상"}
+DEFAULT_ABNORMAL_LABELS = {"abnormal", "bad", "ng", "fail", "failed", "1", "true", "불량", "이상"}
 
 
 def parse_csv_set(text: str) -> set[str]:
@@ -53,13 +53,17 @@ def parse_args() -> argparse.Namespace:
         help="Columns used to build chart_id when --chart-id-col is absent.",
     )
     parser.add_argument("--legend-axis", default=None, help="Member/fleet column. Auto-detects eqp_id/chamber/recipe.")
-    parser.add_argument("--label-col", default=None, help="Optional field label column: good/bad, 양호/불량, normal/abnormal.")
+    parser.add_argument(
+        "--label-col",
+        default=None,
+        help="Optional field label column. Values may be normal/abnormal, 양호/불량, or defect types like drift/spike.",
+    )
     parser.add_argument("--normal-labels", default=",".join(sorted(DEFAULT_NORMAL_LABELS)))
     parser.add_argument("--abnormal-labels", default=",".join(sorted(DEFAULT_ABNORMAL_LABELS)))
     parser.add_argument("--target-col", default=None, help="Optional baseline/target value column.")
     parser.add_argument("--limit", type=int, default=0, help="Limit rendered scenario rows after expansion.")
     parser.add_argument("--no-display", action="store_true")
-    parser.add_argument("--no-dev-folders", action="store_true", help="Do not write dev_model_inputs/{normal,abnormal}.")
+    parser.add_argument("--no-dev-folders", action="store_true", help="Do not write dev_* folders from --label-col.")
     parser.add_argument("--no-timestamp", action="store_true", help="Use out-dir exactly instead of prefixing YYMMDD_HHMMSS.")
     parser.add_argument("--overwrite", action="store_true", help="Replace output directory if it already exists.")
     return parser.parse_args()
@@ -139,15 +143,30 @@ def maybe_parse_datetime(df: pd.DataFrame, x_col: str) -> pd.DataFrame:
     return df
 
 
-def normalized_label(value: Any, normal_labels: set[str], abnormal_labels: set[str]) -> str:
+def canonical_class_label(value: Any) -> str:
+    text = str(value).strip().lower()
+    safe = []
+    prev_sep = False
+    for ch in text:
+        if ch.isalnum() or ch in {"-", "_", "."}:
+            safe.append(ch)
+            prev_sep = False
+        elif not prev_sep:
+            safe.append("_")
+            prev_sep = True
+    return "".join(safe).strip("._-") or "unknown"
+
+
+def normalized_label(value: Any, normal_labels: set[str], abnormal_labels: set[str]) -> tuple[str, str]:
     if value is None or pd.isna(value):
-        return ""
+        return "", ""
     text = str(value).strip().lower()
     if text in normal_labels:
-        return "normal"
+        return "normal", "normal"
     if text in abnormal_labels:
-        return "abnormal"
-    raise ValueError(f"unknown label value: {value!r}")
+        return "abnormal", "abnormal"
+    class_label = canonical_class_label(value)
+    return class_label, "abnormal"
 
 
 def label_for_member(
@@ -157,21 +176,33 @@ def label_for_member(
     label_col: str | None,
     normal_labels: set[str],
     abnormal_labels: set[str],
-) -> tuple[str, bool]:
+) -> tuple[str, str, bool]:
     if not label_col:
-        return "", False
+        return "", "", False
     member_rows = group[group[legend_axis].astype(str) == str(member_id)]
-    labels = [
-        normalized_label(value, normal_labels, abnormal_labels)
-        for value in member_rows[label_col].dropna().tolist()
-    ]
+    labels = []
+    for value in member_rows[label_col].dropna().tolist():
+        class_label, _ = normalized_label(value, normal_labels, abnormal_labels)
+        if class_label:
+            labels.append(class_label)
     labels = [label for label in labels if label]
     if not labels:
-        return "", False
+        return "", "", False
+
+    counts = Counter(labels)
+    typed_abnormal = [label for label in counts if label not in {"normal", "abnormal"}]
+    if typed_abnormal:
+        class_label = sorted(typed_abnormal, key=lambda label: (-counts[label], label))[0]
+        binary_label = "abnormal"
+    elif "abnormal" in counts:
+        class_label = "abnormal"
+        binary_label = "abnormal"
+    else:
+        class_label = "normal"
+        binary_label = "normal"
+
     uniq = set(labels)
-    if "abnormal" in uniq:
-        return "abnormal", len(uniq) > 1
-    return "normal", len(uniq) > 1
+    return class_label, binary_label, len(uniq) > 1
 
 
 def target_for_member(group: pd.DataFrame, member_id: str, legend_axis: str, value_col: str, target_col: str | None) -> float | None:
@@ -213,7 +244,7 @@ def build_rows(
         member_csv = ",".join(members)
         meta = {col: group[col].dropna().iloc[0] for col in chart_cols if col in group.columns and group[col].notna().any()}
         for member_id in members:
-            label, conflict = label_for_member(group, member_id, legend_axis, label_col, normal_labels, abnormal_labels)
+            label, binary_label, conflict = label_for_member(group, member_id, legend_axis, label_col, normal_labels, abnormal_labels)
             target = target_for_member(group, member_id, legend_axis, value_col, target_col)
             row = {
                 "chart_id": str(chart_id),
@@ -223,6 +254,7 @@ def build_rows(
                 "target": "" if target is None else round(target, 6),
                 "class": label,
                 "true_class": label,
+                "binary_class": binary_label,
                 "label_conflict": conflict,
             }
             row.update(meta)
@@ -305,11 +337,16 @@ def main() -> int:
         display_dir.mkdir()
 
     write_dev = bool(args.label_col) and not args.no_dev_folders
+    dev_classes = sorted({str(row.get("class")) for row in rows if row.get("class")})
     if write_dev:
-        for cls in ["normal", "abnormal"]:
+        for cls in dev_classes:
             (out / "dev_model_inputs" / cls).mkdir(parents=True, exist_ok=True)
             if not args.no_display:
                 (out / "dev_display" / cls).mkdir(parents=True, exist_ok=True)
+        for cls in ["normal", "abnormal"]:
+            (out / "dev_binary_model_inputs" / cls).mkdir(parents=True, exist_ok=True)
+            if not args.no_display:
+                (out / "dev_binary_display" / cls).mkdir(parents=True, exist_ok=True)
 
     ts_grouped = {str(chart_id): group for chart_id, group in df.groupby("_field_chart_id", sort=True)}
     manifest_rows: list[dict[str, Any]] = []
@@ -350,8 +387,11 @@ def main() -> int:
 
         dev_input = ""
         dev_display = ""
+        dev_binary_input = ""
+        dev_binary_display = ""
         label = str(row.get("class") or "")
-        if write_dev and label in {"normal", "abnormal"}:
+        binary_label = str(row.get("binary_class") or "")
+        if write_dev and label:
             dev_input_path = out / "dev_model_inputs" / label / f"{stem}.png"
             shutil.copy2(input_path, dev_input_path)
             dev_input = rel(dev_input_path, out)
@@ -359,6 +399,14 @@ def main() -> int:
                 dev_display_path = out / "dev_display" / label / f"{stem}.png"
                 shutil.copy2(display_path, dev_display_path)
                 dev_display = rel(dev_display_path, out)
+        if write_dev and binary_label in {"normal", "abnormal"}:
+            dev_binary_input_path = out / "dev_binary_model_inputs" / binary_label / f"{stem}.png"
+            shutil.copy2(input_path, dev_binary_input_path)
+            dev_binary_input = rel(dev_binary_input_path, out)
+            if display_path is not None:
+                dev_binary_display_path = out / "dev_binary_display" / binary_label / f"{stem}.png"
+                shutil.copy2(display_path, dev_binary_display_path)
+                dev_binary_display = rel(dev_binary_display_path, out)
 
         manifest = dict(row)
         manifest.update(
@@ -367,6 +415,8 @@ def main() -> int:
                 "display": "" if display_path is None else rel(display_path, out),
                 "dev_model_input": dev_input,
                 "dev_display": dev_display,
+                "dev_binary_model_input": dev_binary_input,
+                "dev_binary_display": dev_binary_display,
                 "x_col": x_col,
                 "value_col": args.value_col,
             }
@@ -382,10 +432,13 @@ def main() -> int:
         "highlighted_member",
         "class",
         "true_class",
+        "binary_class",
         "model_input",
         "display",
         "dev_model_input",
         "dev_display",
+        "dev_binary_model_input",
+        "dev_binary_display",
         "legend_axis",
         "members",
         "target",
@@ -397,6 +450,7 @@ def main() -> int:
         writer.writerows(manifest_rows)
 
     counts = Counter(row.get("class") or "unlabeled" for row in manifest_rows)
+    binary_counts = Counter(row.get("binary_class") or "unlabeled" for row in manifest_rows)
     summary = {
         "timeseries": str(args.timeseries),
         "rendered": len(manifest_rows),
@@ -405,6 +459,7 @@ def main() -> int:
         "legend_axis": legend_axis,
         "label_col": args.label_col or "",
         "class_counts": dict(counts),
+        "binary_class_counts": dict(binary_counts),
         "note": "No anomaly values were synthesized; labels only route images and metadata.",
     }
     with (out / "summary.json").open("w", encoding="utf-8") as handle:
@@ -414,6 +469,7 @@ def main() -> int:
 
     print(f"[field-images] rendered={len(manifest_rows)} skipped={skipped} output={out}")
     print(f"[field-images] class_counts={dict(counts)}")
+    print(f"[field-images] binary_class_counts={dict(binary_counts)}")
     return 0
 
 

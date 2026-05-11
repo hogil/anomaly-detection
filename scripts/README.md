@@ -207,7 +207,9 @@ python scripts/generate_inference_images.py \
 ```
 
 ### `generate_field_images.py`
-현업 `timeseries.csv`를 predict용 이미지로 렌더링. `chart_id`가 없으면 `device,step,item`으로 만들고, `legend_axis`는 `eqp_id/chamber/recipe` 등을 자동 감지합니다. `--label-col`을 주면 값을 합성하지 않고 이미지만 `dev_model_inputs/{normal,abnormal}/`로 라우팅합니다.
+현업 `timeseries.csv`를 predict용 이미지로 렌더링. `chart_id`가 없으면 `device,step,item`으로 만들고, `legend_axis`는 `eqp_id/chamber/recipe` 등을 자동 감지합니다.
+
+`--label-col`은 같은 CSV 안의 라벨 컬럼명을 뜻합니다. 값이 `양호/정상/normal`이면 `normal`, `불량/abnormal`이면 `abnormal`로 저장하고, `drift/spike/mean_shift` 같은 defect type 값은 그대로 class로 보존합니다. 값 자체는 합성하지 않고 metadata와 dev 폴더 라우팅에만 씁니다.
 
 ```bash
 python scripts/generate_field_images.py \
@@ -219,6 +221,14 @@ python scripts/generate_field_images.py \
   --timeseries fab_export/timeseries_labeled.csv \
   --label-col 판정 \
   --out-dir fab_dev_images
+```
+
+라벨이 있으면 출력은 `model_inputs/`, `manifest.csv` 외에 다음 dev 폴더도 생깁니다.
+
+```
+dev_model_inputs/<class>/              # normal, abnormal, drift, spike ...
+dev_binary_model_inputs/normal/
+dev_binary_model_inputs/abnormal/      # defect type은 binary 기준 abnormal로 복사
 ```
 
 ### `predict_images.py`

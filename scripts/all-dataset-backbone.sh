@@ -116,6 +116,24 @@ if [[ "${#RESOLVED[@]}" -eq 0 ]]; then
   exit 1
 fi
 
+if [[ "$SKIP_WEIGHTS" -eq 1 ]]; then
+  usable_weights=0
+  shopt -s nullglob
+  for p in weights/*.pth; do
+    name="$(basename "$p")"
+    if [[ "$name" == "best_model.pth" || "$name" == *.fp16.pth ]]; then
+      continue
+    fi
+    usable_weights=$((usable_weights + 1))
+  done
+  shopt -u nullglob
+  if [[ "$usable_weights" -eq 0 ]]; then
+    echo "[fatal] --skip-weights was set, but no usable weights/*.pth files exist" >&2
+    echo "        run python download.py, or copy weights/*.pth into this repo first" >&2
+    exit 1
+  fi
+fi
+
 WRAPPER_TS="$(date +%Y%m%d_%H%M%S)"
 echo "== all-dataset-backbone start: $(date -Is) =="
 echo "datasets: ${RESOLVED[*]}"

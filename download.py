@@ -31,19 +31,35 @@ MODELS = [
 ]
 
 
+def verify_state_dict(path: str) -> None:
+    """Fail fast if a .pth file is not a readable non-empty PyTorch state_dict."""
+    state = torch.load(path, map_location="cpu")
+    if not hasattr(state, "keys") or len(state) == 0:
+        raise ValueError("not a non-empty state_dict")
+
+
 def download_one(model_name: str, force: bool = False) -> str:
     """단일 모델 다운로드. 반환: 'ok' / 'skip' / 'fail'."""
     out_path = f"weights/{model_name}.pth"
     if os.path.exists(out_path) and not force:
         size_mb = os.path.getsize(out_path) / 1e6
-        print(f"  skip   {out_path} ({size_mb:.0f} MB, already exists)")
-        return "skip"
+        try:
+            verify_state_dict(out_path)
+        except Exception as e:
+            print(
+                f"  invalid {out_path} ({type(e).__name__}: {e}); re-downloading",
+                file=sys.stderr,
+            )
+        else:
+            print(f"  skip   {out_path} ({size_mb:.0f} MB, already exists, verified)")
+            return "skip"
     print(f"  download {model_name} ...")
     try:
         m = timm.create_model(model_name, pretrained=True)
         torch.save(m.state_dict(), out_path)
+        verify_state_dict(out_path)
         size_mb = os.path.getsize(out_path) / 1e6
-        print(f"  saved  {out_path} ({size_mb:.0f} MB)")
+        print(f"  saved  {out_path} ({size_mb:.0f} MB, verified)")
         return "ok"
     except Exception as e:
         print(f"  FAIL   {model_name}: {type(e).__name__}: {e}", file=sys.stderr)

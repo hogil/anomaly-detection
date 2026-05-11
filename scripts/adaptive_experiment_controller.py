@@ -48,6 +48,8 @@ from pathlib import Path
 from statistics import mean, pstdev
 from typing import Any
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 LOGS_DIR = ROOT / "logs"
@@ -55,6 +57,7 @@ DEFAULT_SUMMARY = ROOT / "validations" / "adaptive_controller_summary.json"
 DEFAULT_MARKDOWN = ROOT / "validations" / "adaptive_controller_summary.md"
 DEFAULT_LIVE_SUMMARY_SCRIPT = ROOT / "scripts" / "update_live_summary_doc.py"
 DEFAULT_MODEL_NAME = "convnextv2_tiny.fcmae_ft_in22k_in1k"
+VALIDATED_WEIGHT_PATHS: set[Path] = set()
 
 
 def configure_output_encoding() -> None:
@@ -483,6 +486,75 @@ def flatten_train_args(run: dict[str, Any]) -> list[str]:
     return out
 
 
+def train_arg_value(run: dict[str, Any], name: str) -> str | None:
+    args = run.get("args", {})
+    bare = name.removeprefix("--")
+    flags = {f"--{bare}", bare}
+    if isinstance(args, dict):
+        for key, value in args.items():
+            if str(key) in flags and value is not None:
+                return str(value)
+        return None
+    if not isinstance(args, list):
+        return None
+
+    items = [str(item) for item in args]
+    for idx, item in enumerate(items):
+        for flag in flags:
+            if item == flag and idx + 1 < len(items):
+                return items[idx + 1]
+            if item.startswith(f"{flag}="):
+                return item.split("=", 1)[1]
+    return None
+
+
+def model_name_for_run(run: dict[str, Any]) -> str:
+    explicit = train_arg_value(run, "model_name")
+    if explicit:
+        return explicit
+
+    train_config = train_arg_value(run, "train_config")
+    if train_config:
+        path = Path(train_config)
+        if not path.is_absolute():
+            path = ROOT / path
+        if path.exists():
+            cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            if cfg.get("model_name"):
+                return str(cfg["model_name"])
+
+    return DEFAULT_MODEL_NAME
+
+
+def verify_pretrained_weight(run: dict[str, Any]) -> Path:
+    model_name = model_name_for_run(run)
+    path = ROOT / "weights" / f"{model_name}.pth"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"required pretrained weight is missing for tag {run['tag']}: {path}. "
+            "Run `python download.py` or copy weights/*.pth before launching this queue."
+        )
+    resolved = path.resolve()
+    if resolved not in VALIDATED_WEIGHT_PATHS:
+        try:
+            import torch
+
+            state = torch.load(path, map_location="cpu")
+        except Exception as exc:
+            raise RuntimeError(
+                f"pretrained weight exists but torch.load failed for tag {run['tag']}: {path}. "
+                "The file is not a valid PyTorch state_dict or is corrupted/truncated. "
+                "Run `python download.py --force` or replace the file in weights/."
+            ) from exc
+        if not hasattr(state, "keys") or len(state) == 0:
+            raise RuntimeError(
+                f"pretrained weight is not a non-empty state_dict for tag {run['tag']}: {path}. "
+                "Run `python download.py --force` or replace the file in weights/."
+            )
+        VALIDATED_WEIGHT_PATHS.add(resolved)
+    return path
+
+
 def build_command(run: dict[str, Any], log_dir_group: str = "") -> list[str]:
     try:
         ddp_nproc = int(os.environ.get("AD_TRAIN_DDP_NPROC", "1") or "1")
@@ -557,7 +629,7 @@ def launch_run(run: dict[str, Any], dry_run: bool, completion_exit_grace: float,
             line = None
         if line is not None:
             print(line, end="", flush=True)
-            if "학습 완료" in line or "CM_NT" in line:
+            if "학습 완료" in line:
                 completion_seen_at = completion_seen_at or time.time()
 
         returncode = proc.poll()
@@ -843,6 +915,27 @@ def main() -> int:
         existing = None if args.force else find_completed_run_dir(run["tag"], args.log_dir_group)
         launched_this_run = False
         if existing is None:
+            if not args.dry_run:
+                try:
+                    weight_path = verify_pretrained_weight(run)
+                except (FileNotFoundError, RuntimeError) as exc:
+                    print(f"[preflight] {exc}", flush=True)
+                    summary["runs"][run["tag"]] = {
+                        "tag": run["tag"],
+                        "candidate": candidate,
+                        "seed": int(run["seed"]),
+                        "status": "failed",
+                        "failure_stage": "preflight_weights",
+                        "error": str(exc),
+                        "completed_at": now_iso(),
+                        "target_hit": False,
+                    }
+                    summary["decision"] = f"stop:missing_weight:{run['tag']}"
+                    save_json(args.summary, summary)
+                    write_markdown(args.markdown, summary)
+                    update_live_summary_doc(args.update_live_summary)
+                    return 2
+                print(f"[preflight] weight ok: {weight_path.relative_to(ROOT)}", flush=True)
             code = launch_run(run, args.dry_run, args.completion_exit_grace, log_dir_group=args.log_dir_group)
             launched_this_run = not args.dry_run
             if launched_this_run:

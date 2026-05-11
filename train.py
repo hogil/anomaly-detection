@@ -384,8 +384,21 @@ def create_model(
         pretrained=False,
         drop_path_rate=stochastic_depth_rate,
     )
-    state_dict = torch.load(weights_path, map_location="cpu")
-    model.load_state_dict(state_dict)
+    try:
+        state_dict = torch.load(weights_path, map_location="cpu")
+    except Exception as exc:
+        raise RuntimeError(
+            f"가중치 파일을 torch.load로 읽지 못함: {weights_path}. "
+            "파일이 PyTorch state_dict가 아니거나 다운로드/복사 중 깨졌을 수 있습니다. "
+            "python download.py --force 로 다시 받으세요."
+        ) from exc
+    try:
+        model.load_state_dict(state_dict)
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"가중치 state_dict가 모델 구조와 맞지 않음: {weights_path} -> {model_name}. "
+            "model_name과 weights 파일명이 같은지 확인하고, 필요하면 python download.py --force 로 다시 받으세요."
+        ) from exc
     print(f"  가중치 로드: {weights_path}")
 
     # Classification head 교체 (timm 모델마다 head 구조 다름)

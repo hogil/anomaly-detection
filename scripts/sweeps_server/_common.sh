@@ -18,8 +18,11 @@ detect_profile() {
   # GPU total memory (MiB), 0 if no GPU.
   local gpu_mem=0
   if command -v nvidia-smi >/dev/null 2>&1; then
+    # Avoid `head -1` here. With `set -o pipefail`, nvidia-smi can receive
+    # SIGPIPE on multi-GPU hosts when head exits early, aborting the wrapper
+    # before run.log is even opened.
     gpu_mem=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null \
-      | head -1 | tr -d ' \r')
+      | awk 'NR == 1 { first = $1 } END { gsub(/[ \r]/, "", first); print first }')
     [[ -z "$gpu_mem" ]] && gpu_mem=0
   fi
   # CPU logical core count.
@@ -32,7 +35,7 @@ detect_profile() {
   fi
   if [[ "${mem_mb:-0}" -le 0 ]] && command -v wmic >/dev/null 2>&1; then
     mem_mb=$(wmic computersystem get TotalPhysicalMemory 2>/dev/null \
-      | awk 'NR>1 && $1+0>0 {printf "%d\n", $1 / 1048576}' | head -1)
+      | awk 'NR>1 && $1+0>0 && first == "" { first = $1 } END { if (first != "") printf "%d\n", first / 1048576 }')
     [[ -z "$mem_mb" ]] && mem_mb=0
   fi
 

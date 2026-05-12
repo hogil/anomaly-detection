@@ -190,6 +190,7 @@ from pathlib import Path
 
 import pandas as pd
 import yaml
+from src.data.schema import highlighted_member as read_highlighted_member
 
 config_path = Path(sys.argv[1])
 cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -229,12 +230,29 @@ if not image_dir.exists():
     issues.append(f"missing image dir {image_dir}")
 else:
     try:
-        has_png = any(image_dir.rglob("*.png"))
+        sc_df = pd.read_csv(scenarios) if scenarios.exists() else pd.DataFrame()
     except Exception as exc:
-        has_png = False
-        issues.append(f"cannot scan image dir {image_dir}: {exc}")
-    if not has_png:
-        issues.append(f"image dir has no png files: {image_dir}")
+        sc_df = pd.DataFrame()
+        issues.append(f"cannot read {scenarios} for image completeness check: {exc}")
+    missing_images = []
+    for row in sc_df.to_dict(orient="records"):
+        split = str(row.get("split", ""))
+        cls = str(row.get("class", ""))
+        chart_id = str(row.get("chart_id", ""))
+        candidates = []
+        image_name = row.get("image_name")
+        if image_name is not None and str(image_name).strip() and str(image_name) != "nan":
+            candidates.append(str(image_name))
+        highlighted = read_highlighted_member(row)
+        if highlighted:
+            candidates.append(f"{chart_id}_{highlighted}.png")
+        candidates.append(f"{chart_id}.png")
+        if not any((image_dir / split / cls / name).exists() for name in candidates):
+            missing_images.append(f"{split}/{cls}/{chart_id}.png")
+    if missing_images:
+        preview = ", ".join(missing_images[:10])
+        suffix = "" if len(missing_images) <= 10 else f", ... {len(missing_images) - 10} more"
+        issues.append(f"missing rendered images for {len(missing_images)} scenarios: {preview}{suffix}")
 
 if issues:
     for issue in issues:

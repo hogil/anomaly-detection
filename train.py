@@ -300,8 +300,12 @@ class ChartImageDataset(Dataset):
         self.samples = []
         self.original_classes = []  # 원래 defect type 저장
         self.sample_weights = []  # label별 weight
+        missing_images = []
         for _, row in scenarios_df.iterrows():
             cls = row["class"]
+            if mode == "anomaly_type" and cls == "normal":
+                continue  # normal 제외
+
             split = row["split"]
             chart_id = row["chart_id"]
             candidate_names = []
@@ -319,13 +323,14 @@ class ChartImageDataset(Dataset):
                     img_path = candidate_path
                     break
             if img_path is None:
+                missing_images.append(
+                    f"{split}/{cls}/{chart_id}.png candidates={candidate_names}"
+                )
                 continue
 
             if mode == "binary":
                 label = 0 if cls == "normal" else 1
             elif mode == "anomaly_type":
-                if cls == "normal":
-                    continue  # normal 제외
                 anomaly_classes = [c for c in classes if c != "normal"]
                 label = anomaly_classes.index(cls)
             else:
@@ -334,6 +339,16 @@ class ChartImageDataset(Dataset):
             self.samples.append((str(img_path), label))
             self.original_classes.append(cls)
             self.sample_weights.append(1.0)  # 기본값, 나중에 set_label_weights로 설정
+        if missing_images:
+            preview = "\n  ".join(missing_images[:10])
+            extra = "" if len(missing_images) <= 10 else f"\n  ... {len(missing_images) - 10} more"
+            raise FileNotFoundError(
+                f"missing rendered images under {image_dir} for {len(missing_images)} scenarios:\n"
+                f"  {preview}{extra}\n"
+                "Regenerate images for this config before training."
+            )
+        if not self.samples:
+            raise ValueError(f"no training samples resolved under {image_dir} for mode={mode}")
 
     def __len__(self):
         return len(self.samples)
@@ -1362,13 +1377,20 @@ def main():
     print(f"  Images: train={len(train_ds)}, val={len(val_ds)}, test={len(test_ds)}")
 
     num_workers = args.num_workers
+    windows_dataloader_safe_mode = os.name == "nt" and os.environ.get("AD_ALLOW_WINDOWS_DATALOADER_WORKERS") != "1"
+    if windows_dataloader_safe_mode and num_workers > 0:
+        print(
+            "  [windows-safe] num_workers forced to 0 to avoid PyTorch shared-memory "
+            "DataLoader stalls/errors on Windows. Set AD_ALLOW_WINDOWS_DATALOADER_WORKERS=1 to override."
+        )
+        num_workers = 0
     # 전역 변수로 seed 전달 (multiprocessing pickle 위해)
     global _GLOBAL_WORKER_SEED
     _GLOBAL_WORKER_SEED = args.seed + ddp_rank * 100_000
 
     common = dict(
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=device.type == "cuda",
         persistent_workers=num_workers > 0,
         prefetch_factor=args.prefetch_factor if num_workers > 0 else None,
         worker_init_fn=_worker_init_fn if num_workers > 0 else None,
@@ -1404,7 +1426,7 @@ def main():
     effective_prefetch = args.prefetch_factor if num_workers > 0 else None
     print(
         "  DataLoader: "
-        f"num_workers={num_workers}, pin_memory=True, "
+        f"num_workers={num_workers}, pin_memory={device.type == 'cuda'}, "
         f"global_batch={args.batch_size}, train_batch_per_rank={train_batch_size}, "
         f"prefetch_factor={effective_prefetch}, "
         f"persistent_workers={num_workers > 0}"
@@ -1631,6 +1653,7 @@ def main():
         t0 = time.time()
         if hasattr(train_sampler, "set_epoch"):
             train_sampler.set_epoch(epoch)
+        print(f"  Epoch {epoch}/{args.epochs} start", flush=True)
 
         # Backbone unfreeze
         if args.freeze_backbone_epochs > 0 and epoch == args.freeze_backbone_epochs + 1:

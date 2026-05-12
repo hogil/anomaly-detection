@@ -45,12 +45,12 @@ detect_profile() {
     PROFILE_NAME="pc"
     PROFILE_NUM_WORKERS=2
     PROFILE_PREFETCH=2
-    PROFILE_MAX_LAUNCHED=1
+    PROFILE_MAX_LAUNCHED=0
   else
     PROFILE_NAME="minimal"
     PROFILE_NUM_WORKERS=0
     PROFILE_PREFETCH=1
-    PROFILE_MAX_LAUNCHED=1
+    PROFILE_MAX_LAUNCHED=0
   fi
 
   # cap workers at cpus-2 so OS stays responsive.

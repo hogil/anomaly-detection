@@ -242,6 +242,11 @@ def render_all(
         n = len(sc_df[sc_df["split"] == split])
         _log(f"  {split}: {n}개")
     _log(f"  rendered: {rendered:,}/{len(sc_df):,}")
+    if rendered != len(sc_df):
+        raise SystemExit(
+            f"image rendering incomplete: rendered {rendered:,}/{len(sc_df):,}. "
+            "Check scenarios/timeseries consistency before training."
+        )
     _log(f"  elapsed: {time.perf_counter() - started:.1f}s")
     _log(f"\n  학습용: {out_cfg['image_dir']}/")
     _log(f"  유저용: {out_cfg['display_dir']}/")

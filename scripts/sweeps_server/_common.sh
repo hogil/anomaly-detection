@@ -21,7 +21,9 @@ detect_profile() {
     # Avoid `head -1` here. With `set -o pipefail`, nvidia-smi can receive
     # SIGPIPE on multi-GPU hosts when head exits early, aborting the wrapper
     # before run.log is even opened.
-    gpu_mem=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null \
+    local gpu_query
+    gpu_query="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null || true)"
+    gpu_mem=$(printf '%s\n' "$gpu_query" \
       | awk 'NR == 1 { first = $1 } END { gsub(/[ \r]/, "", first); print first }')
     [[ -z "$gpu_mem" ]] && gpu_mem=0
   fi
@@ -34,7 +36,9 @@ detect_profile() {
     mem_mb=$(awk '/MemTotal/ {printf "%d\n", $2 / 1024}' /proc/meminfo 2>/dev/null || echo 0)
   fi
   if [[ "${mem_mb:-0}" -le 0 ]] && command -v wmic >/dev/null 2>&1; then
-    mem_mb=$(wmic computersystem get TotalPhysicalMemory 2>/dev/null \
+    local wmic_query
+    wmic_query="$(wmic computersystem get TotalPhysicalMemory 2>/dev/null || true)"
+    mem_mb=$(printf '%s\n' "$wmic_query" \
       | awk 'NR>1 && $1+0>0 && first == "" { first = $1 } END { if (first != "") printf "%d\n", first / 1048576 }')
     [[ -z "$mem_mb" ]] && mem_mb=0
   fi
@@ -70,7 +74,12 @@ run_paper_stage() {
   local stage="$1"
   shift
   echo "== paper stage: $stage =="
-  bash "$PAPER_RUNNER" "$@"
+  local code=0
+  bash "$PAPER_RUNNER" "$@" || code=$?
+  if [[ "$code" -ne 0 ]]; then
+    echo "[stage failed] $stage exit=$code command=bash $PAPER_RUNNER $*" >&2
+  fi
+  return "$code"
 }
 
 run_round1_axes() {

@@ -87,12 +87,24 @@ from pathlib import Path
 queue_path, seeds_raw, num_workers, prefetch = sys.argv[1:5]
 seeds = [int(s.strip()) for s in seeds_raw.split(",") if s.strip()]
 weights_dir = Path("weights")
-candidates = []
-for path in sorted(weights_dir.glob("*.pth")):
+# Keep this order in sync with download.py::MODELS.
+preferred_order = [
+    "convnextv2_tiny.fcmae_ft_in22k_in1k",
+    "convnextv2_base.fcmae_ft_in22k_in1k",
+    "tf_efficientnetv2_s.in21k_ft_in1k",
+    "swin_tiny_patch4_window7_224.ms_in22k_ft_in1k",
+    "maxvit_tiny_tf_224.in1k",
+    "vit_base_patch16_clip_224.laion2b_ft_in12k_in1k",
+]
+available = []
+for path in weights_dir.glob("*.pth"):
     name = path.stem
     if name == "best_model" or name.endswith(".fp16"):
         continue
-    candidates.append(name)
+    available.append(name)
+available_set = set(available)
+candidates = [name for name in preferred_order if name in available_set]
+candidates.extend(sorted(name for name in available if name not in set(preferred_order)))
 
 if not candidates:
     raise SystemExit("[backbone] no usable .pth in weights/")

@@ -20,7 +20,9 @@ import sys
 import timm
 import torch
 
-# HF / timm model id 목록 (그대로 파일명으로 사용)
+# HF / timm model id 목록 (그대로 파일명으로 사용).
+# If this list or order changes, update preferred_order in
+# scripts/sweeps_server/14_backbone.sh so the backbone sweep order stays in sync.
 MODELS = [
     "convnextv2_tiny.fcmae_ft_in22k_in1k",
     "convnextv2_base.fcmae_ft_in22k_in1k",

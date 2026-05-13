@@ -3,7 +3,7 @@
 #
 # For each dataset yaml (default: 7 standard yamls):
 #   1) generate scenarios.csv / timeseries.csv / images/ if missing
-#   2) for each backbone .pth in weights/ (excluding best_model + *.fp16),
+#   2) for each current backbone .pth in download.py::MODELS order,
 #      run train.py --epochs 1 --patience 0 --seed 42 once
 #
 # Failures of an individual run are recorded but do NOT abort the whole sweep.
@@ -74,15 +74,33 @@ mkdir -p "$OUT_DIR"
 REPORT="${OUT_DIR}/report.md"
 SWEEP_LOG="${OUT_DIR}/sweep.log"
 
-# discover backbones (sorted, exclude best_model + *.fp16)
+# discover backbones (download.py order first, exclude deprecated vit/swin v1)
 BACKBONES=()
-while IFS= read -r p; do
-  name="$(basename "$p" .pth)"
-  case "$name" in
-    best_model|*.fp16) continue ;;
-  esac
+while IFS= read -r name; do
   BACKBONES+=("$name")
-done < <(ls weights/*.pth 2>/dev/null | sort)
+done < <("$PYTHON" - <<'PY'
+from pathlib import Path
+
+from download import MODELS
+
+
+def skipped(name: str) -> bool:
+    return (
+        name == "best_model"
+        or name.endswith(".fp16")
+        or name.startswith("vit_")
+        or name.startswith("swin_")
+    )
+
+
+available = [path.stem for path in Path("weights").glob("*.pth") if not skipped(path.stem)]
+available_set = set(available)
+backbones = [name for name in MODELS if name in available_set]
+backbones.extend(sorted(name for name in available if name not in set(MODELS)))
+for name in backbones:
+    print(name)
+PY
+)
 
 if [[ "${#BACKBONES[@]}" -eq 0 ]]; then
   echo "[fatal] no usable .pth in weights/" >&2

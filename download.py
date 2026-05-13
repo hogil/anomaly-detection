@@ -26,10 +26,10 @@ import torch
 MODELS = [
     "convnextv2_tiny.fcmae_ft_in22k_in1k",
     "convnextv2_base.fcmae_ft_in22k_in1k",
+    "convnext_tiny.dinov3_lvd1689m",
     "tf_efficientnetv2_s.in21k_ft_in1k",
-    "swin_tiny_patch4_window7_224.ms_in22k_ft_in1k",
+    "swinv2_cr_tiny_ns_224.sw_in1k",
     "maxvit_tiny_tf_224.in1k",
-    "vit_base_patch16_clip_224.laion2b_ft_in12k_in1k",
 ]
 
 

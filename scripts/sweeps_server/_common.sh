@@ -45,7 +45,7 @@ detect_profile() {
 
   if [[ "$gpu_mem" -ge 40000 && "${mem_mb:-0}" -ge 64000 ]]; then
     PROFILE_NAME="server"
-    PROFILE_NUM_WORKERS=24
+    PROFILE_NUM_WORKERS=48
     PROFILE_PREFETCH=4
     PROFILE_MAX_LAUNCHED=0
   elif [[ "$gpu_mem" -ge 12000 && "${mem_mb:-0}" -ge 16000 ]]; then

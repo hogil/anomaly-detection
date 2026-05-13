@@ -90,7 +90,7 @@ python train.py \
 
 | 옵션 | 의미 | 예시 |
 |---|---|---|
-| `--model_name` | timm 백본 이름. `weights/<이름>.pth` 가 있어야 함 | `--model_name swin_tiny_patch4_window7_224.ms_in22k_ft_in1k` |
+| `--model_name` | timm 백본 이름. `weights/<이름>.pth` 가 있어야 함 | `--model_name swinv2_cr_tiny_ns_224.sw_in1k` |
 | `--lr_backbone` / `--lr_head` | LR. ConvNeXtV2-Tiny 기본 `2e-5 / 2e-4` | `--lr_backbone 3e-5 --lr_head 3e-4` |
 | `--warmup_epochs` | warmup epoch 수 | `--warmup_epochs 3` |
 | `--grad_clip` | gradient clip max_norm. `0` 이면 끔 | `--grad_clip 0.5` |
@@ -156,7 +156,7 @@ bash scripts/sweeps_server/00_all.sh
 | 2 | axis sweep (core) | lr/warmup/normal_ratio/per_class/label_smoothing/stochastic_depth/focal_gamma/abnormal_weight/ema/allow_tie_save 한 축씩만 |
 | 3 | color | trend·fleet 색·alpha 축 |
 | 4 | sample_skip | nonfinite-loss 샘플 step-skip 안전 실험 1-seed |
-| 5 | backbone | `weights/`에 들어있는 모든 `*.pth`(`best_model.pth`·`*.fp16.pth` 제외)를 자동 검출해서 한 번씩 학습 |
+| 5 | backbone | `download.py::MODELS` 순서의 백본을 우선 학습하고, `weights/`의 추가 non-deprecated `*.pth`를 뒤에 학습 |
 | 6 | logical_train | member별 logical 데이터셋 + 학습 |
 | 7 | gc (last) | grad_clip 축 (불안정 위험으로 마지막) |
 | 8 | bkm_combined | 8개 BKM 값 다 적용한 candidate 1개 × 5-seed |
@@ -166,9 +166,9 @@ GPU 메모리·CPU 수로 자동 프로필 결정:
 
 | 프로필 | 조건 | num_workers | prefetch | 동시 launch |
 |---|---|---:|---:|---:|
-| `server` | GPU ≥ 40 GB | 24 | 4 | 무제한 |
-| `pc` | GPU ≥ 12 GB | 2 | 2 | 1 |
-| `minimal` | 그 외 | 0 | 1 | 1 |
+| `server` | GPU ≥ 40 GB | 48 | 4 | 무제한 |
+| `pc` | GPU ≥ 12 GB | 2 | 2 | 무제한 |
+| `minimal` | 그 외 | 0 | 1 | 무제한 |
 
 `--num-workers`, `--prefetch-factor`, `--max-launched`, `--log-dir-group` 직접 지정하면 위 자동값 덮어씀.
 

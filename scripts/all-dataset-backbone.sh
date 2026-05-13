@@ -53,7 +53,8 @@ Usage:
 
 For every listed dataset yaml: prepares weights/data/baseline, then runs the
 full sweep (all axes incl. gc-last, color, sample_skip, all backbones in
-weights/*.pth, logical_train, bkm_combined, postprocess). After the loop,
+download.py::MODELS order plus extra non-deprecated weights, logical_train,
+bkm_combined, postprocess). After the loop,
 generates a cross-dataset comparison report under
 validations/cross_dataset_report_<timestamp>/.
 
@@ -121,7 +122,7 @@ if [[ "$SKIP_WEIGHTS" -eq 1 ]]; then
   shopt -s nullglob
   for p in weights/*.pth; do
     name="$(basename "$p")"
-    if [[ "$name" == "best_model.pth" || "$name" == *.fp16.pth ]]; then
+    if [[ "$name" == "best_model.pth" || "$name" == *.fp16.pth || "$name" == vit_*.pth || "$name" == swin_*.pth ]]; then
       continue
     fi
     usable_weights=$((usable_weights + 1))

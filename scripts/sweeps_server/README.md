@@ -26,7 +26,7 @@ bash scripts/sweeps_server/00_all.sh
 | 11 | `11_allow_tie_save.sh` | val_f1 tie save 허용 축 |
 | 12 | `12_color.sh` | trend·fleet 색·alpha 축 |
 | 13 | `13_sample_skip.sh` | `--filter_nonfinite_loss=true` 1-seed 안전 실험 |
-| 14 | `14_backbone.sh` | `weights/*.pth`(`best_model.pth`·`*.fp16.pth` 제외) 자동 검출해서 한 번씩 학습 |
+| 14 | `14_backbone.sh` | `download.py::MODELS` 순서 우선 + 추가 non-deprecated `weights/*.pth`를 한 번씩 학습 |
 | 15 | `15_logical_train.sh` | member별 logical 데이터셋 생성 + 학습 |
 | 16 | `16_gc.sh` | grad_clip 축 (학습 불안정 위험으로 마지막) |
 | 17 | `17_bkm_combined.sh` | 모든 BKM 값 한 번에 적용 + baseline 비교 plot |

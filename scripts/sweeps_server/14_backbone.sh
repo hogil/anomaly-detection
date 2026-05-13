@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Backbone sweep. Rotate through every `weights/<name>.pth` (excluding the
-# best_model.pth checkpoint and the .fp16 variant) and train each as a
-# single-axis change while keeping the rest of the baseline fixed.
+# Backbone sweep. Rotate through the preferred `download.py::MODELS` backbone
+# order, plus any extra non-deprecated `weights/<name>.pth` files, and train
+# each as a single-axis change while keeping the rest of the baseline fixed.
 #
 # Each candidate keeps the operating baseline (--lr_backbone 2e-5, etc.).
 # Note: per-backbone LR re-tuning (memory: "LR Spike per Backbone") is a
@@ -29,9 +29,9 @@ usage() {
 Usage:
   bash scripts/sweeps_server/backbone.sh [options]
 
-Rotates through every backbone .pth file in weights/ (excluding best_model.pth
-and *.fp16.pth) and runs one candidate per backbone with the operating
-baseline. Default seeds: 42,1,2,3,4.
+Rotates through the preferred download.py::MODELS backbone order, plus any
+extra non-deprecated .pth file in weights/, and runs one candidate per backbone
+with the operating baseline. Default seeds: 42,1,2,3,4.
 
 Options:
   --python PATH        python executable
@@ -91,15 +91,15 @@ weights_dir = Path("weights")
 preferred_order = [
     "convnextv2_tiny.fcmae_ft_in22k_in1k",
     "convnextv2_base.fcmae_ft_in22k_in1k",
+    "convnext_tiny.dinov3_lvd1689m",
     "tf_efficientnetv2_s.in21k_ft_in1k",
-    "swin_tiny_patch4_window7_224.ms_in22k_ft_in1k",
+    "swinv2_cr_tiny_ns_224.sw_in1k",
     "maxvit_tiny_tf_224.in1k",
-    "vit_base_patch16_clip_224.laion2b_ft_in12k_in1k",
 ]
 available = []
 for path in weights_dir.glob("*.pth"):
     name = path.stem
-    if name == "best_model" or name.endswith(".fp16"):
+    if name == "best_model" or name.endswith(".fp16") or name.startswith("vit_") or name.startswith("swin_"):
         continue
     available.append(name)
 available_set = set(available)

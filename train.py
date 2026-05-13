@@ -418,7 +418,9 @@ def create_model(
 
     # Classification head 교체 (timm 모델마다 head 구조 다름)
     if hasattr(model, 'head') and hasattr(model.head, 'fc'):
-        in_features = model.head.fc.in_features
+        in_features = getattr(model.head.fc, "in_features", None) or getattr(model, "num_features", None)
+        if in_features is None:
+            raise RuntimeError(f"{model_name}의 head 입력 차원을 찾지 못했습니다.")
         model.head.fc = nn.Sequential(
             nn.Dropout(dropout), nn.Linear(in_features, 512),
             nn.ReLU(inplace=True), nn.Linear(512, num_classes),
@@ -430,13 +432,17 @@ def create_model(
             nn.ReLU(inplace=True), nn.Linear(512, num_classes),
         )
     elif hasattr(model, 'classifier'):
-        in_features = model.classifier.in_features
+        in_features = getattr(model.classifier, "in_features", None) or getattr(model, "num_features", None)
+        if in_features is None:
+            raise RuntimeError(f"{model_name}의 classifier 입력 차원을 찾지 못했습니다.")
         model.classifier = nn.Sequential(
             nn.Dropout(dropout), nn.Linear(in_features, 512),
             nn.ReLU(inplace=True), nn.Linear(512, num_classes),
         )
     else:
-        in_features = model.get_classifier().in_features
+        in_features = getattr(model.get_classifier(), "in_features", None) or getattr(model, "num_features", None)
+        if in_features is None:
+            raise RuntimeError(f"{model_name}의 classifier 입력 차원을 찾지 못했습니다.")
         model.reset_classifier(0)
         model.classifier = nn.Sequential(
             nn.Dropout(dropout), nn.Linear(in_features, 512),

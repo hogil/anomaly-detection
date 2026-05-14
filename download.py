@@ -48,13 +48,22 @@ def download_one(model_name: str, force: bool = False) -> str:
         try:
             verify_state_dict(out_path)
         except Exception as e:
+            # Closed-network safe: do NOT auto-trigger pretrained=True re-download
+            # here (it would HEAD huggingface.co and break on DNS-less servers).
+            # Surface the invalid file and let the caller fix it manually or rerun
+            # with --force on a machine that has internet.
             print(
-                f"  invalid {out_path} ({type(e).__name__}: {e}); re-downloading",
+                f"  invalid {out_path} ({size_mb:.0f} MB, {type(e).__name__}: {e})",
                 file=sys.stderr,
             )
-        else:
-            print(f"  skip   {out_path} ({size_mb:.0f} MB, already exists, verified)")
-            return "skip"
+            print(
+                "         replace it manually (sneakernet) or rerun with --force "
+                "on an internet-connected machine.",
+                file=sys.stderr,
+            )
+            return "fail"
+        print(f"  skip   {out_path} ({size_mb:.0f} MB, already exists, verified)")
+        return "skip"
     print(f"  download {model_name} ...")
     try:
         m = timm.create_model(model_name, pretrained=True)

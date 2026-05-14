@@ -1,6 +1,2 @@
-weights/convnextv2_base.fcmae_ft_in22k_in1k.pth filter=lfs diff=lfs merge=lfs -text
-weights/convnextv2_tiny.fcmae_ft_in22k_in1k.pth filter=lfs diff=lfs merge=lfs -text
-weights/convnext_tiny.dinov3_lvd1689m.pth filter=lfs diff=lfs merge=lfs -text
-weights/maxvit_tiny_tf_224.in1k.pth filter=lfs diff=lfs merge=lfs -text
-weights/swinv2_cr_tiny_ns_224.sw_in1k.pth filter=lfs diff=lfs merge=lfs -text
-weights/tf_efficientnetv2_s.in21k_ft_in1k.pth filter=lfs diff=lfs merge=lfs -text
+weights/*.pth filter=lfs diff=lfs merge=lfs -text
+weights/**/*.pth filter=lfs diff=lfs merge=lfs -text

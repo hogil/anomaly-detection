@@ -19,7 +19,6 @@ display_per_member_*/
 
 # Training artifacts
 logs/
-weights/
 
 # Inference outputs
 inference_output/
@@ -38,14 +37,10 @@ server_outputs/
 *.bin
 
 # Required pretrained backbones for all-dataset-backbone sweeps.
-# These are tracked through Git LFS; generated best_model.pth stays ignored.
+# These are tracked through Git LFS.
 !weights/
-!weights/convnextv2_base.fcmae_ft_in22k_in1k.pth
-!weights/convnextv2_tiny.fcmae_ft_in22k_in1k.pth
-!weights/convnext_tiny.dinov3_lvd1689m.pth
-!weights/maxvit_tiny_tf_224.in1k.pth
-!weights/swinv2_cr_tiny_ns_224.sw_in1k.pth
-!weights/tf_efficientnetv2_s.in21k_ft_in1k.pth
+!weights/*.pth
+!weights/**/*.pth
 
 # ============================================================================
 # Python

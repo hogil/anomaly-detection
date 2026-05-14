@@ -19,6 +19,7 @@ display_per_member_*/
 
 # Training artifacts
 logs/
+weights/
 
 # Inference outputs
 inference_output/
@@ -35,12 +36,6 @@ server_outputs/
 *.onnx
 *.safetensors
 *.bin
-
-# Required pretrained backbones for all-dataset-backbone sweeps.
-# These are tracked through Git LFS.
-!weights/
-!weights/*.pth
-!weights/**/*.pth
 
 # ============================================================================
 # Python

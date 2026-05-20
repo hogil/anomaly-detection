@@ -577,8 +577,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", default=DEFAULT_DATASET_CONFIG)
-    parser.add_argument("--workers", type=int, default=1,
-                        help="병렬 worker 수 (1=순차 default, 0=auto cpu_count-1, N>1=N process)")
+    parser.add_argument("--workers", type=int, default=0,
+                        help="병렬 worker 수 (0=auto cpu_count-1 default, 1=순차, N>1=N process)")
     parser.add_argument("--no_snapshot", action="store_true",
                         help="configs/datasets/ 자동 snapshot 비활성")
     parser.add_argument("--all_legend_axes_per_group", action="store_true",

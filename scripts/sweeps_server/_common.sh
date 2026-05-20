@@ -43,9 +43,13 @@ detect_profile() {
     [[ -z "$mem_mb" ]] && mem_mb=0
   fi
 
+  # workers default = cpus - 2 (OS 여유 2코어). cap 동일 식이라 사실상 cpus-2로 정렬됨.
+  local default_workers=$((cpus - 2))
+  [[ "$default_workers" -lt 0 ]] && default_workers=0
+
   if [[ "$gpu_mem" -ge 40000 && "${mem_mb:-0}" -ge 64000 ]]; then
     PROFILE_NAME="server"
-    PROFILE_NUM_WORKERS=48
+    PROFILE_NUM_WORKERS=$default_workers
     PROFILE_PREFETCH=4
     PROFILE_MAX_LAUNCHED=0
   elif [[ "$gpu_mem" -ge 12000 && "${mem_mb:-0}" -ge 16000 ]]; then
@@ -60,7 +64,7 @@ detect_profile() {
     PROFILE_MAX_LAUNCHED=0
   fi
 
-  # cap workers at cpus-2 so OS stays responsive.
+  # 안전망: 어떤 프로파일이든 cpus-2 초과 금지 (OS 응답성).
   local cap=$((cpus - 2))
   [[ "$cap" -lt 0 ]] && cap=0
   if [[ "$PROFILE_NUM_WORKERS" -gt "$cap" ]]; then

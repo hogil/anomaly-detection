@@ -1158,8 +1158,8 @@ def main():
                         help="매 epoch 끝에 test 평가 + history에 기록")
     parser.add_argument("--seed", type=int, default=td("seed", 42),
                         help="학습 random seed (재현성)")
-    parser.add_argument("--num_workers", type=int, default=td("num_workers", 4),
-                        help="DataLoader worker 수 (Windows: 0~4, Linux 서버: 8~16 권장)")
+    parser.add_argument("--num_workers", type=int, default=td("num_workers", -1),
+                        help="DataLoader worker 수. -1=auto (cpu_count-2), 0=메인 프로세스, N>0=N workers. Windows safe mode는 0으로 강제.")
     parser.add_argument("--precision", type=str, default=td("precision", "fp16"),
                         choices=["fp16", "bf16", "fp32"],
                         help="학습 정밀도 (H100/H200: bf16 권장 — overflow 없음, GradScaler 불필요)")
@@ -1383,6 +1383,14 @@ def main():
     print(f"  Images: train={len(train_ds)}, val={len(val_ds)}, test={len(test_ds)}")
 
     num_workers = args.num_workers
+    if num_workers < 0:
+        try:
+            import multiprocessing as _mp
+            _cpu = _mp.cpu_count()
+        except (NotImplementedError, ValueError):
+            _cpu = 4
+        num_workers = max(1, _cpu - 2)
+        print(f"  [auto] num_workers={num_workers} (cpu_count={_cpu} - 2)")
     windows_dataloader_safe_mode = os.name == "nt" and os.environ.get("AD_ALLOW_WINDOWS_DATALOADER_WORKERS") != "1"
     if windows_dataloader_safe_mode and num_workers > 0:
         print(

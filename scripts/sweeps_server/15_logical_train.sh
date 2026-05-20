@@ -12,6 +12,7 @@ detect_profile
 WORKERS="${WORKERS:-$PROFILE_NUM_WORKERS}"
 NUM_WORKERS="${NUM_WORKERS:-$PROFILE_NUM_WORKERS}"
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-$PROFILE_PREFETCH}"
+BATCH_SIZE="${BATCH_SIZE:-$PROFILE_BATCH_SIZE}"
 LOGICAL_SEEDS="${LOGICAL_SEEDS:-42}"
 LOG_DIR_GROUP="${LOG_DIR_GROUP:-$(date +%Y%m%d_%H%M%S)_logical_train}"
 CHECKPOINT_RETENTION="${CHECKPOINT_RETENTION:-all}"
@@ -31,6 +32,7 @@ Options:
   --workers N          Data/image generation workers (default: 24)
   --num-workers N      train.py DataLoader workers (default: 24)
   --prefetch-factor N  train.py prefetch factor (default: 4)
+  --batch-size N       train.py --batch_size override (auto from profile)
   --seeds CSV          Logical train seeds (default: 42)
   --force              Re-run completed tag and regenerate logical artifacts
   --max-launched N     Stop controller after launching N new runs
@@ -49,6 +51,7 @@ while [[ $# -gt 0 ]]; do
     --workers) WORKERS="$2"; shift 2 ;;
     --num-workers) NUM_WORKERS="$2"; shift 2 ;;
     --prefetch-factor) PREFETCH_FACTOR="$2"; shift 2 ;;
+    --batch-size) BATCH_SIZE="$2"; shift 2 ;;
     --seeds) LOGICAL_SEEDS="$2"; shift 2 ;;
     --force) FORCE=1; shift ;;
     --max-launched) MAX_LAUNCHED="$2"; shift 2 ;;
@@ -132,12 +135,12 @@ else
   echo "[skip] logical per-member images already exist: $PM_IMAGE_DIR"
 fi
 
-run_cmd "$PYTHON" - "$QUEUE" "$TRAIN_CONFIG" "$PM_SCENARIOS" "$LOGICAL_SEEDS" "$NUM_WORKERS" "$PREFETCH_FACTOR" <<'PY'
+run_cmd "$PYTHON" - "$QUEUE" "$TRAIN_CONFIG" "$PM_SCENARIOS" "$LOGICAL_SEEDS" "$NUM_WORKERS" "$PREFETCH_FACTOR" "$BATCH_SIZE" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-queue_path, train_config, scenarios_csv, seeds_raw, num_workers, prefetch = sys.argv[1:7]
+queue_path, train_config, scenarios_csv, seeds_raw, num_workers, prefetch, batch_size = sys.argv[1:8]
 seeds = [int(item.strip()) for item in seeds_raw.split(",") if item.strip()]
 if not seeds:
     raise SystemExit("no logical train seeds provided")
@@ -148,7 +151,7 @@ base_args = {
     "--scenarios_csv": scenarios_csv,
     "--epochs": 20,
     "--patience": 5,
-    "--batch_size": 32,
+    "--batch_size": int(batch_size),
     "--dropout": 0.0,
     "--precision": "fp16",
     "--num_workers": int(num_workers),

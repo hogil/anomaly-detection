@@ -34,6 +34,7 @@ SKIP_REPORT=0
 RESET_DATA=0
 PREP_DATA_ONLY=0
 SKIP_WEIGHTS=0
+BATCH_SIZE="${BATCH_SIZE:-}"
 PASS_ARGS=()
 
 DEFAULT_DATASETS=(
@@ -67,6 +68,7 @@ Options:
   --reset-data           Delete the config's data/image/display outputs before prep
   --prep-data-only       Prep only data/images/validation; skip baseline refcheck
   --skip-weights         Do not run download.py during prep; require weights/*.pth already present
+  --batch-size N         train.py --batch_size override (auto: H100/H200 server=256)
   -h, --help             Show this help
 
 Anything after `--` is forwarded verbatim to 00_all.sh, e.g.:
@@ -88,6 +90,7 @@ while [[ $# -gt 0 ]]; do
     --reset-data) RESET_DATA=1; shift ;;
     --prep-data-only) PREP_DATA_ONLY=1; shift ;;
     --skip-weights) SKIP_WEIGHTS=1; shift ;;
+    --batch-size) BATCH_SIZE="$2"; shift 2 ;;
     --) shift; PASS_ARGS=("$@"); break ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
@@ -195,6 +198,9 @@ PY
     if [[ "$SKIP_WEIGHTS" -eq 1 ]]; then
       PREP_EXTRA+=(--skip-weights)
     fi
+    if [[ -n "$BATCH_SIZE" ]]; then
+      PREP_EXTRA+=(--batch-size "$BATCH_SIZE")
+    fi
     bash scripts/run_paper_server_all.sh \
       --config "$cfg" \
       --python "$PYTHON" \
@@ -208,10 +214,15 @@ PY
 
   if [[ "$SKIP_FULL" -eq 0 ]]; then
     echo "[step 2/2] full sweep (00_all.sh)"
+    FULL_EXTRA=()
+    if [[ -n "$BATCH_SIZE" ]]; then
+      FULL_EXTRA+=(--batch-size "$BATCH_SIZE")
+    fi
     bash scripts/sweeps_server/00_all.sh \
       --config "$cfg" \
       --python "$PYTHON" \
       --log-dir-group "$group" \
+      "${FULL_EXTRA[@]}" \
       "${PASS_ARGS[@]}"
   else
     echo "[step 2/2] full sweep skipped"

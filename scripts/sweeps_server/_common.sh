@@ -52,16 +52,19 @@ detect_profile() {
     PROFILE_NUM_WORKERS=$default_workers
     PROFILE_PREFETCH=4
     PROFILE_MAX_LAUNCHED=0
+    PROFILE_BATCH_SIZE=256
   elif [[ "$gpu_mem" -ge 12000 && "${mem_mb:-0}" -ge 16000 ]]; then
     PROFILE_NAME="pc"
     PROFILE_NUM_WORKERS=2
     PROFILE_PREFETCH=2
     PROFILE_MAX_LAUNCHED=0
+    PROFILE_BATCH_SIZE=32
   else
     PROFILE_NAME="minimal"
     PROFILE_NUM_WORKERS=0
     PROFILE_PREFETCH=1
     PROFILE_MAX_LAUNCHED=0
+    PROFILE_BATCH_SIZE=8
   fi
 
   # 안전망: 어떤 프로파일이든 cpus-2 초과 금지 (OS 응답성).
@@ -71,7 +74,7 @@ detect_profile() {
     PROFILE_NUM_WORKERS=$cap
   fi
 
-  echo "[profile] $PROFILE_NAME gpu=${gpu_mem}MB ram=${mem_mb}MB cpu=${cpus} workers=$PROFILE_NUM_WORKERS prefetch=$PROFILE_PREFETCH max_launched=$PROFILE_MAX_LAUNCHED"
+  echo "[profile] $PROFILE_NAME gpu=${gpu_mem}MB ram=${mem_mb}MB cpu=${cpus} workers=$PROFILE_NUM_WORKERS prefetch=$PROFILE_PREFETCH batch=$PROFILE_BATCH_SIZE max_launched=$PROFILE_MAX_LAUNCHED"
 }
 
 run_paper_stage() {

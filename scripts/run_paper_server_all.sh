@@ -28,6 +28,7 @@ WORKERS="${WORKERS:-$PROFILE_NUM_WORKERS}"
 NUM_WORKERS="${NUM_WORKERS:-$PROFILE_NUM_WORKERS}"
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-$PROFILE_PREFETCH}"
 MAX_LAUNCHED="${MAX_LAUNCHED:-$PROFILE_MAX_LAUNCHED}"
+BATCH_SIZE="${BATCH_SIZE:-$PROFILE_BATCH_SIZE}"
 CANDIDATE_PREFIX="fresh0412_v11"
 MIN_F1="0.99"
 SKIP_WEIGHTS=0
@@ -60,6 +61,7 @@ Options:
   --workers N            data/image generation workers
   --num-workers N        train.py DataLoader workers
   --prefetch-factor N    train.py prefetch factor
+  --batch-size N         train.py --batch_size override (auto: server=256, pc=32, minimal=8)
   --max-launched N       stop controller after launching N runs (0 = unlimited)
   --candidate-prefix STR prefix for prediction trend analysis
   --min-f1 FLOAT         min F1 for strong-run trend analysis
@@ -82,6 +84,7 @@ while [[ $# -gt 0 ]]; do
     --workers) WORKERS="$2"; shift 2 ;;
     --num-workers) NUM_WORKERS="$2"; shift 2 ;;
     --prefetch-factor) PREFETCH_FACTOR="$2"; shift 2 ;;
+    --batch-size) BATCH_SIZE="$2"; shift 2 ;;
     --candidate-prefix) CANDIDATE_PREFIX="$2"; shift 2 ;;
     --min-f1) MIN_F1="$2"; shift 2 ;;
     --force) FORCE=1; shift ;;
@@ -145,6 +148,7 @@ prepare_queue() {
     --config "$CONFIG"
     --num-workers "$NUM_WORKERS"
     --prefetch-factor "$PREFETCH_FACTOR"
+    --batch-size "$BATCH_SIZE"
   )
   [[ -n "$start_after_axis" ]] && args+=(--start-after-axis "$start_after_axis")
   [[ -n "$start_after_candidate" ]] && args+=(--start-after-candidate "$start_after_candidate")
@@ -266,7 +270,7 @@ PY
 main() {
   exec > >(tee -a "$LOG") 2>&1
   echo "== run started: $(date -Is) =="
-  echo "config=$CONFIG profile=$PROFILE_NAME workers=$WORKERS num_workers=$NUM_WORKERS prefetch=$PREFETCH_FACTOR max_launched=$MAX_LAUNCHED log_dir_group=$LOG_DIR_GROUP"
+  echo "config=$CONFIG profile=$PROFILE_NAME workers=$WORKERS num_workers=$NUM_WORKERS prefetch=$PREFETCH_FACTOR batch_size=$BATCH_SIZE max_launched=$MAX_LAUNCHED log_dir_group=$LOG_DIR_GROUP"
   echo "round1_axes=$ROUND1_INCLUDE_AXES"
 
   DATA_DIR="$(config_path output.data_dir)"

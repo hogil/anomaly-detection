@@ -12,6 +12,7 @@ CONFIG="${CONFIG:-dataset.yaml}"
 detect_profile
 NUM_WORKERS="${NUM_WORKERS:-$PROFILE_NUM_WORKERS}"
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-$PROFILE_PREFETCH}"
+BATCH_SIZE="${BATCH_SIZE:-$PROFILE_BATCH_SIZE}"
 MAX_LAUNCHED="${MAX_LAUNCHED:-$PROFILE_MAX_LAUNCHED}"
 LOG_DIR_GROUP="${LOG_DIR_GROUP:-$(date +%Y%m%d_%H%M%S)_sample_skip}"
 CHECKPOINT_RETENTION="${CHECKPOINT_RETENTION:-all}"
@@ -28,6 +29,7 @@ Options:
   --config PATH        dataset config (default dataset.yaml)
   --num-workers N      train.py DataLoader workers
   --prefetch-factor N  train.py prefetch factor
+  --batch-size N       train.py --batch_size override (auto from profile)
   --force              re-run completed tag
   --max-launched N     stop controller after launching N runs
   --log-dir-group NAME group runs under logs/<NAME>/
@@ -43,6 +45,7 @@ while [[ $# -gt 0 ]]; do
     --config) CONFIG="$2"; shift 2 ;;
     --num-workers) NUM_WORKERS="$2"; shift 2 ;;
     --prefetch-factor) PREFETCH_FACTOR="$2"; shift 2 ;;
+    --batch-size) BATCH_SIZE="$2"; shift 2 ;;
     --force) FORCE=1; shift ;;
     --max-launched) MAX_LAUNCHED="$2"; shift 2 ;;
     --log-dir-group) LOG_DIR_GROUP="$2"; shift 2 ;;
@@ -65,7 +68,8 @@ run_cmd "$PYTHON" scripts/prepare_server_queue.py \
   --dst "${VAL_DIR}/03_sample_skip_active.json" \
   --config "$CONFIG" \
   --num-workers "$NUM_WORKERS" \
-  --prefetch-factor "$PREFETCH_FACTOR"
+  --prefetch-factor "$PREFETCH_FACTOR" \
+  --batch-size "$BATCH_SIZE"
 
 cmd=(
   "$PYTHON" scripts/adaptive_experiment_controller.py

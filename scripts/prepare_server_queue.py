@@ -163,6 +163,8 @@ def prepare_queue(args: argparse.Namespace) -> dict[str, Any]:
     payload["selected_reference"] = args.raw_reference
     payload["server_config"] = args.config
     payload["server_num_workers"] = args.num_workers
+    if args.batch_size is not None and args.batch_size > 0:
+        payload["server_batch_size"] = args.batch_size
     payload["server_baseline"] = {
         "candidate": args.raw_reference,
         "grad_clip": 0.0,
@@ -224,6 +226,8 @@ def prepare_queue(args: argparse.Namespace) -> dict[str, Any]:
         run_args["--config"] = args.config
         run_args["--num_workers"] = args.num_workers
         run_args["--prefetch_factor"] = args.prefetch_factor
+        if args.batch_size is not None and args.batch_size > 0:
+            run_args["--batch_size"] = args.batch_size
         run["_server_axis"] = axis
         run["_server_source_index"] = original_index
         prepared_runs.append(run)
@@ -273,6 +277,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default="dataset.yaml")
     parser.add_argument("--num-workers", type=int, default=24)
     parser.add_argument("--prefetch-factor", type=int, default=4)
+    parser.add_argument("--batch-size", type=int, default=None,
+                        help="override --batch_size in every run's args. omit/0 keeps the value baked into the queue JSON.")
     parser.add_argument("--start-after-axis", default="")
     parser.add_argument("--start-after-candidate", default="")
     parser.add_argument("--raw-reference", default=RAW_REFERENCE)

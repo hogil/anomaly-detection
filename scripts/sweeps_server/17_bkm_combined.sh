@@ -22,6 +22,7 @@ CONFIG="${CONFIG:-dataset.yaml}"
 detect_profile
 NUM_WORKERS="${NUM_WORKERS:-$PROFILE_NUM_WORKERS}"
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-$PROFILE_PREFETCH}"
+BATCH_SIZE="${BATCH_SIZE:-$PROFILE_BATCH_SIZE}"
 MAX_LAUNCHED="${MAX_LAUNCHED:-$PROFILE_MAX_LAUNCHED}"
 LOG_DIR_GROUP="${LOG_DIR_GROUP:-$(date +%Y%m%d_%H%M%S)_bkm_combined}"
 CHECKPOINT_RETENTION="${CHECKPOINT_RETENTION:-all}"
@@ -42,6 +43,7 @@ Options:
   --config PATH        dataset config (default dataset.yaml)
   --num-workers N      train.py DataLoader workers
   --prefetch-factor N  train.py prefetch factor
+  --batch-size N       train.py --batch_size override (auto from profile)
   --seeds CSV          seeds (default: 42,1,2,3,4)
   --force              re-run completed tags
   --max-launched N     stop controller after launching N runs
@@ -58,6 +60,7 @@ while [[ $# -gt 0 ]]; do
     --config) CONFIG="$2"; shift 2 ;;
     --num-workers) NUM_WORKERS="$2"; shift 2 ;;
     --prefetch-factor) PREFETCH_FACTOR="$2"; shift 2 ;;
+    --batch-size) BATCH_SIZE="$2"; shift 2 ;;
     --seeds) SEEDS="$2"; shift 2 ;;
     --force) FORCE=1; shift ;;
     --max-launched) MAX_LAUNCHED="$2"; shift 2 ;;
@@ -80,12 +83,12 @@ MARKDOWN="${VAL_DIR}/05_bkm_combined_results.md"
 
 echo "== paper stage: bkm_combined (output: $VAL_DIR) =="
 
-run_cmd "$PYTHON" - "$QUEUE" "$SEEDS" "$NUM_WORKERS" "$PREFETCH_FACTOR" <<'PY'
+run_cmd "$PYTHON" - "$QUEUE" "$SEEDS" "$NUM_WORKERS" "$PREFETCH_FACTOR" "$BATCH_SIZE" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-queue_path, seeds_raw, num_workers, prefetch = sys.argv[1:5]
+queue_path, seeds_raw, num_workers, prefetch, batch_size = sys.argv[1:6]
 seeds = [int(s.strip()) for s in seeds_raw.split(",") if s.strip()]
 candidate = "fresh0412_v11_bkm_combined_n3300"
 
@@ -94,7 +97,7 @@ base_args = {
     "--config": "dataset.yaml",
     "--epochs": 20,
     "--patience": 5,
-    "--batch_size": 32,
+    "--batch_size": int(batch_size),
     "--dropout": 0.0,
     "--precision": "fp16",
     "--num_workers": int(num_workers),
@@ -142,7 +145,8 @@ run_cmd "$PYTHON" scripts/prepare_server_queue.py \
   --dst "$ACTIVE" \
   --config "$CONFIG" \
   --num-workers "$NUM_WORKERS" \
-  --prefetch-factor "$PREFETCH_FACTOR"
+  --prefetch-factor "$PREFETCH_FACTOR" \
+  --batch-size "$BATCH_SIZE"
 
 cmd=(
   "$PYTHON" scripts/adaptive_experiment_controller.py

@@ -33,4 +33,20 @@ else
   echo "[ddp] visible GPUs=$NPROC; falling back to single-process training" >&2
 fi
 
+# Per-GPU batch: when DDP active, scale the global batch by NPROC so each rank
+# sees the profile's per-GPU value (e.g. server profile=256 per H100).
+# Skip if the caller already passed --batch-size explicitly.
+USER_HAS_BATCH=0
+for arg in "$@"; do
+  [[ "$arg" == "--batch-size" ]] && USER_HAS_BATCH=1 && break
+done
+
+if [[ "$USER_HAS_BATCH" -eq 0 && "$NPROC" -ge 2 ]]; then
+  source "$D/sweeps_server/_common.sh"
+  detect_profile >/dev/null
+  GLOBAL_BATCH=$((PROFILE_BATCH_SIZE * NPROC))
+  echo "[ddp] per-GPU batch=$PROFILE_BATCH_SIZE × NPROC=$NPROC -> global --batch-size $GLOBAL_BATCH"
+  set -- --batch-size "$GLOBAL_BATCH" "$@"
+fi
+
 exec bash "$D/all-dataset-backbone.sh" "$@"

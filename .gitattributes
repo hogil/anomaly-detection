@@ -1,0 +1,22 @@
+* text=auto
+
+# Shell scripts MUST be LF regardless of platform — Linux bash treats CRLF
+# heredoc terminators as unmatched, producing confusing "unexpected EOF"
+# errors. Force LF on commit AND checkout.
+*.sh        text eol=lf
+*.bash      text eol=lf
+
+# Python scripts also LF-only for cross-platform clone + scp consistency.
+*.py        text eol=lf
+
+# YAML / JSON: LF
+*.yaml      text eol=lf
+*.yml       text eol=lf
+*.json      text eol=lf
+
+# Binary
+*.png       binary
+*.jpg       binary
+*.pth       binary
+*.zip       binary
+*.pkl       binary

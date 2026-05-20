@@ -10,6 +10,8 @@ images/: highlighted_member=하이라이트 + fleet=회색
 display/: 전체 멤버 색상 구분
 """
 
+from __future__ import annotations
+
 import argparse
 import os
 import sys

@@ -14,6 +14,8 @@ Usage:
     python train.py --config dataset.yaml --epochs 50
 """
 
+from __future__ import annotations
+
 import argparse
 import builtins
 import gc

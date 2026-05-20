@@ -17,6 +17,19 @@
 
 set -uo pipefail
 
+# Resolve repo root from this script's location so the diagnostic works no
+# matter which directory the user calls it from.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SMOKE_PY="$SCRIPT_DIR/_nccl_smoke.py"
+cd "$REPO_ROOT"
+
+if [[ ! -f "$SMOKE_PY" ]]; then
+  echo "[fatal] $SMOKE_PY not found." >&2
+  echo "        Run 'git pull --rebase' inside $REPO_ROOT and try again." >&2
+  exit 1
+fi
+
 GPUS_CSV="${1:-0,1,2,3}"
 EXTRA_MODE="${2:-}"
 
@@ -95,12 +108,12 @@ if [[ "$EXTRA_MODE" == "nccl_all_off" ]]; then
 fi
 
 echo "[smoke] launching torchrun-style test (this is what crashes for you)" | tee -a "$LOG"
-echo "+ ${env_prefix[*]} python -m torch.distributed.run --nproc_per_node=${NPROC} --master_port=29501 scripts/_nccl_smoke.py" | tee -a "$LOG"
+echo "+ ${env_prefix[*]} python -m torch.distributed.run --nproc_per_node=${NPROC} --master_port=29501 $SMOKE_PY" | tee -a "$LOG"
 
 "${env_prefix[@]}" python -m torch.distributed.run \
   --nproc_per_node="$NPROC" \
   --master_port=29501 \
-  scripts/_nccl_smoke.py 2>&1 | tee -a "$LOG"
+  "$SMOKE_PY" 2>&1 | tee -a "$LOG"
 smoke_rc=${PIPESTATUS[0]}
 echo "[smoke] exit_code=${smoke_rc}" | tee -a "$LOG"
 

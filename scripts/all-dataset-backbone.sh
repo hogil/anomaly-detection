@@ -139,12 +139,43 @@ if [[ "$SKIP_WEIGHTS" -eq 1 ]]; then
 fi
 
 WRAPPER_TS="$(date +%Y%m%d_%H%M%S)"
+REPORT_DIR="validations/cross_dataset_report_${WRAPPER_TS}"
 echo "== all-dataset-backbone start: $(date -Is) =="
 echo "datasets: ${RESOLVED[*]}"
 echo "skip_prep=$SKIP_PREP skip_full=$SKIP_FULL skip_report=$SKIP_REPORT reset_data=$RESET_DATA prep_data_only=$PREP_DATA_ONLY skip_weights=$SKIP_WEIGHTS"
 
 GROUP_NAMES=()
 GROUP_CONFIGS=()
+
+build_groups_arg() {
+  local groups_arg=""
+  local pair
+  for i in "${!GROUP_NAMES[@]}"; do
+    pair="${GROUP_NAMES[$i]}=${GROUP_CONFIGS[$i]}"
+    if [[ -z "$groups_arg" ]]; then
+      groups_arg="$pair"
+    else
+      groups_arg="${groups_arg};${pair}"
+    fi
+  done
+  printf '%s' "$groups_arg"
+}
+
+write_cross_dataset_report() {
+  local label="$1"
+  [[ "$SKIP_REPORT" -eq 1 ]] && return 0
+  if [[ "${#GROUP_NAMES[@]}" -eq 0 ]]; then
+    return 0
+  fi
+  mkdir -p "$REPORT_DIR"
+  echo
+  echo "== cross-dataset report: $label =="
+  "$PYTHON" scripts/generate_cross_dataset_report.py \
+    --groups "$(build_groups_arg)" \
+    --validations-root validations \
+    --out-dir "$REPORT_DIR"
+  echo "report: $REPORT_DIR"
+}
 
 for cfg in "${RESOLVED[@]}"; do
   config_stem="$(basename "$cfg")"
@@ -227,6 +258,8 @@ PY
   else
     echo "[step 2/2] full sweep skipped"
   fi
+
+  write_cross_dataset_report "completed ${#GROUP_NAMES[@]}/${#RESOLVED[@]} datasets"
 done
 
 if [[ "$SKIP_REPORT" -eq 1 ]]; then
@@ -235,26 +268,7 @@ if [[ "$SKIP_REPORT" -eq 1 ]]; then
   exit 0
 fi
 
-REPORT_DIR="validations/cross_dataset_report_${WRAPPER_TS}"
-mkdir -p "$REPORT_DIR"
-
-# Build groups CSV: name=config pairs joined with ;
-GROUPS_ARG=""
-for i in "${!GROUP_NAMES[@]}"; do
-  pair="${GROUP_NAMES[$i]}=${GROUP_CONFIGS[$i]}"
-  if [[ -z "$GROUPS_ARG" ]]; then
-    GROUPS_ARG="$pair"
-  else
-    GROUPS_ARG="${GROUPS_ARG};${pair}"
-  fi
-done
-
-echo
-echo "== cross-dataset report =="
-"$PYTHON" scripts/generate_cross_dataset_report.py \
-  --groups "$GROUPS_ARG" \
-  --validations-root validations \
-  --out-dir "$REPORT_DIR"
+write_cross_dataset_report "final ${#GROUP_NAMES[@]}/${#RESOLVED[@]} datasets"
 
 echo "== all-dataset-backbone done: $(date -Is) =="
 echo "report: $REPORT_DIR"

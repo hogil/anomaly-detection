@@ -190,6 +190,10 @@ cmd=(
   --candidate-min-runs-before-skip 0
   --completion-exit-grace 15
   --update-live-summary
+  --stage-comparison-baseline "${VAL_DIR}/01_baseline_results.json"
+  --stage-comparison-md "$MARKDOWN"
+  --stage-comparison-plot "${VAL_DIR}/04_backbone_plot.png"
+  --stage-comparison-title "Backbone sweep"
   --checkpoint-retention "$CHECKPOINT_RETENTION"
   --checkpoint-retention-scope "$CHECKPOINT_RETENTION_SCOPE"
 )

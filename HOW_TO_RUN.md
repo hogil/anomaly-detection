@@ -249,7 +249,7 @@ scaling 적용 항목:
 
 ### 한방 — 모든 dataset × 모든 axis × 모든 backbone 한 번에
 
-`scripts/all-dataset-backbone.sh` 한 줄. 각 yaml 마다 (1) weights/data/baseline 준비 → (2) `00_all.sh` 실행 (모든 axis + sample_skip + 모든 backbone + logical_train + gc-last + bkm_combined + postprocess). 전부 끝나면 dataset 별 결과를 모아 `validations/cross_dataset_report_<timestamp>/` 에 비교 표·plot 생성.
+`scripts/all-dataset-backbone.sh` 한 줄. 각 yaml 마다 (1) weights/data/baseline 준비 → (2) `00_all.sh` 실행 (모든 axis + sample_skip + 모든 backbone + logical_train + gc-last + bkm_combined + postprocess). 각 dataset 이 끝날 때마다 `validations/cross_dataset_report_<timestamp>/` 를 갱신하고, 전부 끝난 뒤 같은 위치에 최종 비교 표·plot 을 다시 생성합니다. Backbone stage 도 각 run 완료 직후 `04_backbone_results.md` / `04_backbone_plot.png` 를 갱신하므로 한 backbone 의 seed 묶음이 끝나는 즉시 현재 순위를 볼 수 있습니다.
 
 기본값은 prep 단계에서 `download.py`를 실행해 `weights/{model_name}.pth`를 준비합니다. 폐쇄망 서버처럼 `weights/*.pth`를 이미 복사해 둔 경우에만 `--skip-weights`를 붙입니다.
 
@@ -259,8 +259,10 @@ bash scripts/all-dataset-backbone.sh
 # 끝나고:
 #   validations/cross_dataset_report_<ts>/cross_dataset_summary.md
 #   validations/cross_dataset_report_<ts>/cross_dataset_summary.csv
+#   validations/cross_dataset_report_<ts>/cross_dataset_overall.csv
 #   validations/cross_dataset_report_<ts>/cross_dataset_f1.png
 #   validations/cross_dataset_report_<ts>/cross_dataset_backbone.png
+#   validations/cross_dataset_report_<ts>/cross_dataset_overall.png
 ```
 
 옵션:

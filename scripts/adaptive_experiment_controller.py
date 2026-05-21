@@ -56,6 +56,7 @@ LOGS_DIR = ROOT / "logs"
 DEFAULT_SUMMARY = ROOT / "validations" / "adaptive_controller_summary.json"
 DEFAULT_MARKDOWN = ROOT / "validations" / "adaptive_controller_summary.md"
 DEFAULT_LIVE_SUMMARY_SCRIPT = ROOT / "scripts" / "update_live_summary_doc.py"
+DEFAULT_STAGE_COMPARISON_SCRIPT = ROOT / "scripts" / "generate_stage_comparison.py"
 DEFAULT_MODEL_NAME = "convnextv2_tiny.fcmae_ft_in22k_in1k"
 VALIDATED_WEIGHT_PATHS: set[Path] = set()
 
@@ -812,6 +813,39 @@ def update_live_summary_doc(enabled: bool) -> None:
         print(f"[controller] live summary update failed: {exc}", flush=True)
 
 
+def update_stage_comparison(args: argparse.Namespace) -> None:
+    out_md = getattr(args, "stage_comparison_md", None)
+    out_plot = getattr(args, "stage_comparison_plot", None)
+    if not out_md or not out_plot:
+        return
+    if not DEFAULT_STAGE_COMPARISON_SCRIPT.exists():
+        print(f"[controller] stage comparison script missing: {DEFAULT_STAGE_COMPARISON_SCRIPT}", flush=True)
+        return
+
+    cmd = [
+        sys.executable,
+        str(DEFAULT_STAGE_COMPARISON_SCRIPT),
+        "--results",
+        str(args.summary),
+        "--out-md",
+        str(out_md),
+        "--out-plot",
+        str(out_plot),
+        "--title",
+        str(args.stage_comparison_title or "Stage comparison"),
+    ]
+    if args.stage_comparison_baseline:
+        cmd.extend(["--baseline", str(args.stage_comparison_baseline)])
+
+    try:
+        proc = subprocess.run(cmd, cwd=ROOT, check=False)
+    except Exception as exc:
+        print(f"[controller] stage comparison update failed: {exc}", flush=True)
+        return
+    if proc.returncode != 0:
+        print(f"[controller] stage comparison update exited {proc.returncode}", flush=True)
+
+
 def main() -> int:
     configure_output_encoding()
     parser = argparse.ArgumentParser(description="Sequential adaptive train.py controller")
@@ -842,6 +876,29 @@ def main() -> int:
         help="Seconds to wait after train.py prints completion before terminating a lingering successful process. Negative disables.",
     )
     parser.add_argument("--update-live-summary", action="store_true", help="Refresh docs/summary.md after controller artifact updates.")
+    parser.add_argument(
+        "--stage-comparison-baseline",
+        type=Path,
+        default=None,
+        help="Optional baseline results JSON used to rebuild a live stage comparison after each summary update.",
+    )
+    parser.add_argument(
+        "--stage-comparison-md",
+        type=Path,
+        default=None,
+        help="Optional markdown output for live stage comparison.",
+    )
+    parser.add_argument(
+        "--stage-comparison-plot",
+        type=Path,
+        default=None,
+        help="Optional plot output for live stage comparison.",
+    )
+    parser.add_argument(
+        "--stage-comparison-title",
+        default="Stage comparison",
+        help="Title used by the live stage comparison report.",
+    )
     parser.add_argument(
         "--log-dir-group",
         type=str,
@@ -910,6 +967,7 @@ def main() -> int:
             save_json(args.summary, summary)
             write_markdown(args.markdown, summary)
             update_live_summary_doc(args.update_live_summary)
+            update_stage_comparison(args)
             continue
 
         existing = None if args.force else find_completed_run_dir(run["tag"], args.log_dir_group)
@@ -934,6 +992,7 @@ def main() -> int:
                     save_json(args.summary, summary)
                     write_markdown(args.markdown, summary)
                     update_live_summary_doc(args.update_live_summary)
+                    update_stage_comparison(args)
                     return 2
                 print(f"[preflight] weight ok: {weight_path.relative_to(ROOT)}", flush=True)
             code = launch_run(run, args.dry_run, args.completion_exit_grace, log_dir_group=args.log_dir_group)
@@ -969,6 +1028,7 @@ def main() -> int:
                     save_json(args.summary, summary)
                     write_markdown(args.markdown, summary)
                     update_live_summary_doc(args.update_live_summary)
+                    update_stage_comparison(args)
                     if args.max_launched > 0 and launched >= args.max_launched:
                         break
                     continue
@@ -985,6 +1045,7 @@ def main() -> int:
                 save_json(args.summary, summary)
                 write_markdown(args.markdown, summary)
                 update_live_summary_doc(args.update_live_summary)
+                update_stage_comparison(args)
                 return code
             existing = find_completed_run_dir(run["tag"], args.log_dir_group)
             if existing is None:
@@ -999,6 +1060,7 @@ def main() -> int:
         save_json(args.summary, summary)
         write_markdown(args.markdown, summary)
         update_live_summary_doc(args.update_live_summary)
+        update_stage_comparison(args)
         if args.max_launched > 0 and launched >= args.max_launched:
             break
 
@@ -1011,6 +1073,7 @@ def main() -> int:
     save_json(args.summary, summary)
     write_markdown(args.markdown, summary)
     update_live_summary_doc(args.update_live_summary)
+    update_stage_comparison(args)
     print(json.dumps({"decision": summary["decision"], "aggregates": summary.get("aggregates", {})}, indent=2))
     return 0
 

@@ -27,7 +27,7 @@
       └─ for cfg in dataset.yaml dataset1_noise_15.yaml ... :
             run_paper_server_all.sh --skip-round1 --skip-post  ◄ prep
             sweeps_server/00_all.sh                            ◄ full sweep
-      └─ generate_cross_dataset_report.py (비교 표/plot)
+      └─ dataset 종료마다 + 최종 generate_cross_dataset_report.py (비교 표/plot)
         ▼
 [3] sweeps_server/00_all.sh                 ◄── ② stage loop
       └─ axis sweep (lr, warmup, normal_ratio, ...)
@@ -119,6 +119,10 @@ Type별 1차 error: `normal FP 4/750`, `standard_deviation FN 1/150`, 나머지 
 - 실행: `bash scripts/sweeps_server/00_all.sh` 한 줄. GPU 메모리·CPU 수로 `server`/`pc`/`minimal` 프로필을 자동 선택합니다.
 
 ## Run Reliability Incident Log
+
+Updated on 2026-05-21:
+
+- Server batch reporting now refreshes intermediate and final performance artifacts. `scripts/sweeps_server/14_backbone.sh` passes live comparison outputs to `scripts/adaptive_experiment_controller.py`, so `04_backbone_results.md` and `04_backbone_plot.png` are regenerated after each completed backbone run update. `scripts/all-dataset-backbone.sh` now refreshes `validations/cross_dataset_report_<timestamp>/` after each dataset finishes and once more at final completion. `scripts/generate_cross_dataset_report.py` also writes `cross_dataset_overall.csv` and `cross_dataset_overall.png` with mean F1/FN/FP across available datasets. Changed files: `scripts/adaptive_experiment_controller.py`, `scripts/sweeps_server/14_backbone.sh`, `scripts/all-dataset-backbone.sh`, `scripts/generate_cross_dataset_report.py`, `HOW_TO_RUN.md`, `README.md`. Verification: Python `py_compile`, Git Bash `bash -n` for changed wrappers, Git Bash wrapper `--help` smoke, no-training `all-dataset-backbone.sh --skip-prep --skip-full` smoke, existing-validation smoke for `generate_cross_dataset_report.py` and `generate_stage_comparison.py`, controller `--dry-run` smoke with live comparison args, and `git diff --check`.
 
 Updated on 2026-05-12:
 

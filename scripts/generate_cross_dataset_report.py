@@ -15,8 +15,10 @@ Outputs in ``--out-dir``:
 
 - ``cross_dataset_summary.md``
 - ``cross_dataset_summary.csv``
+- ``cross_dataset_overall.csv``: mean F1/FN/FP across available datasets
 - ``cross_dataset_f1.png``: baseline vs BKM-combined F1 per dataset
 - ``cross_dataset_backbone.png``: best backbone F1 per dataset
+- ``cross_dataset_overall.png``: overall mean F1 and FN/FP by stage
 """
 from __future__ import annotations
 
@@ -105,6 +107,44 @@ def fmt(value, spec=".4f"):
         return "-"
 
 
+def values(rows: list[dict], field: str) -> list[float]:
+    out: list[float] = []
+    for row in rows:
+        value = row.get(field)
+        if value is None:
+            continue
+        try:
+            out.append(float(value))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def build_overall_rows(rows: list[dict]) -> list[dict]:
+    stages = [
+        ("baseline", "Baseline"),
+        ("bkm", "BKM combined"),
+        ("backbone", "Best backbone"),
+    ]
+    out = []
+    for prefix, label in stages:
+        f1s = values(rows, f"{prefix}_f1")
+        fns = values(rows, f"{prefix}_fn")
+        fps = values(rows, f"{prefix}_fp")
+        seeds = [int(r.get(f"{prefix}_seeds") or 0) for r in rows]
+        out.append(
+            {
+                "stage": label,
+                "datasets": len(f1s),
+                "f1_mean": mean(f1s) if f1s else None,
+                "fn_mean": mean(fns) if fns else None,
+                "fp_mean": mean(fps) if fps else None,
+                "total_complete_seeds": sum(seeds),
+            }
+        )
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -166,6 +206,8 @@ def main() -> int:
             }
         )
 
+    overall_rows = build_overall_rows(rows)
+
     csv_path = args.out_dir / "cross_dataset_summary.csv"
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()) if rows else [])
@@ -173,6 +215,16 @@ def main() -> int:
             writer.writeheader()
             for row in rows:
                 writer.writerow(row)
+
+    overall_csv_path = args.out_dir / "cross_dataset_overall.csv"
+    with overall_csv_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=["stage", "datasets", "f1_mean", "fn_mean", "fp_mean", "total_complete_seeds"],
+        )
+        writer.writeheader()
+        for row in overall_rows:
+            writer.writerow(row)
 
     md_lines = [
         "# Cross-dataset comparison",
@@ -197,6 +249,33 @@ def main() -> int:
                     fmt(r["bkm_fp"], ".2f"),
                     fmt(r["backbone_f1"]),
                     r["backbone_candidate"] or "-",
+                ]
+            )
+            + " |"
+        )
+
+    md_lines.extend(
+        [
+            "",
+            "## Overall summary",
+            "",
+            "Mean across datasets with available complete candidate results.",
+            "",
+            "| stage | datasets | complete seeds | F1 mean | FN mean | FP mean |",
+            "| --- | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for row in overall_rows:
+        md_lines.append(
+            "| "
+            + " | ".join(
+                [
+                    row["stage"],
+                    str(row["datasets"]),
+                    str(row["total_complete_seeds"]),
+                    fmt(row["f1_mean"]),
+                    fmt(row["fn_mean"], ".2f"),
+                    fmt(row["fp_mean"], ".2f"),
                 ]
             )
             + " |"
@@ -251,12 +330,50 @@ def main() -> int:
         fig.savefig(args.out_dir / "cross_dataset_backbone.png", dpi=150)
         plt.close(fig)
 
+        overall_with_f1 = [row for row in overall_rows if row["f1_mean"] is not None]
+        if overall_with_f1:
+            stage_labels = [row["stage"] for row in overall_with_f1]
+            f1_vals = [row["f1_mean"] for row in overall_with_f1]
+            fn_vals = [row["fn_mean"] if row["fn_mean"] is not None else 0.0 for row in overall_with_f1]
+            fp_vals = [row["fp_mean"] if row["fp_mean"] is not None else 0.0 for row in overall_with_f1]
+            x = list(range(len(stage_labels)))
+            fig, axes = plt.subplots(1, 2, figsize=(max(7, len(stage_labels) * 1.8), 4.2))
+            ax_f1, ax_err = axes
+            ax_f1.bar(x, f1_vals, color="#4878CF")
+            ax_f1.set_xticks(x)
+            ax_f1.set_xticklabels(stage_labels, rotation=20, ha="right")
+            ax_f1.set_ylabel("F1 mean")
+            ax_f1.set_title("Overall F1")
+            ax_f1.grid(axis="y", linestyle="--", alpha=0.4)
+            for i, value in enumerate(f1_vals):
+                ax_f1.text(i, value, f"{value:.4f}", ha="center", va="bottom", fontsize=8)
+            f1_min = min(f1_vals)
+            f1_max = max(f1_vals)
+            margin = max(0.0005, (f1_max - f1_min) * 0.2)
+            ax_f1.set_ylim(max(0.0, f1_min - margin), min(1.0, f1_max + margin))
+
+            width = 0.38
+            ax_err.bar([i - width / 2 for i in x], fn_vals, width=width, label="FN", color="#E43320")
+            ax_err.bar([i + width / 2 for i in x], fp_vals, width=width, label="FP", color="#F5B041")
+            ax_err.set_xticks(x)
+            ax_err.set_xticklabels(stage_labels, rotation=20, ha="right")
+            ax_err.set_ylabel("mean count")
+            ax_err.set_title("Overall FN / FP")
+            ax_err.grid(axis="y", linestyle="--", alpha=0.4)
+            ax_err.legend(fontsize=8)
+            fig.tight_layout()
+            fig.savefig(args.out_dir / "cross_dataset_overall.png", dpi=150)
+            plt.close(fig)
+
     print(f"[cross_dataset_report] datasets={len(rows)}")
     print(f"  md  : {md_path}")
     print(f"  csv : {csv_path}")
+    print(f"        {overall_csv_path}")
     if labels:
         print(f"  png : {args.out_dir / 'cross_dataset_f1.png'}")
         print(f"        {args.out_dir / 'cross_dataset_backbone.png'}")
+        if any(row["f1_mean"] is not None for row in overall_rows):
+            print(f"        {args.out_dir / 'cross_dataset_overall.png'}")
     return 0
 
 

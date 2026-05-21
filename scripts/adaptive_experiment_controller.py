@@ -39,6 +39,8 @@ import json
 import os
 import queue
 import re
+import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -59,6 +61,10 @@ DEFAULT_LIVE_SUMMARY_SCRIPT = ROOT / "scripts" / "update_live_summary_doc.py"
 DEFAULT_STAGE_COMPARISON_SCRIPT = ROOT / "scripts" / "generate_stage_comparison.py"
 DEFAULT_MODEL_NAME = "convnextv2_tiny.fcmae_ft_in22k_in1k"
 VALIDATED_WEIGHT_PATHS: set[Path] = set()
+DDP_LISTEN_ERROR_PATTERNS = (
+    "server socket has failed to listen",
+    "failed to listen on any local network address",
+)
 
 
 def configure_output_encoding() -> None:
@@ -556,18 +562,45 @@ def verify_pretrained_weight(run: dict[str, Any]) -> Path:
     return path
 
 
+def find_free_local_port(host: str = "127.0.0.1") -> int:
+    """Ask the OS for a currently free local TCP port for one torchrun launch."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((host, 0))
+        return int(sock.getsockname()[1])
+
+
+def ddp_listen_error_seen(line: str) -> bool:
+    lowered = line.lower()
+    return any(pattern in lowered for pattern in DDP_LISTEN_ERROR_PATTERNS)
+
+
+def run_cleanup_sleep_seconds() -> float:
+    try:
+        return max(0.0, float(os.environ.get("AD_TRAIN_RUN_CLEANUP_SLEEP", "5") or "5"))
+    except ValueError:
+        return 5.0
+
+
 def build_command(run: dict[str, Any], log_dir_group: str = "") -> list[str]:
     try:
         ddp_nproc = int(os.environ.get("AD_TRAIN_DDP_NPROC", "1") or "1")
     except ValueError:
         ddp_nproc = 1
     if ddp_nproc > 1:
+        master_addr = os.environ.get("AD_TRAIN_MASTER_ADDR", "127.0.0.1")
+        master_port = os.environ.get("AD_TRAIN_MASTER_PORT") or str(find_free_local_port(master_addr))
         cmd = [
             sys.executable,
             "-m",
             "torch.distributed.run",
-            "--standalone",
-            f"--nproc_per_node={ddp_nproc}",
+            "--nnodes=1",
+            "--node-rank=0",
+            f"--nproc-per-node={ddp_nproc}",
+            "--master-addr",
+            master_addr,
+            "--master-port",
+            master_port,
             "train.py",
         ]
     else:
@@ -579,81 +612,154 @@ def build_command(run: dict[str, Any], log_dir_group: str = "") -> list[str]:
     return cmd
 
 
-def _stop_completed_process(proc: subprocess.Popen, tag: str) -> None:
-    print(f"[controller] completion marker seen; stopping lingering train.py for {tag}", flush=True)
-    proc.terminate()
+def _terminate_process_tree(proc: subprocess.Popen, tag: str, reason: str) -> None:
+    print(f"[controller] {reason}; stopping torchrun/train process group for {tag}", flush=True)
+    if os.name != "nt":
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        except OSError as exc:
+            print(f"[controller] process-group terminate failed for {tag}: {exc}", flush=True)
+            proc.terminate()
+    else:
+        proc.terminate()
     try:
         proc.wait(timeout=10)
     except subprocess.TimeoutExpired:
-        print(f"[controller] terminate timed out; killing train.py for {tag}", flush=True)
-        proc.kill()
+        print(f"[controller] terminate timed out; killing torchrun/train process group for {tag}", flush=True)
+        if os.name != "nt":
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except OSError as exc:
+                print(f"[controller] process-group kill failed for {tag}: {exc}", flush=True)
+                proc.kill()
+        else:
+            proc.kill()
         proc.wait(timeout=10)
 
 
-def launch_run(run: dict[str, Any], dry_run: bool, completion_exit_grace: float, log_dir_group: str = "") -> int:
-    cmd = build_command(run, log_dir_group=log_dir_group)
-    print(f"\n=== RUN {run['tag']} seed={run['seed']} ===", flush=True)
-    print(" ".join(cmd), flush=True)
-    if dry_run:
-        return 0
-    started = time.time()
-    env = os.environ.copy()
-    env["PYTHONUNBUFFERED"] = "1"
-    env.setdefault("PYTHONIOENCODING", "utf-8")
-    proc = subprocess.Popen(
-        cmd,
-        cwd=ROOT,
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
-    )
-    output_queue: queue.Queue[str] = queue.Queue()
-
-    def read_output() -> None:
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            output_queue.put(line)
-
-    reader = threading.Thread(target=read_output, daemon=True)
-    reader.start()
-    completion_seen_at: float | None = None
-    forced_after_completion = False
-    returncode: int | None = None
-    while True:
+def _cleanup_after_run(proc: subprocess.Popen, tag: str) -> None:
+    if os.name != "nt":
         try:
-            line = output_queue.get(timeout=0.2)
-        except queue.Empty:
-            line = None
-        if line is not None:
-            print(line, end="", flush=True)
-            if "학습 완료" in line:
-                completion_seen_at = completion_seen_at or time.time()
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except OSError as exc:
+            print(f"[controller] residual process-group cleanup failed for {tag}: {exc}", flush=True)
 
-        returncode = proc.poll()
-        if returncode is not None:
-            break
+    delay = run_cleanup_sleep_seconds()
+    if delay > 0:
+        print(f"[controller] cleanup pause {delay:g}s before next queued run", flush=True)
+        time.sleep(delay)
 
-        if completion_seen_at is not None and completion_exit_grace >= 0:
-            if time.time() - completion_seen_at >= completion_exit_grace:
-                forced_after_completion = True
-                _stop_completed_process(proc, run["tag"])
-                returncode = 0
+
+def launch_run(run: dict[str, Any], dry_run: bool, completion_exit_grace: float, log_dir_group: str = "") -> int:
+    try:
+        max_init_retries = int(os.environ.get("AD_TRAIN_DDP_INIT_RETRIES", "2") or "2")
+    except ValueError:
+        max_init_retries = 2
+
+    attempt = 0
+    while True:
+        cmd = build_command(run, log_dir_group=log_dir_group)
+        retry_note = "" if attempt == 0 else f" retry={attempt}/{max_init_retries}"
+        print(f"\n=== RUN {run['tag']} seed={run['seed']}{retry_note} ===", flush=True)
+        print(" ".join(cmd), flush=True)
+        if dry_run:
+            return 0
+        started = time.time()
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        env.setdefault("PYTHONIOENCODING", "utf-8")
+        for key in (
+            "MASTER_ADDR",
+            "MASTER_PORT",
+            "WORLD_SIZE",
+            "RANK",
+            "LOCAL_RANK",
+            "LOCAL_WORLD_SIZE",
+            "GROUP_RANK",
+            "ROLE_RANK",
+            "ROLE_WORLD_SIZE",
+            "TORCHELASTIC_MAX_RESTARTS",
+            "TORCHELASTIC_RESTART_COUNT",
+            "TORCHELASTIC_RUN_ID",
+        ):
+            env.pop(key, None)
+        popen_kwargs: dict[str, Any] = {
+            "cwd": ROOT,
+            "env": env,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.STDOUT,
+            "text": True,
+            "encoding": "utf-8",
+            "errors": "replace",
+            "bufsize": 1,
+        }
+        if os.name != "nt":
+            popen_kwargs["start_new_session"] = True
+        proc = subprocess.Popen(cmd, **popen_kwargs)
+        output_queue: queue.Queue[str] = queue.Queue()
+
+        def read_output() -> None:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                output_queue.put(line)
+
+        reader = threading.Thread(target=read_output, daemon=True)
+        reader.start()
+        completion_seen_at: float | None = None
+        forced_after_completion = False
+        listen_error = False
+        returncode: int | None = None
+        while True:
+            try:
+                line = output_queue.get(timeout=0.2)
+            except queue.Empty:
+                line = None
+            if line is not None:
+                listen_error = listen_error or ddp_listen_error_seen(line)
+                print(line, end="", flush=True)
+                if "학습 완료" in line:
+                    completion_seen_at = completion_seen_at or time.time()
+
+            returncode = proc.poll()
+            if returncode is not None:
                 break
 
-    while True:
-        try:
-            line = output_queue.get_nowait()
-        except queue.Empty:
-            break
-        print(line, end="", flush=True)
-    elapsed = round(time.time() - started, 1)
-    suffix = " forced_after_completion=1" if forced_after_completion else ""
-    print(f"=== EXIT {returncode} elapsed={elapsed}s tag={run['tag']}{suffix} ===", flush=True)
-    return int(returncode or 0)
+            if completion_seen_at is not None and completion_exit_grace >= 0:
+                if time.time() - completion_seen_at >= completion_exit_grace:
+                    forced_after_completion = True
+                    _terminate_process_tree(proc, run["tag"], "completion marker seen")
+                    returncode = 0
+                    break
+
+        while True:
+            try:
+                line = output_queue.get_nowait()
+            except queue.Empty:
+                break
+            listen_error = listen_error or ddp_listen_error_seen(line)
+            print(line, end="", flush=True)
+        elapsed = round(time.time() - started, 1)
+        suffix = " forced_after_completion=1" if forced_after_completion else ""
+        print(f"=== EXIT {returncode} elapsed={elapsed}s tag={run['tag']}{suffix} ===", flush=True)
+        code = int(returncode or 0)
+        _cleanup_after_run(proc, run["tag"])
+        if code != 0 and listen_error and attempt < max_init_retries:
+            attempt += 1
+            wait_s = min(30, 5 * attempt)
+            print(
+                f"[controller] DDP listen failed before training; retrying {run['tag']} "
+                f"with a fresh local port after {wait_s}s",
+                flush=True,
+            )
+            time.sleep(wait_s)
+            continue
+        return code
 
 
 def target_seeds(summary: dict[str, Any]) -> set[int]:

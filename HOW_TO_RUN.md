@@ -310,6 +310,7 @@ disown
 - GPU 수가 `N`이면 rank-local micro-batch는 `batch_size / N`
 - 각 rank가 sampler로 자기 shard를 읽고, DDP all-reduce 뒤 optimizer update는 global batch 1번
 - `batch_size`가 GPU 수로 나누어떨어지지 않으면 실패시킴
+- controller는 각 queued run마다 `127.0.0.1:<free_port>`를 명시해서 torchrun을 띄웁니다. DDP 초기 socket listen 실패가 나면 학습 epoch 진입 전 실패로 보고 기본 2회 재시도합니다 (`AD_TRAIN_DDP_INIT_RETRIES`로 조정). 각 run 종료 후에는 남은 torchrun/train process group을 정리하고 기본 5초 쉰 뒤 다음 조건으로 넘어갑니다 (`AD_TRAIN_RUN_CLEANUP_SLEEP`로 조정).
 
 ```bash
 # 모든 visible GPU 사용

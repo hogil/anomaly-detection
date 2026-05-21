@@ -20,6 +20,11 @@ display_per_member_*/
 # Training artifacts
 logs/
 weights/
+weights*.zip
+
+# Auto-generated "latest" snapshot pointer (generate_data.py overwrites every run).
+# Timestamped snapshots in configs/datasets/{version}_{ts}.yaml stay tracked.
+configs/datasets/latest.yaml
 
 # Inference outputs
 inference_output/

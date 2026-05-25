@@ -83,15 +83,57 @@ MARKDOWN="${VAL_DIR}/05_bkm_combined_results.md"
 
 echo "== paper stage: bkm_combined (output: $VAL_DIR) =="
 
-run_cmd "$PYTHON" - "$QUEUE" "$SEEDS" "$NUM_WORKERS" "$PREFETCH_FACTOR" "$BATCH_SIZE" <<'PY'
+SWEEP_RESULTS="${VAL_DIR}/02_sweep_results.json"
+SWEEP_ACTIVE="${VAL_DIR}/02_sweep_active.json"
+
+run_cmd "$PYTHON" - "$QUEUE" "$SEEDS" "$NUM_WORKERS" "$PREFETCH_FACTOR" "$BATCH_SIZE" "$SWEEP_RESULTS" "$SWEEP_ACTIVE" <<'PY'
+"""Build the bkm_combined queue.
+
+Reads the same-group 02_sweep_results.json + 02_sweep_active.json and applies
+the per-axis F1-argmax candidate's args. Falls back to docs/summary.md hardcoded
+values if 02 results are unavailable (e.g., running stage 17 standalone).
+
+Per-axis BKM is found by:
+  1. Group runs by candidate, mean test_f1 over status=complete runs only.
+  2. For each candidate, compare its args against the rawbase (baseline)
+     candidate's args. If it differs on exactly one BKM-tracked axis, the
+     candidate's value on that axis is a contender.
+  3. The axis-best candidate is the one with max mean F1.
+"""
 import json
 import sys
 from pathlib import Path
+from statistics import mean
 
-queue_path, seeds_raw, num_workers, prefetch, batch_size = sys.argv[1:6]
+queue_path, seeds_raw, num_workers, prefetch, batch_size, sweep_results_path, sweep_active_path = sys.argv[1:8]
 seeds = [int(s.strip()) for s in seeds_raw.split(",") if s.strip()]
-candidate = "fresh0412_v11_bkm_combined_n3300"
 
+# Axes that stage 17 applies together. Each axis is a single CLI flag.
+BKM_AXES = [
+    "--normal_ratio",
+    "--grad_clip",
+    "--label_smoothing",
+    "--stochastic_depth_rate",
+    "--focal_gamma",
+    "--abnormal_weight",
+    "--ema_decay",
+    "--allow_tie_save",
+]
+
+# Fallback BKM values from docs/summary.md (v2_tiny x dataset.yaml). Used only
+# when 02 results are unavailable for the current group.
+FALLBACK_BKM = {
+    "--normal_ratio": 3300,
+    "--grad_clip": 0.5,
+    "--label_smoothing": 0.02,
+    "--stochastic_depth_rate": 0.05,
+    "--focal_gamma": 2.0,
+    "--abnormal_weight": 1.5,
+    "--ema_decay": 0.95,
+    "--allow_tie_save": True,
+}
+
+# Operating baseline args (must match scripts/sweeps_server/01_baseline.sh).
 base_args = {
     "--mode": "binary",
     "--config": "dataset.yaml",
@@ -108,16 +150,112 @@ base_args = {
     "--lr_head": "2e-4",
     "--warmup_epochs": 5,
     "--weight_decay": 0.01,
-    # BKM values applied together:
-    "--normal_ratio": 3300,
-    "--grad_clip": 0.5,
-    "--label_smoothing": 0.02,
-    "--stochastic_depth_rate": 0.05,
-    "--focal_gamma": 2.0,
-    "--abnormal_weight": 1.5,
-    "--ema_decay": 0.95,
-    "--allow_tie_save": True,
+    "--normal_ratio": 700,
+    "--grad_clip": 0.0,
+    "--label_smoothing": 0.0,
+    "--stochastic_depth_rate": 0.0,
+    "--focal_gamma": 0.0,
+    "--abnormal_weight": 1.0,
+    "--ema_decay": 0.0,
+    "--allow_tie_save": False,
 }
+
+
+def _normalize(v):
+    """Coerce arg values to a comparable form (numeric strings -> float)."""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        try:
+            return float(v)
+        except ValueError:
+            return v
+    return v
+
+
+def discover_bkm(results_path: Path, active_path: Path):
+    """Return dict[axis] -> {"value": ..., "f1": ..., "candidate": ...} or {}."""
+    if not (results_path.exists() and active_path.exists()):
+        return {}
+    try:
+        results = json.loads(results_path.read_text(encoding="utf-8"))
+        active = json.loads(active_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"[bkm] failed to read 02 sweep files: {exc}", file=sys.stderr)
+        return {}
+
+    cand_args: dict[str, dict] = {}
+    for r in active.get("runs", []):
+        cand = r.get("candidate")
+        if cand and cand not in cand_args:
+            cand_args[cand] = r.get("args", {})
+
+    cand_f1: dict[str, list[float]] = {}
+    for run in results.get("runs", {}).values():
+        if run.get("status") != "complete":
+            continue
+        f1 = run.get("test_f1")
+        if f1 is None:
+            continue
+        cand_f1.setdefault(run["candidate"], []).append(float(f1))
+
+    if not cand_f1:
+        return {}
+
+    cand_mean: dict[str, float] = {c: mean(v) for c, v in cand_f1.items() if v}
+
+    per_axis: dict[str, dict] = {}
+    for cand, args in cand_args.items():
+        if cand not in cand_mean:
+            continue
+        diff_axes: list[str] = []
+        diff_value = None
+        for ax in BKM_AXES:
+            if ax not in args:
+                continue
+            base_val = _normalize(base_args.get(ax))
+            cand_val = _normalize(args.get(ax))
+            if base_val != cand_val:
+                diff_axes.append(ax)
+                diff_value = args[ax]
+        if len(diff_axes) != 1:
+            continue
+        ax = diff_axes[0]
+        entry = per_axis.get(ax)
+        if entry is None or cand_mean[cand] > entry["f1"]:
+            per_axis[ax] = {"value": diff_value, "f1": cand_mean[cand], "candidate": cand}
+
+    return per_axis
+
+
+sweep_results = Path(sweep_results_path)
+sweep_active = Path(sweep_active_path)
+discovered = discover_bkm(sweep_results, sweep_active)
+
+bkm_args = dict(base_args)
+bkm_source: dict[str, str] = {}
+if discovered:
+    print(f"[bkm] dynamic BKM from {sweep_results.name}:")
+    for ax in BKM_AXES:
+        entry = discovered.get(ax)
+        if entry is not None:
+            bkm_args[ax] = entry["value"]
+            bkm_source[ax] = f"dynamic ({entry['candidate']} F1={entry['f1']:.4f})"
+        else:
+            bkm_args[ax] = FALLBACK_BKM[ax]
+            bkm_source[ax] = "fallback (axis not found in 02 results)"
+        print(f"  {ax} = {bkm_args[ax]!r}  [{bkm_source[ax]}]")
+else:
+    print(f"[bkm] 02 sweep results unavailable; using FALLBACK BKM from docs/summary.md", file=sys.stderr)
+    for ax in BKM_AXES:
+        bkm_args[ax] = FALLBACK_BKM[ax]
+        bkm_source[ax] = "fallback (no 02 results)"
+
+# Candidate name encodes the normal_ratio for backwards-compat with existing reports.
+nr = int(bkm_args["--normal_ratio"])
+candidate = f"fresh0412_v11_bkm_combined_n{nr}"
 
 runs = []
 for seed in seeds:
@@ -125,13 +263,14 @@ for seed in seeds:
         "tag": f"{candidate}_s{seed}",
         "candidate": candidate,
         "seed": seed,
-        "args": dict(base_args),
-        "reason": "BKM combined: every per-axis BKM value applied together",
+        "args": dict(bkm_args),
+        "reason": "BKM combined: per-axis F1-argmax (dynamic) applied together",
     })
 
 payload = {
     "created_by": "scripts/sweeps_server/bkm_combined.sh",
-    "note": "All BKM values applied together; compare against rawbase baseline.",
+    "note": "BKM values discovered from 02_sweep_results.json (this group), or fallback to docs/summary.md.",
+    "bkm_source": bkm_source,
     "runs": runs,
 }
 p = Path(queue_path)

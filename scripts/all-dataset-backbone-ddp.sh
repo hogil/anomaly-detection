@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
-# Real DDP launcher for all-dataset-backbone.sh.
+# DEPRECATED: scripts/all-dataset-backbone.sh now auto-enables DDP whenever
+# 2+ GPUs are visible (via _common.sh::auto_enable_ddp). This wrapper is kept
+# only for callers that want to *pin* GPU IDs explicitly via
+# CUDA_VISIBLE_DEVICES, or that already script around the older entrypoint.
 #
-# CUDA_VISIBLE_DEVICES is required and must be set by the caller, e.g.
+# New callers should just use:
+#   bash scripts/all-dataset-backbone.sh [-x] ...
+# and rely on auto-detection. To force a specific GPU set, prefix:
+#   CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/all-dataset-backbone.sh -x
+#
+# Original behavior (still works):
 #   CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/all-dataset-backbone-ddp.sh
 # The wrapper counts the comma-separated entries to set AD_TRAIN_DDP_NPROC.
 # The adaptive controller then launches each train.py run through

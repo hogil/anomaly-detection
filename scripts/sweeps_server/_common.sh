@@ -14,6 +14,72 @@ PAPER_RUNNER="$ROOT_DIR/scripts/run_paper_server_all.sh"
 
 cd "$ROOT_DIR"
 
+# Auto-enable real DDP (torchrun) when 2+ GPUs are visible on Linux.
+#
+# Without this, train.py runs as a single Python process and silently wraps the
+# model with nn.DataParallel, which suffers severe scaling loss past 2 GPUs
+# (GPU 0 gather/scatter bottleneck). We export AD_TRAIN_DDP_NPROC so the
+# adaptive controller launches each train.py through torch.distributed.run.
+#
+# Override:
+#   AD_NO_DDP=1     leave AD_TRAIN_DDP_NPROC unset (forces DataParallel / single)
+#   AD_TRAIN_DDP_NPROC=<N>  already set by caller; respected as-is.
+#   CUDA_VISIBLE_DEVICES   limits the count we auto-detect.
+auto_enable_ddp() {
+  if [[ -n "${AD_TRAIN_DDP_NPROC:-}" ]]; then
+    echo "[ddp] AD_TRAIN_DDP_NPROC=${AD_TRAIN_DDP_NPROC} (already set; honoring caller)"
+    return 0
+  fi
+  if [[ "${AD_NO_DDP:-0}" == "1" ]]; then
+    echo "[ddp] AD_NO_DDP=1; staying on single-process / DataParallel"
+    return 0
+  fi
+  # NCCL backend is Linux-only; skip on Windows/Cygwin/Mac.
+  case "${OSTYPE:-}" in
+    msys*|cygwin*|win32*|darwin*)
+      return 0 ;;
+  esac
+  local gpu_count=0
+  if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+    gpu_count=$(echo "$CUDA_VISIBLE_DEVICES" | awk -F, '{n=0; for (i=1; i<=NF; i++) if ($i != "") n++; print n}')
+  elif command -v nvidia-smi >/dev/null 2>&1; then
+    gpu_count=$(nvidia-smi --list-gpus 2>/dev/null | wc -l | awk '{print $1}')
+  fi
+  if [[ -z "$gpu_count" ]] || ! [[ "$gpu_count" =~ ^[0-9]+$ ]]; then
+    gpu_count=0
+  fi
+  if [[ "$gpu_count" -ge 2 ]]; then
+    export AD_TRAIN_DDP_NPROC="$gpu_count"
+    echo "[ddp] auto-enabled: $gpu_count GPUs visible -> torchrun --nproc-per-node=$gpu_count"
+    echo "[ddp] each train.py run launches through torch.distributed.run; --batch_size is the GLOBAL batch (per-rank = global / $gpu_count)"
+    echo "[ddp] override with AD_NO_DDP=1 to force single-process DataParallel"
+  fi
+}
+
+# Scale --batch-size for DDP global-batch semantics.
+#
+# In DDP, train.py treats --batch_size as the global batch and divides by
+# world_size for the per-rank micro-batch. The runtime profile (server / pc /
+# minimal) PROFILE_BATCH_SIZE is the per-GPU intended size. So when we
+# auto-enable DDP we also need to multiply the profile by NPROC, unless the
+# caller already passed an explicit --batch-size.
+auto_scale_batch_for_ddp() {
+  local current_batch="${1:-}"
+  if [[ -z "${AD_TRAIN_DDP_NPROC:-}" || "${AD_TRAIN_DDP_NPROC:-1}" -lt 2 ]]; then
+    printf '%s' "$current_batch"
+    return 0
+  fi
+  if [[ -n "$current_batch" ]]; then
+    printf '%s' "$current_batch"
+    return 0
+  fi
+  # Caller did not pass --batch-size; use profile per-GPU x NPROC as global.
+  detect_profile >/dev/null
+  local global_batch=$(( PROFILE_BATCH_SIZE * AD_TRAIN_DDP_NPROC ))
+  echo "[ddp] auto --batch-size $global_batch (= profile per-GPU $PROFILE_BATCH_SIZE x NPROC $AD_TRAIN_DDP_NPROC)" >&2
+  printf '%s' "$global_batch"
+}
+
 detect_profile() {
   # GPU total memory (MiB), 0 if no GPU.
   local gpu_mem=0

@@ -1499,7 +1499,18 @@ def main():
             find_unused_parameters=args.freeze_backbone_epochs > 0,
         )
     elif device.type == "cuda" and torch.cuda.device_count() > 1:
-        print(f"  nn.DataParallel: {torch.cuda.device_count()} GPUs (effective batch = args.batch_size, scatter 내부 자동)")
+        # WARNING: this is the silent-DP fallback. nn.DataParallel has a known
+        # gather/scatter bottleneck on GPU 0 (~no speedup past 2 GPUs). The
+        # intended path is torchrun DDP via AD_TRAIN_DDP_NPROC, which
+        # scripts/sweeps_server/_common.sh::auto_enable_ddp now sets
+        # automatically. If you see this banner, your launcher did NOT export
+        # AD_TRAIN_DDP_NPROC; re-launch through a wrapper that sources
+        # _common.sh and calls auto_enable_ddp, or set the env var manually.
+        print(
+            f"  [WARNING] nn.DataParallel fallback: {torch.cuda.device_count()} GPUs visible "
+            f"but WORLD_SIZE=1 (no torchrun). Scaling past 2 GPUs will plateau. "
+            f"Set AD_TRAIN_DDP_NPROC=N (or use a wrapper that auto-enables DDP) for real speedup."
+        )
         model = nn.DataParallel(model)
 
     # Freeze backbone (선택)

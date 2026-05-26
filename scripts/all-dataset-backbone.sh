@@ -160,6 +160,18 @@ if [[ "${#RESOLVED[@]}" -eq 0 ]]; then
   exit 1
 fi
 
+# Auto-enable real DDP via torchrun when 2+ GPUs are visible. Previously the
+# default path silently fell into nn.DataParallel (GPU 0 gather bottleneck;
+# ~no speedup past 2 GPUs). Now every cell launches train.py through
+# torch.distributed.run with NCCL.
+source "$D/sweeps_server/_common.sh"
+auto_enable_ddp
+# When DDP is auto-enabled and the user did not pass --batch-size, scale the
+# profile per-GPU batch by NPROC so per-rank micro-batch matches the profile.
+if [[ -n "${AD_TRAIN_DDP_NPROC:-}" && "${AD_TRAIN_DDP_NPROC:-1}" -ge 2 ]]; then
+  BATCH_SIZE="$(auto_scale_batch_for_ddp "$BATCH_SIZE")"
+fi
+
 # In cross-product mode, refuse to start if requested backbone weights are missing.
 if [[ "$CROSS_PRODUCT" -eq 1 ]]; then
   missing_bb=()

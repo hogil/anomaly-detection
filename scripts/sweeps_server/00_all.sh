@@ -5,6 +5,7 @@ set -euo pipefail
 
 D="$(cd "$(dirname "$0")" && pwd)"
 source "$D/_common.sh"
+auto_enable_ddp
 
 usage() {
   cat <<'EOF'

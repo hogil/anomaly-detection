@@ -157,17 +157,17 @@ run_round1_axes "color" "color" "${ALL_ARGS[@]}"
 if [[ "$SKIP_SAMPLE_SKIP" -eq 0 ]]; then
   bash "$D/13_sample_skip.sh" "${SAMPLE_SKIP_ARGS[@]}"
 else
-  echo "[00_all] skip stage 13 (sample_skip)"
+  echo "[00_all] skip stage 13: sample_skip"
 fi
 if [[ "$SKIP_BACKBONE_SWEEP" -eq 0 ]]; then
   bash "$D/14_backbone.sh" "${BACKBONE_ARGS[@]}"
 else
-  echo "[00_all] skip stage 14 (backbone_sweep)"
+  echo "[00_all] skip stage 14: backbone_sweep"
 fi
 if [[ "$SKIP_LOGICAL_TRAIN" -eq 0 ]]; then
   bash "$D/15_logical_train.sh" "${LOGICAL_TRAIN_ARGS[@]}"
 else
-  echo "[00_all] skip stage 15 (logical_train)"
+  echo "[00_all] skip stage 15: logical_train"
 fi
 
 run_round1_axes "gc_last" "gc" "${ALL_ARGS[@]}"

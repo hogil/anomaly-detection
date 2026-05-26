@@ -120,6 +120,10 @@ Type별 1차 error: `normal FP 4/750`, `standard_deviation FN 1/150`, 나머지 
 
 ## Run Reliability Incident Log
 
+Updated on 2026-05-27:
+
+- `scripts/sweeps_server/00_all.sh` no longer prints parenthesized skip labels for stages 13/14/15. This avoids the server-side failure observed after `02_sweep_results` when the skipped stage message was parsed as `syntax error near unexpected token '('`. Changed file: `scripts/sweeps_server/00_all.sh`. Verification: Git Bash `bash -n` for every `scripts/sweeps_server/*.sh` file and `bash scripts/sweeps_server/00_all.sh --help` smoke.
+
 Updated on 2026-05-21:
 
 - DDP torchrun launches no longer rely on `--standalone` auto rendezvous port selection. `scripts/adaptive_experiment_controller.py` now assigns a per-run `127.0.0.1:<free_port>` via `--master-addr/--master-port`, strips stale distributed env vars before spawning torchrun, starts each launch in its own process group, cleans up residual torchrun/train processes between queued runs, waits `AD_TRAIN_RUN_CLEANUP_SLEEP` seconds (default 5), and retries DDP init listen failures before marking a run failed. This targets failures like `DistNetworkError: server socket has failed to listen on any local network address` that can occur between sequential seed launches before training reaches epoch 1. Changed file: `scripts/adaptive_experiment_controller.py`. Verification: Python `py_compile`, DDP dry-run command check with `AD_TRAIN_DDP_NPROC=2`, and `git diff --check`.

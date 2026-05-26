@@ -140,7 +140,28 @@ detect_profile() {
     PROFILE_NUM_WORKERS=$cap
   fi
 
-  echo "[profile] $PROFILE_NAME gpu=${gpu_mem}MB ram=${mem_mb}MB cpu=${cpus} workers=$PROFILE_NUM_WORKERS prefetch=$PROFILE_PREFETCH batch=$PROFILE_BATCH_SIZE max_launched=$PROFILE_MAX_LAUNCHED"
+  # DDP-aware num_workers: each rank gets its own DataLoader, so the total
+  # worker process count is rank x PROFILE_NUM_WORKERS. Without scaling,
+  # N ranks x 48 = 192 worker processes on a 64-core server oversubscribes
+  # the CPU and makes batch preparation slower than the GPU step, which is
+  # the dominant cause of "2 vs 4 GPU no speedup" once DDP is active.
+  # Divide the per-host budget by NPROC so total workers <= cap.
+  local ddp_nproc="${AD_TRAIN_DDP_NPROC:-1}"
+  if ! [[ "$ddp_nproc" =~ ^[0-9]+$ ]]; then
+    ddp_nproc=1
+  fi
+  local pre_ddp_workers="$PROFILE_NUM_WORKERS"
+  if [[ "$ddp_nproc" -ge 2 ]]; then
+    PROFILE_NUM_WORKERS=$(( PROFILE_NUM_WORKERS / ddp_nproc ))
+    # Floor at 2 so DataLoader still uses worker processes (not main thread).
+    [[ "$PROFILE_NUM_WORKERS" -lt 2 ]] && PROFILE_NUM_WORKERS=2
+  fi
+
+  if [[ "$ddp_nproc" -ge 2 ]]; then
+    echo "[profile] $PROFILE_NAME gpu=${gpu_mem}MB ram=${mem_mb}MB cpu=${cpus} workers/rank=$PROFILE_NUM_WORKERS (=${pre_ddp_workers}/${ddp_nproc}, total=$((PROFILE_NUM_WORKERS * ddp_nproc))) prefetch=$PROFILE_PREFETCH batch=$PROFILE_BATCH_SIZE max_launched=$PROFILE_MAX_LAUNCHED"
+  else
+    echo "[profile] $PROFILE_NAME gpu=${gpu_mem}MB ram=${mem_mb}MB cpu=${cpus} workers=$PROFILE_NUM_WORKERS prefetch=$PROFILE_PREFETCH batch=$PROFILE_BATCH_SIZE max_launched=$PROFILE_MAX_LAUNCHED"
+  fi
 }
 
 run_paper_stage() {

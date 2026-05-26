@@ -29,6 +29,7 @@ CHECKPOINT_RETENTION="${CHECKPOINT_RETENTION:-all}"
 CHECKPOINT_RETENTION_SCOPE="${CHECKPOINT_RETENTION_SCOPE:-summary}"
 SEEDS="${SEEDS:-42,1,2,3,4}"
 FORCE=0
+MODEL_NAME="${MODEL_NAME:-}"
 
 usage() {
   cat <<'EOF'
@@ -67,6 +68,7 @@ while [[ $# -gt 0 ]]; do
     --log-dir-group) LOG_DIR_GROUP="$2"; shift 2 ;;
     --checkpoint-retention) CHECKPOINT_RETENTION="$2"; shift 2 ;;
     --checkpoint-retention-scope) CHECKPOINT_RETENTION_SCOPE="$2"; shift 2 ;;
+    --model-name) MODEL_NAME="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
   esac
@@ -86,7 +88,7 @@ echo "== paper stage: bkm_combined (output: $VAL_DIR) =="
 SWEEP_RESULTS="${VAL_DIR}/02_sweep_results.json"
 SWEEP_ACTIVE="${VAL_DIR}/02_sweep_active.json"
 
-run_cmd "$PYTHON" - "$QUEUE" "$SEEDS" "$NUM_WORKERS" "$PREFETCH_FACTOR" "$BATCH_SIZE" "$SWEEP_RESULTS" "$SWEEP_ACTIVE" <<'PY'
+run_cmd "$PYTHON" - "$QUEUE" "$SEEDS" "$NUM_WORKERS" "$PREFETCH_FACTOR" "$BATCH_SIZE" "$SWEEP_RESULTS" "$SWEEP_ACTIVE" "$MODEL_NAME" <<'PY'
 """Build the bkm_combined queue.
 
 Reads the same-group 02_sweep_results.json + 02_sweep_active.json and applies
@@ -105,7 +107,7 @@ import sys
 from pathlib import Path
 from statistics import mean
 
-queue_path, seeds_raw, num_workers, prefetch, batch_size, sweep_results_path, sweep_active_path = sys.argv[1:8]
+queue_path, seeds_raw, num_workers, prefetch, batch_size, sweep_results_path, sweep_active_path, model_name = sys.argv[1:9]
 seeds = [int(s.strip()) for s in seeds_raw.split(",") if s.strip()]
 
 # Axes that stage 17 applies together. Each axis is a single CLI flag.
@@ -252,6 +254,9 @@ else:
     for ax in BKM_AXES:
         bkm_args[ax] = FALLBACK_BKM[ax]
         bkm_source[ax] = "fallback (no 02 results)"
+
+if model_name:
+    bkm_args["--model_name"] = model_name
 
 # Candidate name encodes the normal_ratio for backwards-compat with existing reports.
 nr = int(bkm_args["--normal_ratio"])

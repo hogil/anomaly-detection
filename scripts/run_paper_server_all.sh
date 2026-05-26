@@ -46,6 +46,7 @@ ROUND1_INCLUDE_AXES="$DEFAULT_ROUND1_AXES"
 LOG_DIR_GROUP="${LOG_DIR_GROUP:-}"
 CHECKPOINT_RETENTION="${CHECKPOINT_RETENTION:-all}"
 CHECKPOINT_RETENTION_SCOPE="${CHECKPOINT_RETENTION_SCOPE:-summary}"
+MODEL_NAME="${MODEL_NAME:-}"
 
 usage() {
   cat <<'EOF'
@@ -104,6 +105,7 @@ while [[ $# -gt 0 ]]; do
     --log-dir-group) LOG_DIR_GROUP="$2"; shift 2 ;;
     --checkpoint-retention) CHECKPOINT_RETENTION="$2"; shift 2 ;;
     --checkpoint-retention-scope) CHECKPOINT_RETENTION_SCOPE="$2"; shift 2 ;;
+    --model-name) MODEL_NAME="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
   esac
@@ -154,6 +156,7 @@ prepare_queue() {
   [[ -n "$start_after_candidate" ]] && args+=(--start-after-candidate "$start_after_candidate")
   [[ -n "$skip_completed_summary" ]] && args+=(--skip-completed-summary "$skip_completed_summary")
   [[ -n "$include_axes" ]] && args+=(--include-axes "$include_axes")
+  [[ -n "$MODEL_NAME" ]] && args+=(--model-name "$MODEL_NAME")
   run_cmd "$PYTHON" "${args[@]}"
 }
 

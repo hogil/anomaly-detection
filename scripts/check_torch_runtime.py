@@ -10,13 +10,16 @@ FIX = """\
 Fix the environment, then rerun:
 
   python -m pip uninstall -y torch torchvision torchaudio
-  python -m pip install --index-url https://download.pytorch.org/whl/cu121 \\
-    torch==2.3.1 torchvision==0.18.1
-  python -m pip install -r requirements.txt --no-deps
+  python -m pip cache purge
+  rm -rf ~/.cache/pip
+  python -m pip install --no-cache-dir --force-reinstall \\
+    torch==2.3.1+cu121 \\
+    torchvision==0.18.1+cu121 \\
+    torchaudio==2.3.1+cu121
+  python -m pip install -r requirements.txt
 
-If the server is offline, install/copy matching torch==2.3.1+cu121 and
-torchvision==0.18.1+cu121 wheels from the same source. Do not mix CPU
-torchvision with CUDA torch.
+Use the company PyPI/mirror configured on the server. Do not use external
+PyTorch index URLs on the server. Do not mix CPU torchvision with CUDA torch.
 """
 
 

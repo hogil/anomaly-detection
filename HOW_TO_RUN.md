@@ -27,15 +27,19 @@ PY
 python scripts/check_torch_runtime.py
 ```
 
-사내망에서 `torch`/`torchvision` CUDA wheel 이름이 별도로 관리되면, 먼저 사내 패키지명으로 cu121 torch 조합을 설치한 뒤 `python -m pip install -r requirements.txt`를 실행합니다. 실행할 때는 같은 환경을 쓰도록 `--python "$(which python)"`을 붙이는 것을 권장합니다.
+사내망에서는 서버에 설정된 사내 PyPI/mirror에서 cu121 wheel을 받습니다. 외부 PyTorch index URL을 쓰지 않습니다. 실행할 때는 같은 환경을 쓰도록 `--python "$(which python)"`을 붙이는 것을 권장합니다.
 
 `RuntimeError: operator torchvision::nms does not exist`가 나오면 `torch`와 `torchvision` wheel이 서로 안 맞는 상태입니다. 서버에서는 다음 조합으로 맞춥니다.
 
 ```bash
 python -m pip uninstall -y torch torchvision torchaudio
-python -m pip install --index-url https://download.pytorch.org/whl/cu121 \
-  torch==2.3.1 torchvision==0.18.1
-python -m pip install -r requirements.txt --no-deps
+python -m pip cache purge
+rm -rf ~/.cache/pip
+python -m pip install --no-cache-dir --force-reinstall \
+  torch==2.3.1+cu121 \
+  torchvision==0.18.1+cu121 \
+  torchaudio==2.3.1+cu121
+python -m pip install -r requirements.txt
 python scripts/check_torch_runtime.py
 ```
 

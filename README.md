@@ -4,6 +4,9 @@
 
 ## Core Flow
 
+서버에서 처음부터 전체 재실행하거나 현업 CSV를 추론/추가학습에 쓰는 짧은 runbook은
+[`docs/server_full_run_and_field_data.md`](docs/server_full_run_and_field_data.md)를 봅니다.
+
 | step | command | output |
 | --- | --- | --- |
 | problem setting | see `docs/problem_setting.md` | binary gate as primary, multiclass/anomaly baselines as secondary |

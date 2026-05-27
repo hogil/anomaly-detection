@@ -95,6 +95,20 @@ candidate 평균 표 + per-run 표 + F1 막대 plot + val_f1 곡선 plot.
 
 ## 1. 파이프라인 entrypoint
 
+### 간단 wrapper
+
+서버에서 직접 치는 기본 명령은 wrapper를 쓴다.
+
+```bash
+bash scripts/run_full.sh
+bash scripts/run_paper_matrix.sh
+bash scripts/run_field_predict.sh fab_export/timeseries.csv logs/<group>/<run>
+bash scripts/run_field_predict.sh fab_export/timeseries_labeled.csv logs/<group>/<run> 판정
+bash scripts/run_field_finetune.sh field_runs/<YYMMDD_HHMMSS>_images logs/<group>/<run>
+```
+
+자세한 운영 runbook은 `docs/server_full_run_and_field_data.md`.
+
 ### `run_paper_server_all.sh`
 논문 실험의 메인 orchestrator. weights 다운로드 → 데이터/이미지 생성(없으면) → baseline 5-seed 재확인 → 축별 sweep → postprocess 까지 한 번에. `_common.sh::detect_profile` 의 결과로 num_workers / prefetch / max_launched 기본값이 자동 결정되고, CLI 옵션으로 덮어씁니다.
 

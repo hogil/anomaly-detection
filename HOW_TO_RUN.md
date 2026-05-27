@@ -12,7 +12,7 @@ dataset.yaml  →  데이터/이미지 생성  →  학습  →  추론
 
 ## Python 3.11 환경
 
-서버 검증 환경은 Python 3.11 + torch 2.3.1+cu121 + torchvision 0.18.1+cu121 + numpy 1.26.4입니다.
+서버 검증 환경은 Python 3.11 + torch 2.3.1 + torchvision 0.18.1 + torchaudio 2.3.1 + numpy 1.26.4입니다.
 
 ```bash
 conda env create -f environment-py311.yml
@@ -36,9 +36,9 @@ python -m pip uninstall -y torch torchvision torchaudio
 python -m pip cache purge
 rm -rf ~/.cache/pip
 python -m pip install --no-cache-dir --force-reinstall \
-  torch==2.3.1+cu121 \
-  torchvision==0.18.1+cu121 \
-  torchaudio==2.3.1+cu121
+  torch==2.3.1 \
+  torchvision==0.18.1 \
+  torchaudio==2.3.1
 python -m pip install -r requirements.txt
 python scripts/check_torch_runtime.py
 ```

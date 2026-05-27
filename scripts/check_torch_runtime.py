@@ -13,13 +13,14 @@ Fix the environment, then rerun:
   python -m pip cache purge
   rm -rf ~/.cache/pip
   python -m pip install --no-cache-dir --force-reinstall \\
-    torch==2.3.1+cu121 \\
-    torchvision==0.18.1+cu121 \\
-    torchaudio==2.3.1+cu121
+    torch==2.3.1 \\
+    torchvision==0.18.1 \\
+    torchaudio==2.3.1
   python -m pip install -r requirements.txt
 
 Use the company PyPI/mirror configured on the server. Do not use external
-PyTorch index URLs on the server. Do not mix CPU torchvision with CUDA torch.
+PyTorch index URLs on the server. The company mirror must resolve these
+versions to CUDA-enabled builds. Do not mix CPU torchvision with CUDA torch.
 """
 
 
@@ -38,18 +39,43 @@ def main() -> int:
     except Exception as exc:  # pragma: no cover - environment guard
         return fail("cannot import torch", exc)
 
+    torch_version = getattr(torch, "__version__", "?")
     print(
         "[runtime-check] "
-        f"torch={getattr(torch, '__version__', '?')} "
-        f"torch_cuda={getattr(torch.version, 'cuda', None)}"
+        f"torch={torch_version} "
+        f"torch_cuda={getattr(torch.version, 'cuda', None)} "
+        f"torch_file={getattr(torch, '__file__', '?')}"
     )
+    if not str(torch_version).startswith("2.3.1"):
+        return fail(f"unexpected torch version: {torch_version}; expected 2.3.1")
 
     try:
         import torchvision
     except Exception as exc:  # pragma: no cover - environment guard
         return fail("cannot import torchvision; torch/torchvision wheels are likely mismatched", exc)
 
-    print(f"[runtime-check] torchvision={getattr(torchvision, '__version__', '?')}")
+    vision_version = getattr(torchvision, "__version__", "?")
+    print(
+        "[runtime-check] "
+        f"torchvision={vision_version} "
+        f"torchvision_file={getattr(torchvision, '__file__', '?')}"
+    )
+    if not str(vision_version).startswith("0.18.1"):
+        return fail(f"unexpected torchvision version: {vision_version}; expected 0.18.1")
+
+    try:
+        import torchaudio
+    except Exception as exc:  # pragma: no cover - environment guard
+        return fail("cannot import torchaudio; torch/torchaudio wheels are likely mismatched", exc)
+
+    audio_version = getattr(torchaudio, "__version__", "?")
+    print(
+        "[runtime-check] "
+        f"torchaudio={audio_version} "
+        f"torchaudio_file={getattr(torchaudio, '__file__', '?')}"
+    )
+    if not str(audio_version).startswith("2.3.1"):
+        return fail(f"unexpected torchaudio version: {audio_version}; expected 2.3.1")
 
     try:
         from torchvision.ops import nms

@@ -61,6 +61,7 @@ DEFAULT_LIVE_SUMMARY_SCRIPT = ROOT / "scripts" / "update_live_summary_doc.py"
 DEFAULT_STAGE_COMPARISON_SCRIPT = ROOT / "scripts" / "generate_stage_comparison.py"
 DEFAULT_MODEL_NAME = "convnextv2_tiny.fcmae_ft_in22k_in1k"
 VALIDATED_WEIGHT_PATHS: set[Path] = set()
+RUNTIME_CHECK_SCRIPT = ROOT / "scripts" / "check_torch_runtime.py"
 DDP_LISTEN_ERROR_PATTERNS = (
     "server socket has failed to listen",
     "failed to listen on any local network address",
@@ -560,6 +561,15 @@ def verify_pretrained_weight(run: dict[str, Any]) -> Path:
             )
         VALIDATED_WEIGHT_PATHS.add(resolved)
     return path
+
+
+def verify_torch_runtime() -> None:
+    completed = subprocess.run([sys.executable, str(RUNTIME_CHECK_SCRIPT)], cwd=ROOT)
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"torch runtime preflight failed with exit={completed.returncode}. "
+            "Check torch/torchvision/torchaudio versions, package paths, and CUDA build."
+        )
 
 
 def find_free_local_port(host: str = "127.0.0.1") -> int:
@@ -1080,6 +1090,26 @@ def main() -> int:
         launched_this_run = False
         if existing is None:
             if not args.dry_run:
+                try:
+                    verify_torch_runtime()
+                except RuntimeError as exc:
+                    print(f"[preflight] {exc}", flush=True)
+                    summary["runs"][run["tag"]] = {
+                        "tag": run["tag"],
+                        "candidate": candidate,
+                        "seed": int(run["seed"]),
+                        "status": "failed",
+                        "failure_stage": "preflight_runtime",
+                        "error": str(exc),
+                        "completed_at": now_iso(),
+                        "target_hit": False,
+                    }
+                    summary["decision"] = f"stop:runtime_preflight:{run['tag']}"
+                    save_json(args.summary, summary)
+                    write_markdown(args.markdown, summary)
+                    update_live_summary_doc(args.update_live_summary)
+                    update_stage_comparison(args)
+                    return 2
                 try:
                     weight_path = verify_pretrained_weight(run)
                 except (FileNotFoundError, RuntimeError) as exc:

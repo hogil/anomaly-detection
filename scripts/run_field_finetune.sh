@@ -18,6 +18,8 @@ MODEL_RUN="$2"
 IMAGE_ROOT="${FIELD_IMAGES}/dev_binary_model_inputs"
 PYTHON="${PYTHON:-python}"
 
+"$PYTHON" scripts/check_torch_runtime.py
+
 if [[ ! -d "$IMAGE_ROOT/normal" || ! -d "$IMAGE_ROOT/abnormal" ]]; then
   echo "missing labeled binary folders under: $IMAGE_ROOT" >&2
   echo "Run field prediction with a label column first, for example:" >&2

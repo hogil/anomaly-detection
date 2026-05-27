@@ -23,6 +23,7 @@ source "$ROOT_DIR/scripts/sweeps_server/_common.sh"
 
 PYTHON="${PYTHON:-python}"
 CONFIG="${CONFIG:-dataset.yaml}"
+"$PYTHON" scripts/check_torch_runtime.py
 detect_profile
 WORKERS="${WORKERS:-$PROFILE_NUM_WORKERS}"
 NUM_WORKERS="${NUM_WORKERS:-$PROFILE_NUM_WORKERS}"

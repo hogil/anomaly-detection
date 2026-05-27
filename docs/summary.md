@@ -122,6 +122,7 @@ Type별 1차 error: `normal FP 4/750`, `standard_deviation FN 1/150`, 나머지 
 
 Updated on 2026-05-27:
 
+- Added runtime preflight for the `torch`/`torchvision` binary pair after a server run failed at torchrun child startup with `RuntimeError: operator torchvision::nms does not exist`. The root cause is an environment mismatch, not a candidate/backbone setting; `ChildFailedError` is torchrun's wrapper around the first child failure. Changed files: `scripts/check_torch_runtime.py`, `scripts/run_full.sh`, `scripts/run_paper_matrix.sh`, `scripts/run_paper_server_all.sh`, `scripts/run_field_predict.sh`, `scripts/run_field_finetune.sh`, `docs/server_full_run_and_field_data.md`, `HOW_TO_RUN.md`. Verification: Python `py_compile`, Git Bash `bash -n` for changed wrappers, and `git diff --check`.
 - `scripts/sweeps_server/00_all.sh` no longer prints parenthesized skip labels for stages 13/14/15. This avoids the server-side failure observed after `02_sweep_results` when the skipped stage message was parsed as `syntax error near unexpected token '('`. Changed file: `scripts/sweeps_server/00_all.sh`. Verification: Git Bash `bash -n` for every `scripts/sweeps_server/*.sh` file and `bash scripts/sweeps_server/00_all.sh --help` smoke.
 
 Updated on 2026-05-21:

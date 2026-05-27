@@ -24,6 +24,7 @@ IMAGE_DIR="${OUT_ROOT}/${STAMP}_images"
 PRED_DIR="${OUT_ROOT}/${STAMP}_predictions"
 
 mkdir -p "$OUT_ROOT"
+"$PYTHON" scripts/check_torch_runtime.py
 
 render_args=(
   scripts/generate_field_images.py

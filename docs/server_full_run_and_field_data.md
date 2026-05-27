@@ -40,6 +40,18 @@ conda activate anomaly-py311
 bash scripts/run_full.sh
 ```
 
+시작하자마자 `torchvision::nms` 에러가 나오면 서버 환경의
+`torch`/`torchvision` binary가 서로 안 맞는 것이다. 아래처럼 같은 cu121
+wheel 조합으로 다시 설치한다.
+
+```bash
+python -m pip uninstall -y torch torchvision torchaudio
+python -m pip install --index-url https://download.pytorch.org/whl/cu121 \
+  torch==2.3.1 torchvision==0.18.1
+python -m pip install -r requirements.txt --no-deps
+python scripts/check_torch_runtime.py
+```
+
 이 wrapper가 내부에서 하는 일:
 
 - `dataset.yaml` 기준 실행
@@ -91,6 +103,12 @@ bash -n scripts/sweeps_server/*.sh
 bash scripts/sweeps_server/00_all.sh --help
 git diff --check
 ```
+
+별개로 `RuntimeError: operator torchvision::nms does not exist`는 실험
+setting이나 backbone 문제가 아니다. 실제 root cause는 서버 Python 환경에서
+`torch`와 `torchvision` wheel이 맞지 않아 torchvision C++ operator가
+등록되지 않은 것이다. `torch.distributed.elastic.multiprocessing.errors.ChildFailedError`
+는 torchrun이 자식 process 실패를 모아서 보여주는 wrapper error다.
 
 ## 4. 진행 확인
 

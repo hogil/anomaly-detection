@@ -43,8 +43,8 @@
 - `scripts/gradcam_report.py`: Grad-CAM overlays on trend images and transparent heat masks
 - `scripts/gradcam_error_report.py`: Grad-CAM overlays for FP/FN samples
 - `scripts/generate_log_history_report.py`: tables and plots from flat or grouped `logs/**/`
-- `scripts/sweeps_server/00_all.sh`: current paper experiment pipeline, ending with color -> sample_skip -> backbone -> logical_train -> gc -> BKM combined
-- `scripts/all-dataset-backbone.sh`: one-shot wrapper that runs the full sweep for every dataset yaml (weights/data/baseline prep, all axes, all backbones, gc-last, bkm_combined, postprocess) and refreshes the cross-dataset comparison report after each dataset and at the end
+- `scripts/sweeps_server/00_all.sh`: current paper experiment pipeline, ending with color -> sample_skip -> backbone -> logical_train -> BKM combined
+- `scripts/all-dataset-backbone.sh`: one-shot wrapper that runs the full sweep for every dataset yaml (weights/data/baseline prep, all axes including ASL, all backbones, bkm_combined, postprocess) and refreshes the cross-dataset comparison report after each dataset and at the end
 - `scripts/all-dataset-backbone-ddp.sh`: same wrapper, but queued train.py runs launch through torchrun DDP; `--batch_size` stays global and each GPU gets a rank-local micro-batch
 - `scripts/generate_cross_dataset_report.py`: per-dataset and overall baseline/BKM/backbone comparison tables and bar plots
 - `docs/summary.md`: current experiment summary

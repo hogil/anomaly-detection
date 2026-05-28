@@ -14,7 +14,7 @@ Usage:
 
 Stages, in order:
   baseline recheck -> core axes -> color -> sample_skip -> backbone ->
-  logical_train -> gc -> bkm_combined -> postprocess
+  logical_train -> bkm_combined -> postprocess
 
 Additional 00_all.sh options:
   --model-name NAME           train.py --model_name override forwarded to every
@@ -35,7 +35,6 @@ Individual stages (run alone):
   bash scripts/sweeps_server/13_sample_skip.sh                # nonfinite-loss probe
   bash scripts/sweeps_server/14_backbone.sh                   # rotate weights/*.pth
   bash scripts/sweeps_server/15_logical_train.sh              # per-member logical
-  bash scripts/sweeps_server/16_gc.sh                         # grad_clip last
   bash scripts/sweeps_server/17_bkm_combined.sh               # apply all BKMs
 EOF
 }
@@ -149,7 +148,7 @@ prune_model_name() {
 prune_model_name SAMPLE_SKIP_ARGS
 prune_model_name LOGICAL_TRAIN_ARGS
 
-PRE_COLOR_AXES="lr,warmup,normal_ratio,per_class,label_smoothing,stochastic_depth,focal_gamma,abnormal_weight,ema,allow_tie_save"
+PRE_COLOR_AXES="lr,warmup,normal_ratio,per_class,weight_decay,smoothing,label_smoothing,asl,stochastic_depth,focal_gamma,abnormal_weight,ema,allow_tie_save"
 
 run_round1_axes "needed_pre_color" "$PRE_COLOR_AXES" "${ALL_ARGS[@]}"
 run_round1_axes "color" "color" "${ALL_ARGS[@]}"
@@ -169,8 +168,6 @@ if [[ "$SKIP_LOGICAL_TRAIN" -eq 0 ]]; then
 else
   echo "[00_all] skip stage 15: logical_train"
 fi
-
-run_round1_axes "gc_last" "gc" "${ALL_ARGS[@]}"
 
 bash "$D/17_bkm_combined.sh" "${BKM_COMBINED_ARGS[@]}"
 

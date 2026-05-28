@@ -144,6 +144,8 @@ def collect_test_events(best_info: dict[str, Any], run_dir: Path) -> list[dict[s
 
 
 def axis_from_candidate(candidate: str) -> str:
+    if "_asl" in candidate:
+        return "asl"
     if "_regls" in candidate or "_ls" in candidate:
         return "label_smoothing"
     if "_regdp" in candidate or "_dp" in candidate:
@@ -335,11 +337,32 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fields = list(rows[0].keys()) if rows else ["tag"]
+    fields = [
+        "tag",
+        "candidate",
+        "axis",
+        "seed",
+        "priority",
+        "reasons",
+        "best_f1",
+        "fn",
+        "fp",
+        "best_epoch",
+        "val_f1_range",
+        "test_f1_range",
+        "fn_range",
+        "fp_range",
+        "last_drop",
+        "selected_gap",
+        "grad_p99_max",
+        "clip_ratio",
+        "run_dir",
+    ] if rows else ["tag"]
     with path.open("w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fields)
         writer.writeheader()
-        writer.writerows(rows)
+        for row in rows:
+            writer.writerow({field: row.get(field, "") for field in fields})
 
 
 def write_markdown(path: Path, rows: list[dict[str, Any]], agg_rows: list[dict[str, Any]]) -> None:
@@ -407,7 +430,15 @@ def write_markdown(path: Path, rows: list[dict[str, Any]], agg_rows: list[dict[s
         "",
         "## All Preserved Stability Signals",
         "",
-        "All tagged rows are saved in `validations/instability_cases.csv` and `validations/instability_cases.json`.",
+        "The CSV keeps only review columns; full diagnostic details remain in `validations/instability_cases.json`.",
+        "",
+        "CSV column meaning:",
+        "",
+        "- `priority` / `reasons`: why the run was kept as instability evidence.",
+        "- `best_f1`, `fn`, `fp`: selected checkpoint test quality.",
+        "- `val_f1_range`, `test_f1_range`, `fn_range`, `fp_range`: oscillation amplitude.",
+        "- `last_drop`, `selected_gap`: late drift or missed better epoch.",
+        "- `grad_p99_max`, `clip_ratio`: gradient-side instability signal.",
         "",
         "## Next Comparison Hooks",
         "",

@@ -44,6 +44,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+from src.models.asymmetric_loss import AsymmetricLossSingleLabel
 from src.models.focal_loss import FocalLoss
 from src.data.schema import highlighted_member as read_highlighted_member
 
@@ -471,6 +472,24 @@ def mixup_data(x, y, alpha=0.2):
 
 
 def _per_sample_loss(criterion, outputs, labels):
+    if isinstance(criterion, AsymmetricLossSingleLabel):
+        probs = F.softmax(outputs, dim=1)
+        targets_one_hot = F.one_hot(labels, num_classes=outputs.size(1)).to(dtype=outputs.dtype)
+        anti_targets = 1.0 - targets_one_hot
+        pos_prob = probs.clamp(min=criterion.eps)
+        neg_prob = (1.0 - probs).clamp(min=criterion.eps)
+        if criterion.clip > 0:
+            neg_prob = (neg_prob + criterion.clip).clamp(max=1.0)
+        pos_loss = targets_one_hot * torch.log(pos_prob)
+        neg_loss = anti_targets * torch.log(neg_prob.clamp(min=criterion.eps))
+        if criterion.gamma_pos > 0 or criterion.gamma_neg > 0:
+            pos_loss = pos_loss * torch.pow(1.0 - pos_prob, criterion.gamma_pos)
+            neg_loss = neg_loss * torch.pow(1.0 - neg_prob, criterion.gamma_neg)
+        losses = -(pos_loss + neg_loss).sum(dim=1)
+        weight = getattr(criterion, "weight", None)
+        if weight is not None:
+            losses = losses * weight[labels]
+        return losses
     if isinstance(criterion, FocalLoss):
         ce = F.cross_entropy(outputs, labels, reduction="none")
         pt = torch.exp(-ce)
@@ -1123,6 +1142,12 @@ def main():
                         help="OHEM ratio (0=off, 0.75=top75pct, 0.5=top50pct)")
     parser.add_argument("--focal_gamma", type=float, default=td("focal_gamma", 0.0),
                         help="Focal Loss gamma (0 = 사실상 CrossEntropy)")
+    parser.add_argument("--asl_gamma_neg", type=float, default=td("asl_gamma_neg", 0.0),
+                        help="ASL negative-class gamma. 0 with --asl_clip 0 disables ASL.")
+    parser.add_argument("--asl_gamma_pos", type=float, default=td("asl_gamma_pos", 0.0),
+                        help="ASL positive-class gamma.")
+    parser.add_argument("--asl_clip", type=float, default=td("asl_clip", 0.0),
+                        help="ASL negative probability clip. Typical sweep uses 0.05.")
     parser.add_argument("--abnormal_weight", type=float, default=td("abnormal_weight", 1.0),
                         help="Binary mode: abnormal class weight 배수 (1.0=균등, 0=inverse freq 자동)")
     parser.add_argument("--label_weights", type=str, default=td("label_weights", ""),
@@ -1274,6 +1299,17 @@ def main():
     image_dir = Path(config["output"]["image_dir"])
     data_dir = Path(config["output"]["data_dir"])
 
+    asl_enabled = args.asl_gamma_neg > 0 or args.asl_gamma_pos > 0 or args.asl_clip > 0
+    if asl_enabled:
+        loss_name = (
+            f"ASL(gamma_pos={args.asl_gamma_pos}, "
+            f"gamma_neg={args.asl_gamma_neg}, clip={args.asl_clip})"
+        )
+    elif args.label_smoothing > 0:
+        loss_name = f"CrossEntropy(label_smoothing={args.label_smoothing})"
+    else:
+        loss_name = f"FocalLoss(gamma={args.focal_gamma})"
+
     # 하이퍼파라미터
     hparams = {
         "model": args.model_name,
@@ -1287,7 +1323,7 @@ def main():
         "patience": args.patience,
         "normal_threshold": args.normal_threshold,
         "warmup_epochs": args.warmup_epochs,
-        "loss": f"FocalLoss(gamma={args.focal_gamma})",
+        "loss": loss_name,
         "optimizer": "AdamW",
         "scheduler": "Warmup(5ep) + CosineAnnealing",
         "num_classes": num_classes,
@@ -1305,6 +1341,10 @@ def main():
         "dropout": args.dropout,
         "stochastic_depth_rate": args.stochastic_depth_rate,
         "focal_gamma": args.focal_gamma,
+        "asl_gamma_neg": args.asl_gamma_neg,
+        "asl_gamma_pos": args.asl_gamma_pos,
+        "asl_clip": args.asl_clip,
+        "label_smoothing": args.label_smoothing,
         "smooth_window": args.smooth_window,
         "smooth_method": args.smooth_method,
         "min_epochs": args.min_epochs,
@@ -1566,7 +1606,19 @@ def main():
                     idx = classes.index(k)
                     alpha[idx] = float(v)
             print(f"  Label weights: {dict(zip(classes, [f'{a:.2f}' for a in alpha]))}")
-    if args.label_smoothing > 0:
+    if asl_enabled:
+        criterion = AsymmetricLossSingleLabel(
+            weight=alpha,
+            gamma_pos=args.asl_gamma_pos,
+            gamma_neg=args.asl_gamma_neg,
+            clip=args.asl_clip,
+        ).to(device)
+        print(
+            "  Loss: ASL("
+            f"gamma_pos={args.asl_gamma_pos}, "
+            f"gamma_neg={args.asl_gamma_neg}, clip={args.asl_clip})"
+        )
+    elif args.label_smoothing > 0:
         criterion = nn.CrossEntropyLoss(
             weight=torch.tensor(alpha, dtype=torch.float32).to(device),
             label_smoothing=args.label_smoothing

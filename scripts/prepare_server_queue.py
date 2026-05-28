@@ -19,6 +19,28 @@ DEFAULT_GC_CANDIDATES = (
     "fresh0412_v11_gc15_n700",
     "fresh0412_v11_gc50_n700",
 )
+DEFAULT_SEEDS = (42, 1, 2, 3, 4)
+SYNTHETIC_AXIS_LEVELS: dict[str, list[tuple[str, dict[str, Any], str]]] = {
+    "weight_decay": [
+        ("wd000", {"--weight_decay": 0.0}, "weight_decay axis: zero decay"),
+        ("wd0005", {"--weight_decay": 0.005}, "weight_decay axis: lower than baseline"),
+        ("wd002", {"--weight_decay": 0.02}, "weight_decay axis: higher than baseline"),
+        ("wd005", {"--weight_decay": 0.05}, "weight_decay axis: strong regularization"),
+    ],
+    "smoothing": [
+        ("sw3med", {"--smooth_window": 3, "--smooth_method": "median"}, "smoothing axis: 3-epoch median"),
+        ("sw3mean", {"--smooth_window": 3, "--smooth_method": "mean"}, "smoothing axis: 3-epoch mean"),
+        ("sw5med", {"--smooth_window": 5, "--smooth_method": "median"}, "smoothing axis: 5-epoch median"),
+        ("sw5mean", {"--smooth_window": 5, "--smooth_method": "mean"}, "smoothing axis: 5-epoch mean"),
+    ],
+    "asl": [
+        ("asl0p5", {"--asl_gamma_neg": 0.5, "--asl_gamma_pos": 0.0, "--asl_clip": 0.05}, "ASL axis: mild negative focusing"),
+        ("asl1p0", {"--asl_gamma_neg": 1.0, "--asl_gamma_pos": 0.0, "--asl_clip": 0.05}, "ASL axis: gamma_neg=1"),
+        ("asl2p0", {"--asl_gamma_neg": 2.0, "--asl_gamma_pos": 0.0, "--asl_clip": 0.05}, "ASL axis: gamma_neg=2"),
+        ("asl3p0", {"--asl_gamma_neg": 3.0, "--asl_gamma_pos": 0.0, "--asl_clip": 0.05}, "ASL axis: gamma_neg=3"),
+        ("asl4p0", {"--asl_gamma_neg": 4.0, "--asl_gamma_pos": 0.0, "--asl_clip": 0.05}, "ASL axis: gamma_neg=4"),
+    ],
+}
 
 
 def candidate_name(run: dict[str, Any]) -> str:
@@ -36,8 +58,14 @@ def normalize_candidate(candidate: str) -> str:
 
 def infer_axis(candidate: str) -> str:
     candidate = normalize_candidate(candidate)
+    if "_asl" in candidate:
+        return "asl"
     if re.search(r"_gc(?:\d|$)", candidate):
         return "gc"
+    if "_wd" in candidate:
+        return "weight_decay"
+    if "_sw" in candidate:
+        return "smoothing"
     if "_lrwarm" in candidate:
         return "warmup"
     if re.search(r"_lr[0-9p]+e[45]_n700$", candidate):
@@ -109,6 +137,66 @@ def parse_axis_filter(raw: str) -> list[str]:
             out.append(item)
             seen.add(item)
     return out
+
+
+def baseline_run_args() -> dict[str, Any]:
+    return {
+        "--mode": "binary",
+        "--config": "dataset.yaml",
+        "--epochs": 20,
+        "--patience": 5,
+        "--batch_size": 32,
+        "--dropout": 0.0,
+        "--precision": "fp16",
+        "--num_workers": 0,
+        "--prefetch_factor": 2,
+        "--ema_decay": 0.0,
+        "--normal_ratio": 700,
+        "--smooth_window": 3,
+        "--smooth_method": "median",
+        "--lr_backbone": "2e-5",
+        "--lr_head": "2e-4",
+        "--warmup_epochs": 5,
+        "--grad_clip": 1.0,
+        "--weight_decay": 0.01,
+        "--label_smoothing": 0.0,
+        "--max_per_class": 0,
+        "--focal_gamma": 0.0,
+        "--asl_gamma_neg": 0.0,
+        "--asl_gamma_pos": 0.0,
+        "--asl_clip": 0.0,
+    }
+
+
+def add_synthetic_axis_runs(payload: dict[str, Any], include_axes: list[str]) -> None:
+    if not include_axes:
+        return
+    runs = payload.get("runs", [])
+    if not isinstance(runs, list):
+        return
+    present_axes = {infer_axis(candidate_name(run)) for run in runs if isinstance(run, dict)}
+    added: list[str] = []
+    for axis in include_axes:
+        if axis not in SYNTHETIC_AXIS_LEVELS or axis in present_axes:
+            continue
+        for token, overrides, reason in SYNTHETIC_AXIS_LEVELS[axis]:
+            candidate = f"fresh0412_v11_{token}_n700"
+            for seed in DEFAULT_SEEDS:
+                run_args = baseline_run_args()
+                run_args.update(overrides)
+                runs.append(
+                    {
+                        "tag": f"{candidate}_s{seed}",
+                        "candidate": candidate,
+                        "seed": seed,
+                        "args": run_args,
+                        "reason": f"{reason} [synthetic server axis]",
+                    }
+                )
+        added.append(axis)
+    if added:
+        payload["server_synthetic_axes"] = added
+        print(f"[queue] added synthetic axis runs: {', '.join(added)}")
 
 
 def load_finished_tags(path: Path | None) -> set[str]:
@@ -184,6 +272,7 @@ def prepare_queue(args: argparse.Namespace) -> dict[str, Any]:
     axis_order = {axis: idx for idx, axis in enumerate(include_axes)}
     if include_axes:
         payload["server_include_axes"] = include_axes
+        add_synthetic_axis_runs(payload, include_axes)
     finished_tags = load_finished_tags(args.skip_completed_summary)
     if args.skip_completed_summary is not None:
         payload["server_skip_completed_summary"] = str(args.skip_completed_summary)
@@ -222,9 +311,21 @@ def prepare_queue(args: argparse.Namespace) -> dict[str, Any]:
             raise SystemExit(f"run args must be a JSON object: {run.get('tag')}")
         if axis != "gc":
             run_args["--grad_clip"] = 0.0
+        if axis != "weight_decay":
+            run_args["--weight_decay"] = 0.01
         if axis != "smoothing":
             run_args["--smooth_window"] = 1
             run_args["--smooth_method"] = "median"
+        if axis != "label_smoothing":
+            run_args["--label_smoothing"] = 0.0
+        if axis != "focal_gamma":
+            run_args["--focal_gamma"] = 0.0
+        if axis != "asl":
+            run_args["--asl_gamma_neg"] = 0.0
+            run_args["--asl_gamma_pos"] = 0.0
+            run_args["--asl_clip"] = 0.0
+        if axis != "per_class":
+            run_args["--max_per_class"] = 0
         run_args["--config"] = args.config
         run_args["--num_workers"] = args.num_workers
         run_args["--prefetch_factor"] = args.prefetch_factor
@@ -302,7 +403,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--include-axes",
         default="",
-        help="Optional comma-separated axis allow-list such as gc,stochastic_depth,focal_gamma.",
+        help="Optional comma-separated axis allow-list such as smoothing,weight_decay,asl,stochastic_depth,focal_gamma.",
     )
     return parser.parse_args()
 

@@ -176,6 +176,51 @@ def build_overall_rows(rows: list[dict]) -> list[dict]:
     return out
 
 
+def mean_or_none(vals: list[float]) -> float | None:
+    return mean(vals) if vals else None
+
+
+def dataset_key(row: dict) -> str:
+    return Path(row["config"]).stem
+
+
+def build_dataset_rows(rows: list[dict]) -> list[dict]:
+    order: list[str] = []
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    for row in rows:
+        key = dataset_key(row)
+        if key not in grouped:
+            order.append(key)
+        grouped[key].append(row)
+
+    out: list[dict] = []
+    for key in order:
+        items = grouped[key]
+        out.append(
+            {
+                "dataset": key,
+                "baseline_f1": mean_or_none(values(items, "baseline_f1")),
+                "baseline_fn": mean_or_none(values(items, "baseline_fn")),
+                "baseline_fp": mean_or_none(values(items, "baseline_fp")),
+                "bkm_f1": mean_or_none(values(items, "bkm_f1")),
+                "bkm_fn": mean_or_none(values(items, "bkm_fn")),
+                "bkm_fp": mean_or_none(values(items, "bkm_fp")),
+                "backbone_f1": mean_or_none(values(items, "backbone_f1")),
+                "backbone_fn": mean_or_none(values(items, "backbone_fn")),
+                "backbone_fp": mean_or_none(values(items, "backbone_fp")),
+            }
+        )
+    return out
+
+
+def annotate_bars(ax, xs: list[float], vals: list[float], *, is_f1: bool) -> None:
+    for x, value in zip(xs, vals):
+        if not value:
+            continue
+        label = f"{value:.4f}" if is_f1 else f"{value:.2f}"
+        ax.text(x, value, label, ha="center", va="bottom", fontsize=7, rotation=90)
+
+
 def write_matrix_outputs(rows: list[dict], out_dir: Path) -> bool:
     """Write backbone x dataset matrix outputs.
 
@@ -455,87 +500,108 @@ def main() -> int:
     md_path.write_text("\n".join(md_lines) + "\n", encoding="utf-8")
 
     # Plot 1: baseline vs BKM combined F1 per dataset.
-    labels = [Path(r["config"]).stem for r in rows]
-    base_vals = [r["baseline_f1"] if r["baseline_f1"] is not None else 0.0 for r in rows]
-    bkm_vals = [r["bkm_f1"] if r["bkm_f1"] is not None else 0.0 for r in rows]
+    dataset_rows = build_dataset_rows(rows)
+    labels = [r["dataset"] for r in dataset_rows]
 
     if labels:
-        x = range(len(labels))
-        width = 0.4
-        fig, ax = plt.subplots(figsize=(max(6, len(labels) * 1.2), 4.2))
-        ax.bar([i - width / 2 for i in x], base_vals, width=width, label="baseline")
-        ax.bar([i + width / 2 for i in x], bkm_vals, width=width, label="BKM combined")
-        ax.set_xticks(list(x))
+        x = list(range(len(labels)))
+
+        # Plot 1: baseline vs BKM grouped by dataset, not by timestamp/cell.
+        series = [
+            ("baseline", [r["baseline_f1"] or 0.0 for r in dataset_rows], "#666666"),
+            ("BKM combined", [r["bkm_f1"] or 0.0 for r in dataset_rows], "#4878CF"),
+        ]
+        width = min(0.32, 0.75 / len(series))
+        fig, ax = plt.subplots(figsize=(max(7, len(labels) * 1.35), 4.2))
+        all_vals: list[float] = []
+        for si, (name, vals, color) in enumerate(series):
+            offsets = [i - 0.5 * width * (len(series) - 1) + si * width for i in x]
+            ax.bar(offsets, vals, width=width, label=name, color=color)
+            annotate_bars(ax, offsets, vals, is_f1=True)
+            all_vals.extend(v for v in vals if v)
+        ax.set_xticks(x)
         ax.set_xticklabels(labels, rotation=30, ha="right")
         ax.set_ylabel("F1")
-        ax.set_title("Cross-dataset: baseline vs BKM combined F1")
-        ax.legend()
-        ax.grid(axis="y", linestyle="--", alpha=0.4)
-        for i, (b, k) in enumerate(zip(base_vals, bkm_vals)):
-            if b:
-                ax.text(i - width / 2, b, f"{b:.4f}", ha="center", va="bottom", fontsize=8)
-            if k:
-                ax.text(i + width / 2, k, f"{k:.4f}", ha="center", va="bottom", fontsize=8)
-        ymin = min([v for v in (base_vals + bkm_vals) if v] or [0.99]) - 0.005
-        ax.set_ylim(max(0, ymin), 1.0)
+        ax.set_title("Cross-dataset F1 by dataset")
+        ax.legend(fontsize=8)
+        ax.grid(axis="y", linestyle="--", alpha=0.35)
+        if all_vals:
+            ax.set_ylim(max(0, min(all_vals) - 0.005), 1.0)
         fig.tight_layout()
         fig.savefig(args.out_dir / "cross_dataset_f1.png", dpi=150)
         plt.close(fig)
 
-        # Plot 2: best backbone F1 per dataset (uses short label).
-        bb_vals = [r["backbone_f1"] if r["backbone_f1"] is not None else 0.0 for r in rows]
-        fig, ax = plt.subplots(figsize=(max(6, len(labels) * 1.2), 4.2))
-        ax.bar(list(x), bb_vals, color="#5b8def")
-        ax.set_xticks(list(x))
-        ax.set_xticklabels(labels, rotation=30, ha="right")
-        ax.set_ylabel("F1")
-        ax.set_title("Cross-dataset: best backbone F1")
-        ax.grid(axis="y", linestyle="--", alpha=0.4)
-        for i, v in enumerate(bb_vals):
-            if v:
-                cand = rows[i]["backbone_candidate"]
-                # Extract short backbone tag from candidate name when possible
-                # (candidate is like "..._bb_<bbshort>_n700"); fall back to raw.
-                m = re.search(r"_bb_([A-Za-z0-9]+)_", cand)
-                bb_label = m.group(1) if m else short_backbone(rows[i]["model"]) or cand
-                ax.text(i, v, f"{v:.4f}\n{bb_label}", ha="center", va="bottom", fontsize=7)
-        ymin = min([v for v in bb_vals if v] or [0.99]) - 0.005
-        ax.set_ylim(max(0, ymin), 1.0)
-        fig.tight_layout()
-        fig.savefig(args.out_dir / "cross_dataset_backbone.png", dpi=150)
-        plt.close(fig)
+        # Plot 2: explicit backbone x dataset bars when cross-product cells exist.
+        models = sorted({r["model"] for r in rows if r.get("model")})
+        if models:
+            cell_index = {(r["model"], dataset_key(r)): r for r in rows if r.get("model")}
+            width = min(0.18, 0.8 / max(1, len(models)))
+            fig, ax = plt.subplots(figsize=(max(8, len(labels) * max(1.35, len(models) * 0.35)), 4.6))
+            palette = ["#4878CF", "#7BC480", "#E07A5F", "#9C6ADE", "#F5B041", "#3D6EAA", "#8E8E8E"]
+            all_vals = []
+            for mi, model in enumerate(models):
+                vals = []
+                for label in labels:
+                    row = cell_index.get((model, label))
+                    value = None
+                    if row is not None:
+                        value = row.get("bkm_f1") if row.get("bkm_f1") is not None else row.get("baseline_f1")
+                    vals.append(float(value) if value is not None else 0.0)
+                offsets = [i - 0.4 + width * (mi + 0.5) for i in x]
+                ax.bar(offsets, vals, width=width, label=short_backbone(model), color=palette[mi % len(palette)])
+                annotate_bars(ax, offsets, vals, is_f1=True)
+                all_vals.extend(v for v in vals if v)
+            ax.set_xticks(x)
+            ax.set_xticklabels(labels, rotation=30, ha="right")
+            ax.set_ylabel("F1")
+            ax.set_title("Cross-dataset backbone cells")
+            ax.grid(axis="y", linestyle="--", alpha=0.35)
+            ax.legend(fontsize=7, loc="lower right")
+            if all_vals:
+                ax.set_ylim(max(0, min(all_vals) - 0.005), 1.0)
+            fig.tight_layout()
+            fig.savefig(args.out_dir / "cross_dataset_backbone.png", dpi=150)
+            plt.close(fig)
+        else:
+            bb_vals = [r["backbone_f1"] or 0.0 for r in dataset_rows]
+            fig, ax = plt.subplots(figsize=(max(7, len(labels) * 1.35), 4.2))
+            ax.bar(x, bb_vals, width=0.42, color="#5b8def")
+            annotate_bars(ax, x, bb_vals, is_f1=True)
+            ax.set_xticks(x)
+            ax.set_xticklabels(labels, rotation=30, ha="right")
+            ax.set_ylabel("F1")
+            ax.set_title("Cross-dataset best backbone F1")
+            ax.grid(axis="y", linestyle="--", alpha=0.35)
+            vals = [v for v in bb_vals if v]
+            if vals:
+                ax.set_ylim(max(0, min(vals) - 0.005), 1.0)
+            fig.tight_layout()
+            fig.savefig(args.out_dir / "cross_dataset_backbone.png", dpi=150)
+            plt.close(fig)
 
         overall_with_f1 = [row for row in overall_rows if row["f1_mean"] is not None]
         if overall_with_f1:
             stage_labels = [row["stage"] for row in overall_with_f1]
-            f1_vals = [row["f1_mean"] for row in overall_with_f1]
-            fn_vals = [row["fn_mean"] if row["fn_mean"] is not None else 0.0 for row in overall_with_f1]
-            fp_vals = [row["fp_mean"] if row["fp_mean"] is not None else 0.0 for row in overall_with_f1]
-            x = list(range(len(stage_labels)))
-            fig, axes = plt.subplots(1, 2, figsize=(max(7, len(stage_labels) * 1.8), 4.2))
-            ax_f1, ax_err = axes
-            ax_f1.bar(x, f1_vals, color="#4878CF")
-            ax_f1.set_xticks(x)
-            ax_f1.set_xticklabels(stage_labels, rotation=20, ha="right")
-            ax_f1.set_ylabel("F1 mean")
-            ax_f1.set_title("Overall F1")
-            ax_f1.grid(axis="y", linestyle="--", alpha=0.4)
-            for i, value in enumerate(f1_vals):
-                ax_f1.text(i, value, f"{value:.4f}", ha="center", va="bottom", fontsize=8)
-            f1_min = min(f1_vals)
-            f1_max = max(f1_vals)
-            margin = max(0.0005, (f1_max - f1_min) * 0.2)
-            ax_f1.set_ylim(max(0.0, f1_min - margin), min(1.0, f1_max + margin))
-
-            width = 0.38
-            ax_err.bar([i - width / 2 for i in x], fn_vals, width=width, label="FN", color="#E43320")
-            ax_err.bar([i + width / 2 for i in x], fp_vals, width=width, label="FP", color="#F5B041")
-            ax_err.set_xticks(x)
-            ax_err.set_xticklabels(stage_labels, rotation=20, ha="right")
-            ax_err.set_ylabel("mean count")
-            ax_err.set_title("Overall FN / FP")
-            ax_err.grid(axis="y", linestyle="--", alpha=0.4)
-            ax_err.legend(fontsize=8)
+            metrics = [
+                ("F1 mean", "f1_mean", "#4878CF", True),
+                ("FN mean", "fn_mean", "#E43320", False),
+                ("FP mean", "fp_mean", "#F5B041", False),
+            ]
+            fig, axes = plt.subplots(1, 3, figsize=(max(10, len(stage_labels) * 2.1), 4.2))
+            sx = list(range(len(stage_labels)))
+            for ax, (title, field, color, is_f1) in zip(axes, metrics):
+                vals = [row[field] if row[field] is not None else 0.0 for row in overall_with_f1]
+                ax.bar(sx, vals, width=0.38, color=color)
+                annotate_bars(ax, sx, vals, is_f1=is_f1)
+                ax.set_xticks(sx)
+                ax.set_xticklabels(stage_labels, rotation=25, ha="right")
+                ax.set_title(title)
+                ax.grid(axis="y", linestyle="--", alpha=0.35)
+                if is_f1 and any(vals):
+                    margin = max(0.0005, (max(vals) - min(vals)) * 0.2)
+                    ax.set_ylim(max(0.0, min(vals) - margin), min(1.0, max(vals) + margin))
+                elif any(vals):
+                    ax.set_ylim(bottom=0.0)
             fig.tight_layout()
             fig.savefig(args.out_dir / "cross_dataset_overall.png", dpi=150)
             plt.close(fig)

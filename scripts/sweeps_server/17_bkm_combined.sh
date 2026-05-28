@@ -5,8 +5,8 @@
 #
 # Source of BKM values: docs/summary.md "Best Known Method" table.
 #   normal_ratio     700  -> 3300
-#   gc               0.0  -> 0.5
 #   label_smoothing  0.00 -> 0.02
+#   asl              off  -> dynamic if completed in this group
 #   stochastic_depth 0.00 -> 0.05
 #   focal_gamma      0.0  -> 2.0
 #   abnormal_weight  1.0  -> 1.5
@@ -106,33 +106,34 @@ import json
 import sys
 from pathlib import Path
 from statistics import mean
+from typing import Any
 
 queue_path, seeds_raw, num_workers, prefetch, batch_size, sweep_results_path, sweep_active_path, model_name = sys.argv[1:9]
 seeds = [int(s.strip()) for s in seeds_raw.split(",") if s.strip()]
 
-# Axes that stage 17 applies together. Each axis is a single CLI flag.
-BKM_AXES = [
-    "--normal_ratio",
-    "--grad_clip",
-    "--label_smoothing",
-    "--stochastic_depth_rate",
-    "--focal_gamma",
-    "--abnormal_weight",
-    "--ema_decay",
-    "--allow_tie_save",
-]
+# Axes that stage 17 applies together. ASL is one logical axis with three flags.
+BKM_AXIS_GROUPS = {
+    "normal_ratio": ["--normal_ratio"],
+    "label_smoothing": ["--label_smoothing"],
+    "asl": ["--asl_gamma_neg", "--asl_gamma_pos", "--asl_clip"],
+    "stochastic_depth": ["--stochastic_depth_rate"],
+    "focal_gamma": ["--focal_gamma"],
+    "abnormal_weight": ["--abnormal_weight"],
+    "ema": ["--ema_decay"],
+    "allow_tie_save": ["--allow_tie_save"],
+}
 
 # Fallback BKM values from docs/summary.md (v2_tiny x dataset.yaml). Used only
 # when 02 results are unavailable for the current group.
 FALLBACK_BKM = {
-    "--normal_ratio": 3300,
-    "--grad_clip": 0.5,
-    "--label_smoothing": 0.02,
-    "--stochastic_depth_rate": 0.05,
-    "--focal_gamma": 2.0,
-    "--abnormal_weight": 1.5,
-    "--ema_decay": 0.95,
-    "--allow_tie_save": True,
+    "normal_ratio": {"--normal_ratio": 3300},
+    "label_smoothing": {"--label_smoothing": 0.02},
+    "asl": {"--asl_gamma_neg": 0.0, "--asl_gamma_pos": 0.0, "--asl_clip": 0.0},
+    "stochastic_depth": {"--stochastic_depth_rate": 0.05},
+    "focal_gamma": {"--focal_gamma": 2.0},
+    "abnormal_weight": {"--abnormal_weight": 1.5},
+    "ema": {"--ema_decay": 0.95},
+    "allow_tie_save": {"--allow_tie_save": True},
 }
 
 # Operating baseline args (must match scripts/sweeps_server/01_baseline.sh).
@@ -155,6 +156,9 @@ base_args = {
     "--normal_ratio": 700,
     "--grad_clip": 0.0,
     "--label_smoothing": 0.0,
+    "--asl_gamma_neg": 0.0,
+    "--asl_gamma_pos": 0.0,
+    "--asl_clip": 0.0,
     "--stochastic_depth_rate": 0.0,
     "--focal_gamma": 0.0,
     "--abnormal_weight": 1.0,
@@ -213,21 +217,27 @@ def discover_bkm(results_path: Path, active_path: Path):
         if cand not in cand_mean:
             continue
         diff_axes: list[str] = []
-        diff_value = None
-        for ax in BKM_AXES:
-            if ax not in args:
-                continue
-            base_val = _normalize(base_args.get(ax))
-            cand_val = _normalize(args.get(ax))
-            if base_val != cand_val:
-                diff_axes.append(ax)
-                diff_value = args[ax]
+        diff_values: dict[str, Any] = {}
+        for axis, flags in BKM_AXIS_GROUPS.items():
+            changed = False
+            values: dict[str, Any] = {}
+            for flag in flags:
+                if flag not in args:
+                    continue
+                base_val = _normalize(base_args.get(flag))
+                cand_val = _normalize(args.get(flag))
+                values[flag] = args[flag]
+                if base_val != cand_val:
+                    changed = True
+            if changed:
+                diff_axes.append(axis)
+                diff_values = values
         if len(diff_axes) != 1:
             continue
         ax = diff_axes[0]
         entry = per_axis.get(ax)
         if entry is None or cand_mean[cand] > entry["f1"]:
-            per_axis[ax] = {"value": diff_value, "f1": cand_mean[cand], "candidate": cand}
+            per_axis[ax] = {"values": diff_values, "f1": cand_mean[cand], "candidate": cand}
 
     return per_axis
 
@@ -240,20 +250,29 @@ bkm_args = dict(base_args)
 bkm_source: dict[str, str] = {}
 if discovered:
     print(f"[bkm] dynamic BKM from {sweep_results.name}:")
-    for ax in BKM_AXES:
-        entry = discovered.get(ax)
+    for axis, flags in BKM_AXIS_GROUPS.items():
+        entry = discovered.get(axis)
         if entry is not None:
-            bkm_args[ax] = entry["value"]
-            bkm_source[ax] = f"dynamic ({entry['candidate']} F1={entry['f1']:.4f})"
+            for flag, value in entry["values"].items():
+                bkm_args[flag] = value
+            bkm_source[axis] = f"dynamic ({entry['candidate']} F1={entry['f1']:.4f})"
         else:
-            bkm_args[ax] = FALLBACK_BKM[ax]
-            bkm_source[ax] = "fallback (axis not found in 02 results)"
-        print(f"  {ax} = {bkm_args[ax]!r}  [{bkm_source[ax]}]")
+            for flag, value in FALLBACK_BKM[axis].items():
+                bkm_args[flag] = value
+            bkm_source[axis] = "fallback (axis not found in 02 results)"
+        values = ", ".join(f"{flag}={bkm_args.get(flag)!r}" for flag in flags)
+        print(f"  {axis}: {values}  [{bkm_source[axis]}]")
 else:
     print(f"[bkm] 02 sweep results unavailable; using FALLBACK BKM from docs/summary.md", file=sys.stderr)
-    for ax in BKM_AXES:
-        bkm_args[ax] = FALLBACK_BKM[ax]
-        bkm_source[ax] = "fallback (no 02 results)"
+    for axis, values in FALLBACK_BKM.items():
+        for flag, value in values.items():
+            bkm_args[flag] = value
+        bkm_source[axis] = "fallback (no 02 results)"
+
+if any(float(bkm_args.get(flag, 0.0) or 0.0) > 0 for flag in ("--asl_gamma_neg", "--asl_gamma_pos", "--asl_clip")):
+    bkm_args["--label_smoothing"] = 0.0
+    bkm_args["--focal_gamma"] = 0.0
+    bkm_source["loss_family_note"] = "ASL selected; label_smoothing and focal_gamma forced off because loss-family axes are mutually exclusive"
 
 if model_name:
     bkm_args["--model_name"] = model_name

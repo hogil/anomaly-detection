@@ -110,6 +110,7 @@ python train.py \
 | `--warmup_epochs` | warmup epoch 수 | `--warmup_epochs 3` |
 | `--grad_clip` | gradient clip max_norm. `0` 이면 끔 | `--grad_clip 0.5` |
 | `--label_smoothing` | label smoothing | `--label_smoothing 0.02` |
+| `--asl_gamma_neg` / `--asl_clip` | asymmetric loss 축. ASL이 켜지면 loss-family 단일 조건으로 해석 | `--asl_gamma_neg 2.0 --asl_clip 0.05` |
 | `--stochastic_depth_rate` | stochastic depth | `--stochastic_depth_rate 0.05` |
 | `--focal_gamma` | focal loss γ | `--focal_gamma 2.0` |
 | `--abnormal_weight` | anomaly class 가중치 | `--abnormal_weight 1.5` |
@@ -144,7 +145,6 @@ BKM combined 한 번 돌리는 단일 명령 예시 (`05_bkm_combined`와 같은
 python train.py \
   --config dataset.yaml --mode binary --epochs 20 --batch_size 32 --precision fp16 \
   --normal_ratio 3300 \
-  --grad_clip 0.5 \
   --label_smoothing 0.02 \
   --stochastic_depth_rate 0.05 \
   --focal_gamma 2.0 \
@@ -168,14 +168,13 @@ bash scripts/sweeps_server/00_all.sh
 |---|---|---|
 | 0 | weights/dataset 준비 | 없으면 `download.py`, `generate_data.py`, `generate_images.py` 자동 |
 | 1 | baseline | 같은 baseline 5-seed 재확인 |
-| 2 | axis sweep (core) | lr/warmup/normal_ratio/per_class/label_smoothing/stochastic_depth/focal_gamma/abnormal_weight/ema/allow_tie_save 한 축씩만 |
+| 2 | axis sweep (core) | lr/warmup/normal_ratio/per_class/weight_decay/smoothing/label_smoothing/asl/stochastic_depth/focal_gamma/abnormal_weight/ema/allow_tie_save 한 축씩만 |
 | 3 | color | trend·fleet 색·alpha 축 |
 | 4 | sample_skip | nonfinite-loss 샘플 step-skip 안전 실험 1-seed |
 | 5 | backbone | `download.py::MODELS` 순서의 백본을 우선 학습하고, `weights/`의 추가 non-deprecated `*.pth`를 뒤에 학습 |
 | 6 | logical_train | member별 logical 데이터셋 + 학습 |
-| 7 | gc (last) | grad_clip 축 (불안정 위험으로 마지막) |
-| 8 | bkm_combined | 8개 BKM 값 다 적용한 candidate 1개 × 5-seed |
-| 9 | postprocess | 종합 리포트 + 축별 plot + instability/trend |
+| 7 | bkm_combined | BKM 값 다 적용한 candidate 1개 × 5-seed |
+| 8 | postprocess | 종합 리포트 + 축별 plot + instability/trend |
 
 GPU 메모리·CPU 수로 자동 프로필 결정:
 
@@ -196,21 +195,25 @@ GPU 메모리·CPU 수로 자동 프로필 결정:
 ### 한 축만
 
 ```bash
-bash scripts/sweeps_server/axis.sh lr            # stage 2의 lr만
-bash scripts/sweeps_server/axis.sh gc            # stage 7
-bash scripts/sweeps_server/axis.sh baseline      # stage 1
+bash scripts/run_paper_server_all.sh --round1-include-axes lr --skip-post
+bash scripts/run_paper_server_all.sh --round1-include-axes asl --skip-post
+bash scripts/sweeps_server/01_baseline.sh
 ```
 
-`axis.sh`가 받는 이름: `lr, warmup, normal_ratio, per_class, label_smoothing, stochastic_depth, focal_gamma, abnormal_weight, ema, color, allow_tie_save, gc, baseline`.
+축 이름: `lr, warmup, normal_ratio, per_class, weight_decay, smoothing, label_smoothing, asl, stochastic_depth, focal_gamma, abnormal_weight, ema, color, allow_tie_save, baseline`.
 
 ### stage 1~3만 (baseline + 모든 core 축 + color)
 
 축마다 호출하거나:
 
 ```bash
-for axis in baseline lr warmup normal_ratio per_class label_smoothing \
+for axis in baseline lr warmup normal_ratio per_class weight_decay smoothing label_smoothing asl \
             stochastic_depth focal_gamma abnormal_weight ema allow_tie_save color; do
-  bash scripts/sweeps_server/axis.sh "$axis"
+  if [ "$axis" = baseline ]; then
+    bash scripts/sweeps_server/01_baseline.sh
+  else
+    bash scripts/run_paper_server_all.sh --round1-include-axes "$axis" --skip-post
+  fi
 done
 ```
 
@@ -219,7 +222,7 @@ done
 ```bash
 bash scripts/run_paper_server_all.sh \
   --skip-weights --skip-dataset \
-  --round1-include-axes lr,warmup,normal_ratio,per_class,label_smoothing,stochastic_depth,focal_gamma,abnormal_weight,ema,allow_tie_save,color \
+  --round1-include-axes lr,warmup,normal_ratio,per_class,weight_decay,smoothing,label_smoothing,asl,stochastic_depth,focal_gamma,abnormal_weight,ema,allow_tie_save,color \
   --skip-post
 ```
 
@@ -264,20 +267,24 @@ scaling 적용 항목:
 
 ### 한방 — 모든 dataset × 모든 axis × 모든 backbone 한 번에
 
-`scripts/all-dataset-backbone.sh` 한 줄. 각 yaml 마다 (1) weights/data/baseline 준비 → (2) `00_all.sh` 실행 (모든 axis + sample_skip + 모든 backbone + logical_train + gc-last + bkm_combined + postprocess). 각 dataset 이 끝날 때마다 `validations/cross_dataset_report_<timestamp>/` 를 갱신하고, 전부 끝난 뒤 같은 위치에 최종 비교 표·plot 을 다시 생성합니다. Backbone stage 도 각 run 완료 직후 `04_backbone_results.md` / `04_backbone_plot.png` 를 갱신하므로 한 backbone 의 seed 묶음이 끝나는 즉시 현재 순위를 볼 수 있습니다.
+현재 `scripts/all-dataset-backbone.sh` 기본 dataset은 4개입니다: `dataset.yaml`, `dataset1_noise_15.yaml`, `dataset3_anomaly_10.yaml`, `dataset5_all_a10n15.yaml`. 각 yaml의 image class는 6개(`normal`, `mean_shift`, `standard_deviation`, `spike`, `drift`, `context`)이고, `--mode binary` 학습에서는 이를 `normal` vs `abnormal` 2클래스로 접습니다.
+
+서버에서 같이 돌아가려면 repo 코드 외에 각 config의 `output.data_dir/timeseries.csv`, `output.data_dir/scenarios.csv`, `output.image_dir/<split>/<class>/*.png`가 필요합니다. 없으면 prep 단계가 `generate_data.py`와 `generate_images.py`로 다시 만들고, cross-product backbone mode에서는 요청한 `weights/<model_name>.pth`가 먼저 있어야 합니다.
+
+`scripts/all-dataset-backbone.sh` 한 줄. 각 yaml 마다 (1) weights/data/baseline 준비 → (2) `00_all.sh` 실행 (모든 axis + sample_skip + 모든 backbone + logical_train + bkm_combined + postprocess). 각 dataset 이 끝날 때마다 `validations/<timestamp>_cross_dataset_report/` 를 갱신하고, 전부 끝난 뒤 같은 위치에 최종 비교 표·plot 을 다시 생성합니다. Backbone stage 도 각 run 완료 직후 `04_backbone_results.md` / `04_backbone_plot.png` 를 갱신하므로 한 backbone 의 seed 묶음이 끝나는 즉시 현재 순위를 볼 수 있습니다.
 
 기본값은 prep 단계에서 `download.py`를 실행해 `weights/{model_name}.pth`를 준비합니다. 폐쇄망 서버처럼 `weights/*.pth`를 이미 복사해 둔 경우에만 `--skip-weights`를 붙입니다.
 
 ```bash
 bash scripts/all-dataset-backbone.sh
-# 기본 7 yaml 순차: dataset.yaml + dataset{1..6}_*.yaml
+# 기본 4 yaml 순차: dataset.yaml, dataset1_noise_15.yaml, dataset3_anomaly_10.yaml, dataset5_all_a10n15.yaml
 # 끝나고:
-#   validations/cross_dataset_report_<ts>/cross_dataset_summary.md
-#   validations/cross_dataset_report_<ts>/cross_dataset_summary.csv
-#   validations/cross_dataset_report_<ts>/cross_dataset_overall.csv
-#   validations/cross_dataset_report_<ts>/cross_dataset_f1.png
-#   validations/cross_dataset_report_<ts>/cross_dataset_backbone.png
-#   validations/cross_dataset_report_<ts>/cross_dataset_overall.png
+#   validations/<ts>_cross_dataset_report/cross_dataset_summary.md
+#   validations/<ts>_cross_dataset_report/cross_dataset_summary.csv
+#   validations/<ts>_cross_dataset_report/cross_dataset_overall.csv
+#   validations/<ts>_cross_dataset_report/cross_dataset_f1.png
+#   validations/<ts>_cross_dataset_report/cross_dataset_backbone.png
+#   validations/<ts>_cross_dataset_report/cross_dataset_overall.png
 ```
 
 옵션:
@@ -463,8 +470,8 @@ disown
 
 ```bash
 GROUP=run_$(date +%Y%m%d_%H%M%S)
-bash scripts/sweeps_server/axis.sh baseline --log-dir-group "$GROUP"
-bash scripts/sweeps_server/axis.sh lr        --log-dir-group "$GROUP"
+bash scripts/sweeps_server/01_baseline.sh --log-dir-group "$GROUP"
+bash scripts/run_paper_server_all.sh --round1-include-axes lr --skip-post --log-dir-group "$GROUP"
 bash scripts/sweeps_server/backbone.sh       --log-dir-group "$GROUP"
 ```
 
@@ -474,7 +481,7 @@ bash scripts/sweeps_server/backbone.sh       --log-dir-group "$GROUP"
 
 ```bash
 bash scripts/sweeps_server/backbone.sh --prepare-only          # queue/active만 만듦
-bash scripts/sweeps_server/axis.sh lr --max-launched 1         # lr 축에서 1 run만
+bash scripts/run_paper_server_all.sh --round1-include-axes lr --max-launched 1 --skip-post
 ```
 
 ---

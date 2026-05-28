@@ -58,6 +58,8 @@ def ensure_parent(path: Path) -> None:
 
 
 def infer_axis(candidate: str) -> str:
+    if "_asl" in candidate:
+        return "asl"
     if "_stressw3_gc" in candidate:
         return "gc_stress"
     if "_stresslr5e5_wd" in candidate:
@@ -397,16 +399,11 @@ def write_outputs(
         "strong_total",
         "strong_wrong_rate",
         "all_wrong",
-        "all_total",
         "strong_wrong_axis_diversity",
-        "strong_wrong_candidate_diversity",
         "device",
         "step",
         "item",
-        "legend_axis",
-        "highlighted_member",
         "target",
-        "defect_start_idx",
     ]
     with csv_path.open("w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=csv_fields)
@@ -439,6 +436,14 @@ def write_outputs(
             "- `persistent_hard_sample`: many strong runs miss it. Usually weak defect visibility or near-boundary sample rather than a simple tuning issue.",
             "- `config_sensitive`: some strong settings recover it and others miss it. Use this to explain FP/FN movement by axis.",
             "- `mostly_unstable_only`: mainly wrong in low-quality or unstable runs.",
+            "",
+            "## CSV Columns",
+            "",
+            "- `strong_wrong/strong_total`: how often strong runs misclassified this chart.",
+            "- `strong_wrong_rate`: repeated-error rate among strong runs.",
+            "- `all_wrong`: total FP/FN hits across all scanned runs.",
+            "- `strong_wrong_axis_diversity`: number of axes involved in repeated strong-run errors.",
+            "- `device`, `step`, `item`, `target`: minimum metadata needed for manual review.",
             "",
         ]
     )

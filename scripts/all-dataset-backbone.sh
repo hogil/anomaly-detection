@@ -6,7 +6,7 @@
 #
 #   1) Legacy (default when --backbones is NOT set): one pass per dataset, with
 #      stage 14 (backbone rotation) running every weights/*.pth. Existing
-#      behavior; produces validations/cross_dataset_report_<ts>/.
+#      behavior; produces validations/<ts>_cross_dataset_report/.
 #
 #   2) Cross-product (when --backbones CSV is set): outer loop is
 #      dataset x backbone. Per cell: data prep (once per dataset), then
@@ -207,12 +207,12 @@ if [[ "$SKIP_WEIGHTS" -eq 1 ]]; then
 fi
 
 WRAPPER_TS="$(date +%Y%m%d_%H%M%S)"
-REPORT_DIR="validations/cross_dataset_report_${WRAPPER_TS}"
+REPORT_DIR="validations/${WRAPPER_TS}_cross_dataset_report"
 echo "== all-dataset-backbone start: $(date -Is) =="
 echo "datasets: ${RESOLVED[*]}"
 if [[ "$CROSS_PRODUCT" -eq 1 ]]; then
   echo "backbones: ${BACKBONES[*]}"
-  echo "mode: cross-product (4 stages: 01 + 02 + 16 + 17; 13/14/15 skipped)"
+  echo "mode: cross-product (stages: 01 + 02 + 17; 13/14/15 skipped)"
 else
   echo "mode: legacy (single backbone-rotation pass per dataset)"
 fi

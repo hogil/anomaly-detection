@@ -121,21 +121,25 @@ def write_plot(plot_path: Path, title: str, rows: list[dict[str, Any]],
                base: tuple[float | None, float | None, float | None]) -> None:
     base_f1, base_fn, base_fp = base
     rows_with_f1 = [r for r in rows if r.get("f1") is not None]
-    if not rows_with_f1:
+    if not rows_with_f1 and base_f1 is None:
         return
     rows_sorted = sorted(rows_with_f1, key=lambda r: -r["f1"])
-    labels = [r["candidate"].replace("fresh0412_v11_rawbase_", "").replace("fresh0412_v11_", "") for r in rows_sorted]
-    f1s = [r["f1"] for r in rows_sorted]
-    fns = [r["fn"] if r.get("fn") is not None else 0 for r in rows_sorted]
-    fps = [r["fp"] if r.get("fp") is not None else 0 for r in rows_sorted]
+    plot_rows: list[dict[str, Any]] = []
+    if base_f1 is not None:
+        plot_rows.append({"candidate": "baseline", "f1": base_f1, "fn": base_fn, "fp": base_fp, "is_baseline": True})
+    plot_rows.extend({**r, "is_baseline": False} for r in rows_sorted)
+    labels = [
+        r["candidate"].replace("fresh0412_v11_rawbase_", "").replace("fresh0412_v11_", "")
+        for r in plot_rows
+    ]
+    f1s = [r["f1"] for r in plot_rows]
+    fns = [r["fn"] if r.get("fn") is not None else 0 for r in plot_rows]
+    fps = [r["fp"] if r.get("fp") is not None else 0 for r in plot_rows]
+    colors = ["#666666" if r.get("is_baseline") else "#4878CF" for r in plot_rows]
 
     fig, axes = plt.subplots(1, 2, figsize=(max(8.0, 0.7 * len(labels) + 6), 5.0))
     ax_f1, ax_err = axes
-    bar_color = "#4878CF"
-    ax_f1.bar(range(len(labels)), f1s, color=bar_color)
-    if base_f1 is not None:
-        ax_f1.axhline(base_f1, color="#888888", linestyle="--", linewidth=1, label=f"baseline F1={base_f1:.4f}")
-        ax_f1.legend(fontsize=8)
+    ax_f1.bar(range(len(labels)), f1s, color=colors)
     ax_f1.set_xticks(range(len(labels)))
     ax_f1.set_xticklabels(labels, rotation=30, ha="right", fontsize=8)
     ax_f1.set_ylabel("F1")
@@ -150,14 +154,10 @@ def write_plot(plot_path: Path, title: str, rows: list[dict[str, Any]],
     x = list(range(len(labels)))
     ax_err.bar([i - width / 2 for i in x], fns, width=width, label="FN", color="#E43320")
     ax_err.bar([i + width / 2 for i in x], fps, width=width, label="FP", color="#F5B041")
-    if base_fn is not None:
-        ax_err.axhline(base_fn, color="#E43320", linestyle="--", linewidth=1, alpha=0.5)
-    if base_fp is not None:
-        ax_err.axhline(base_fp, color="#F5B041", linestyle="--", linewidth=1, alpha=0.5)
     ax_err.set_xticks(x)
     ax_err.set_xticklabels(labels, rotation=30, ha="right", fontsize=8)
     ax_err.set_ylabel("count (mean over seeds)")
-    ax_err.set_title(f"{title} — FN / FP (dashed = baseline)")
+    ax_err.set_title(f"{title} — FN / FP")
     ax_err.legend(fontsize=8)
 
     fig.tight_layout()

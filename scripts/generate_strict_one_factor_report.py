@@ -14,6 +14,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,10 +27,10 @@ FAMILY_ORDER = [
     "per_class",
     "lr",
     "warmup",
-    "gc",
     "weight_decay",
     "smoothing",
     "label_smoothing",
+    "asl",
     "stochastic_depth",
     "focal_gamma",
     "abnormal_weight",
@@ -43,10 +44,10 @@ FAMILY_TITLES = {
     "per_class": "per_class",
     "lr": "LR",
     "warmup": "warmup",
-    "gc": "GC",
     "weight_decay": "weight_decay",
     "smoothing": "smoothing",
     "label_smoothing": "label_smoothing",
+    "asl": "ASL",
     "stochastic_depth": "stochastic_depth",
     "focal_gamma": "focal_gamma",
     "abnormal_weight": "abnormal_weight",
@@ -105,6 +106,7 @@ SD_MAP = {
 FG_MAP = {"0p5": 0.5, "1p0": 1.0, "1p5": 1.5, "2p0": 2.0, "2p5": 2.5}
 AW_MAP = {"0p5": 0.5, "0p8": 0.8, "1p2": 1.2, "1p5": 1.5, "2p0": 2.0, "3p0": 3.0}
 EMA_MAP = {"0p90": 0.90, "0p95": 0.95, "0p99": 0.99, "0p995": 0.995, "0p999": 0.999}
+ASL_MAP = {"0p5": 0.5, "1p0": 1.0, "2p0": 2.0, "3p0": 3.0, "4p0": 4.0}
 LR_MAP = {
     "1e5": ("1e-5 / 1e-4", 1e-5),
     "2e5": ("2e-5 / 2e-4", 2e-5),
@@ -133,13 +135,13 @@ LR_SCHEDULE_BACKBONE_BASE = 2e-5
 
 FAMILY_BASELINES: dict[str, tuple[str, float | str]] = {
     "normal_ratio": ("700", 700.0),
-    "per_class": ("0 / off", 0.0),
+    "per_class": ("700 ref", 700.0),
     "lr": ("2e-5 / 2e-4", 2e-5),
     "warmup": ("5", 5.0),
-    "gc": ("0 / off", 0.0),
     "weight_decay": ("0.01", 0.01),
     "smoothing": ("1-raw", 1.0),
     "label_smoothing": ("0.00", 0.00),
+    "asl": ("off", 0.0),
     "stochastic_depth": ("0.00", 0.00),
     "focal_gamma": ("0.0", 0.0),
     "abnormal_weight": ("1.0", 1.0),
@@ -295,6 +297,13 @@ def parse_candidate(candidate: str) -> tuple[str, str, float] | None:
         if token in LS_MAP:
             value = LS_MAP[token]
             return "label_smoothing", fmt_compact(value), float(value)
+
+    m = re.fullmatch(r"asl([0-9]p[0-9])_n700", suffix)
+    if m:
+        token = m.group(1)
+        if token in ASL_MAP:
+            value = ASL_MAP[token]
+            return "asl", fmt_compact(value), float(value)
 
     m = re.fullmatch(r"regdp([0-9]+)_n700", suffix)
     if m:
@@ -590,7 +599,6 @@ def completed_or_reference(rows: list[ConditionRecord]) -> list[ConditionRecord]
 
 
 def report_rows(family: str, rows: list[ConditionRecord]) -> list[ConditionRecord]:
-    rows = completed_or_reference(rows)
     if family == "color":
         return [r for r in rows if r.label in {"baseline", "c01"}]
     return rows
@@ -615,18 +623,14 @@ def best_completed(rows: list[ConditionRecord], exclude_baseline: bool = True, p
 
 def strongest_candidates(records: dict[str, dict[str, ConditionRecord]]) -> list[str]:
     lines: list[str] = []
-    for family in ("label_smoothing", "abnormal_weight", "stochastic_depth", "gc", "color"):
+    for family in ("label_smoothing", "asl", "abnormal_weight", "stochastic_depth", "color"):
         rows = sorted_family_rows(records, family)
         if not rows:
             continue
         best = best_completed(rows)
         if best is None:
             continue
-        if family == "gc":
-            lines.append(
-                f"`GC` broad good band remains active; current lowest completed total error is around `{best.label}` with `F1={fmt_float(best.f1)}`, `FN={fmt_compact(best.fn)}`, `FP={fmt_compact(best.fp)}`. Incomplete values are kept out of the main table."
-            )
-        elif family == "color":
+        if family == "color":
             c01 = next((r for r in rows if r.label.startswith("c01") and r.f1 is not None), None)
             if c01:
                 lines.append(
@@ -674,7 +678,7 @@ def robust_lower_bound(values: list[float]) -> float | None:
 
 def experiment_interpretation(records: dict[str, dict[str, ConditionRecord]]) -> list[str]:
     lines: list[str] = []
-    lines.append("이번 strict one-factor round에서는 baseline을 고정한 채 `normal_ratio`, `per_class`, `lr`, `warmup`, `gc`, `weight_decay`, `smoothing`, `label_smoothing`, `stochastic_depth`, `focal_gamma`, `abnormal_weight`, `ema`, `color`, `allow_tie_save`를 개별 축으로 확인했습니다.")
+    lines.append("이번 strict one-factor round에서는 baseline을 고정한 채 `normal_ratio`, `per_class`, `lr`, `warmup`, `weight_decay`, `smoothing`, `label_smoothing`, `asl`, `stochastic_depth`, `focal_gamma`, `abnormal_weight`, `ema`, `color`, `allow_tie_save`를 개별 축으로 확인했습니다.")
 
     meaningful: list[str] = []
     broad: list[str] = []
@@ -688,6 +692,9 @@ def experiment_interpretation(records: dict[str, dict[str, ConditionRecord]]) ->
     ls = best_label("label_smoothing")
     if ls:
         meaningful.append(f"`label_smoothing`은 `{ls}` 근처에서 가장 강한 개선이 보였고, 너무 낮거나 높으면 FP/FN 균형이 다시 나빠졌습니다")
+    asl = best_label("asl")
+    if asl:
+        meaningful.append(f"`asl`은 `gamma_neg={asl}` 조건을 같은 baseline에서 비교하는 loss-axis 후보입니다")
     aw = best_label("abnormal_weight")
     if aw:
         meaningful.append(f"`abnormal_weight`는 `{aw}` 근처에서 sweet spot이 보였고, 더 크게 주면 FN이 다시 증가했습니다")
@@ -695,8 +702,6 @@ def experiment_interpretation(records: dict[str, dict[str, ConditionRecord]]) ->
     if sd:
         meaningful.append(f"`stochastic_depth`는 `{sd}` 인근에서 유의미한 개선이 나타났습니다")
 
-    if best_label("gc"):
-        broad.append("`gc`는 단일 sharp optimum보다는 넓은 양호 구간이 보였고, 헌팅 값 하나가 축 스케일을 왜곡하는 형태였습니다")
     if best_label("focal_gamma"):
         weak.append("`focal_gamma`는 여러 값이 비슷해서 뚜렷한 최적값보다는 broad-good 혹은 약한 효과 축에 가깝습니다")
     if best_label("normal_ratio"):
@@ -730,6 +735,7 @@ def evidence_limits(records: dict[str, dict[str, ConditionRecord]]) -> list[str]
         f"운영 baseline은 `{OPERATING_BASELINE}`입니다. 서버 기준은 `grad_clip=0.0`, `smooth_window=1` raw이며, 5-seed refcheck summary를 strict delta 기준으로 사용합니다.",
         f"`{HISTORICAL_BASELINE}`은 historical selected ref로 보존하되, strict one-factor 표와 delta 계산의 현재 기준은 `{OPERATING_BASELINE}`입니다.",
         "`label_smoothing=0.0`은 baseline train config에 명시된 no-smoothing 상태입니다. 단, `label_smoothing>0`에서는 loss 구현 경로가 `CrossEntropyLoss(label_smoothing=...)`로 바뀌므로 최종 claim에는 이 구현 차이를 한계로 적어야 합니다.",
+        "`asl`은 asymmetric loss 축입니다. `asl`이 켜진 run에서는 `label_smoothing`/`focal_gamma`와 동시에 해석하지 말고 loss-family 단일 축으로 봅니다.",
         "현재 표는 baseline-fixed one-factor evidence만 섞어 보여줍니다. alternate-parent stress, bad-case rescue, logical/per-member 실험은 별도 표로 분리해야 합니다.",
         f"아직 claim 성숙 전인 조건이 남아 있습니다: queued `{queued}`개, partial `{partial}`개, 5-seed 미만 완료 `{three_seed}`개.",
         "`stochastic_depth`는 학습 때 일부 residual/drop-path branch를 확률적으로 끄는 regularization입니다. 추론 때는 전체 경로를 쓰며, 모델이 한 경로에 과적합하지 않게 만들어 seed 안정성과 FN/FP 균형이 좋아지는지 보는 축입니다.",
@@ -767,8 +773,8 @@ def best_known_method(records: dict[str, dict[str, ConditionRecord]], manual_sum
         return manual_lines
     picks = {
         "normal_ratio": None,
-        "gc": None,
         "label_smoothing": None,
+        "asl": None,
         "stochastic_depth": None,
         "focal_gamma": None,
         "abnormal_weight": None,
@@ -785,11 +791,11 @@ def best_known_method(records: dict[str, dict[str, ConditionRecord]], manual_sum
         "| axis | baseline | BKM value | F1 | FN | FP | status |",
         "| --- | ---: | ---: | ---: | ---: | ---: | --- |",
     ])
-    for family in ("normal_ratio", "gc", "label_smoothing", "stochastic_depth", "focal_gamma", "abnormal_weight", "ema", "allow_tie_save"):
+    for family in ("normal_ratio", "label_smoothing", "asl", "stochastic_depth", "focal_gamma", "abnormal_weight", "ema", "allow_tie_save"):
         best = picks[family]
         if best is None:
             continue
-        baseline_label = {"gc": "1.0"}.get(family, FAMILY_BASELINES.get(family, ("", ""))[0])
+        baseline_label = FAMILY_BASELINES.get(family, ("", ""))[0]
         recipe_lines.append(
             f"| `{family}` | `{baseline_label}` | `{best.label}` | {fmt_float(best.f1)} | {fmt_compact(best.fn)} | {fmt_compact(best.fp)} | single-axis evidence |"
         )
@@ -813,104 +819,104 @@ def plot_family(
     comparison_rows: list[ConditionRecord] | None = None,
 ) -> None:
     baseline_f1, baseline_fn, baseline_fp = baseline
-    rows = completed_or_reference(rows)
+    status_order = {"reference": 0, "complete": 1, "partial": 2, "queued": 3}
+    primary_rows = sorted(rows, key=lambda r: (r.sort_value, status_order.get(r.status, 9), r.label))
     comparison_rows = completed_or_reference(comparison_rows or [])
-    x_values = sorted({r.sort_value for r in rows + comparison_rows})
-    x_index = {value: idx for idx, value in enumerate(x_values)}
-    labels_by_idx = {
-        x_index[r.sort_value]: r.label
-        for r in rows + comparison_rows
-        if r.sort_value in x_index
-    }
-    x_labels = [labels_by_idx.get(idx, fmt_compact(value)) for idx, value in enumerate(x_values)]
-    xs = list(range(len(x_values)))
+    plot_items: list[tuple[ConditionRecord, str]] = [(r, "current") for r in primary_rows]
+    plot_items.extend((r, "optimized") for r in comparison_rows)
+    if not plot_items:
+        return
 
-    fig, axes = plt.subplots(1, 3, figsize=(max(10, len(x_values) * 1.0), 4.2))
+    x_labels = [
+        (f"opt {row.label}" if kind == "optimized" else row.label)
+        for row, kind in plot_items
+    ]
+    xs = list(range(len(plot_items)))
+
+    fig, axes = plt.subplots(1, 3, figsize=(max(10, len(plot_items) * 0.75), 4.2))
     metrics = [
         ("F1", baseline_f1, lambda r: r.f1),
         ("FN", baseline_fn, lambda r: r.fn),
         ("FP", baseline_fp, lambda r: r.fp),
     ]
+    palette = {
+        "reference": "#555555",
+        "complete": "#4878CF",
+        "partial": "#9C6ADE",
+        "queued": "#CCCCCC",
+        "optimized": "#2ca02c",
+    }
 
     for ax, (metric_name, base_value, getter) in zip(axes, metrics):
-        ax.axhline(
-            base_value,
-            color="#d62728",
-            linestyle="--",
-            linewidth=1.2,
-            alpha=0.9,
-            label="operating baseline",
-            zorder=0,
-        )
-        ys_reference_x: list[int] = []
-        ys_reference_y: list[float] = []
-        ys_complete_x: list[int] = []
-        ys_complete_y: list[float] = []
-        for row in rows:
+        bar_x: list[int] = []
+        bar_y: list[float] = []
+        colors: list[str] = []
+        for idx, (row, kind) in enumerate(plot_items):
             value = getter(row)
             if value is None:
                 continue
-            idx = x_index[row.sort_value]
-            if row.status == "reference":
-                ys_reference_x.append(idx)
-                ys_reference_y.append(float(value))
-            elif row.status == "complete":
-                ys_complete_x.append(idx)
-                ys_complete_y.append(float(value))
-        if ys_reference_x:
-            ax.plot(ys_reference_x, ys_reference_y, color="#333333", marker="s", lw=0.0, ms=6, label="reference")
-        if ys_complete_x:
-            ax.plot(ys_complete_x, ys_complete_y, color="#1f77b4", marker="o", lw=1.8, label="current ref sweep")
-        comparison_y: list[float] = []
-        if comparison_rows:
-            comparison_x: list[int] = []
-            for row in comparison_rows:
-                value = getter(row)
-                if value is None:
-                    continue
-                comparison_x.append(x_index[row.sort_value])
-                comparison_y.append(float(value))
-            if comparison_x:
-                ax.plot(comparison_x, comparison_y, color="#2ca02c", marker="^", lw=1.8, label="optimized v11 sweep")
+            bar_x.append(idx)
+            bar_y.append(float(value))
+            colors.append(palette["optimized"] if kind == "optimized" else palette.get(row.status, "#4878CF"))
+        if bar_x:
+            ax.bar(bar_x, bar_y, width=0.58, color=colors)
+            for x, y in zip(bar_x, bar_y):
+                label = f"{y:.4f}" if metric_name == "F1" else fmt_compact(y)
+                ax.text(x, y, label, ha="center", va="bottom", fontsize=7, rotation=90)
+        else:
+            ax.text(0.5, 0.5, "no completed values", ha="center", va="center", transform=ax.transAxes)
         ax.set_title(metric_name)
         ax.set_xticks(xs)
         ax.set_xticklabels(x_labels, rotation=45, ha="right")
         ax.grid(alpha=0.25, linestyle=":")
         if metric_name == "F1":
-            all_y = [baseline_f1] + ys_reference_y + ys_complete_y + comparison_y
-            lower = robust_lower_bound(all_y)
-            if lower is None:
-                ax.set_ylim(max(0.0, min(all_y) - 0.01), min(1.0, max(all_y) + 0.01))
-            else:
-                ax.set_ylim(lower, min(1.0, max(all_y) + 0.01))
-                ax.text(
-                    0.98,
-                    0.98,
-                    "scale clipped",
-                    transform=ax.transAxes,
-                    ha="right",
-                    va="top",
-                    fontsize=8,
-                    color="#666666",
-                    bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none", "pad": 1.5},
-                )
+            all_y = [baseline_f1] + bar_y
+            if all_y:
+                lower = robust_lower_bound(all_y)
+                if lower is None:
+                    ax.set_ylim(max(0.0, min(all_y) - 0.01), min(1.0, max(all_y) + 0.01))
+                else:
+                    ax.set_ylim(lower, min(1.0, max(all_y) + 0.01))
+                    ax.text(
+                        0.98,
+                        0.98,
+                        "scale clipped",
+                        transform=ax.transAxes,
+                        ha="right",
+                        va="top",
+                        fontsize=8,
+                        color="#666666",
+                        bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none", "pad": 1.5},
+                    )
         else:
-            all_y = [base_value] + ys_reference_y + ys_complete_y + comparison_y
-            upper = robust_upper_bound(all_y)
-            if upper is not None:
-                ax.set_ylim(bottom=0.0, top=upper)
-                ax.text(
-                    0.98,
-                    0.98,
-                    "scale clipped",
-                    transform=ax.transAxes,
-                    ha="right",
-                    va="top",
-                    fontsize=8,
-                    color="#666666",
-                    bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none", "pad": 1.5},
-                )
-        ax.legend(loc="best", fontsize=8)
+            all_y = [base_value] + bar_y
+            if all_y:
+                upper = robust_upper_bound(all_y)
+                if upper is not None:
+                    ax.set_ylim(bottom=0.0, top=upper)
+                    ax.text(
+                        0.98,
+                        0.98,
+                        "scale clipped",
+                        transform=ax.transAxes,
+                        ha="right",
+                        va="top",
+                        fontsize=8,
+                        color="#666666",
+                        bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none", "pad": 1.5},
+                    )
+                else:
+                    ax.set_ylim(bottom=0.0)
+
+    legend_items = [
+        Patch(facecolor=palette["reference"], label="reference"),
+        Patch(facecolor=palette["complete"], label="complete"),
+        Patch(facecolor=palette["partial"], label="partial"),
+        Patch(facecolor=palette["queued"], label="queued/no metric"),
+    ]
+    if comparison_rows:
+        legend_items.append(Patch(facecolor=palette["optimized"], label="optimized v11"))
+    axes[0].legend(handles=legend_items, loc="best", fontsize=8)
 
     fig.suptitle(title)
     fig.tight_layout()
@@ -992,7 +998,7 @@ def write_markdown(
         "- Strict one-factor protocol: keep the baseline fixed and change one axis at a time.",
         "- Main seed set: `42, 1, 2, 3, 4`; report `F1`, `FN`, `FP`, and completed seed count.",
         f"- Operating baseline: `{OPERATING_BASELINE}`.",
-        "- Rawbase server sweep uses `grad_clip=0.0`, `smooth_window=1`, `label_smoothing=0.0`, and `NT=0.9`.",
+        "- Rawbase server sweep uses `grad_clip=0.0`, `smooth_window=1`, `label_smoothing=0.0`, `asl=off`, and `NT=0.9`.",
         "- Paper-facing aggregate override: `docs/data/one_factor_latest.json`.",
         "",
         "## Performance Summary",
@@ -1000,7 +1006,6 @@ def write_markdown(
         "| experiment | basis | seeds/runs | F1 | FN | FP | note |",
         "| --- | --- | ---: | ---: | ---: | ---: | --- |",
         f"| `{OPERATING_BASELINE}` | operating baseline | 5/5 | {fmt_float(baseline[0])} | {fmt_compact(baseline[1])} | {fmt_compact(baseline[2])} | current comparison baseline |",
-        "| `fresh0412_v11_refcheck_gcsmooth_n700` | matched control | 5/5 | 0.9955 | 4.4 | 2.4 | legacy strict delta basis |",
         "| `fresh0412_v11_n700_existing` | historical selected ref | 5/5 | 0.9901 | 9.8 | 5.0 | reference-selection history |",
         f"| main strict queue | one-factor sweep | {main_complete} runs | - | - | - | decision `{strict_summary.get('decision')}` |",
         f"| round-2 refinement | follow-up neighbors | {round2_complete}/{round2_total} runs | - | - | - | stage `{state.get('stage')}`, status `{state.get('status')}` |",

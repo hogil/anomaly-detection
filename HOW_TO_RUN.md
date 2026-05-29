@@ -371,7 +371,7 @@ disown
 
 ### Multi-GPU (torchrun DDP 방식)
 
-`scripts/all-dataset-backbone-ddp.sh` 한 줄. wrapper가 visible GPU 수를 확인해서 각 queued `train.py` run을 `torch.distributed.run`으로 실행합니다.
+`scripts/all-dataset-backbone.sh -x` 한 줄. wrapper가 visible GPU 수를 확인해서 각 queued `train.py` run을 `torch.distributed.run`으로 실행합니다. `python train.py`를 직접 실행하면 `WORLD_SIZE=1`이라 DDP가 켜지지 않습니다. 다중 GPU가 보이는 상태에서 직접 실행하면 이제 느린 `nn.DataParallel`로 조용히 떨어지지 않고 에러로 멈춥니다.
 - `--batch_size`는 global batch로 유지
 - GPU 수가 `N`이면 rank-local micro-batch는 `batch_size / N`
 - 각 rank가 sampler로 자기 shard를 읽고, DDP all-reduce 뒤 optimizer update는 global batch 1번
@@ -380,17 +380,29 @@ disown
 
 ```bash
 # 모든 visible GPU 사용
-bash scripts/all-dataset-backbone-ddp.sh
+bash scripts/all-dataset-backbone.sh -x
 
 # GPU 부분집합만 (4개)
-CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/all-dataset-backbone-ddp.sh
+CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/all-dataset-backbone.sh -x
 
 # nohup 백그라운드
-nohup bash scripts/all-dataset-backbone-ddp.sh > /tmp/all_dsbk_dp.log 2>&1 &
+nohup bash scripts/all-dataset-backbone.sh -x > /tmp/all_dsbk_ddp.log 2>&1 &
 disown
 ```
 
 `args.batch_size` 는 그대로입니다. 예: batch_size=32 + 4 GPU = 각 rank가 8 samples 처리, optimizer는 batch 32 기준 한 step 적용. **LR/warmup 등 hparam 그대로 재사용 가능**.
+
+직접 단일 run을 DDP로 띄울 때:
+
+```bash
+python -m torch.distributed.run --nproc-per-node=4 train.py --config dataset.yaml --mode binary --batch_size 256
+```
+
+정말로 느린 단일 process `nn.DataParallel`을 테스트하려면 명시적으로 허용해야 합니다:
+
+```bash
+AD_ALLOW_DATA_PARALLEL=1 python train.py --config dataset.yaml --mode binary
+```
 
 검증 명령: `python -m py_compile train.py scripts/adaptive_experiment_controller.py`, `AD_TRAIN_DDP_NPROC=2 python scripts/adaptive_experiment_controller.py --queue validations/01_baseline_queue.json --dry-run --force`.
 

@@ -1193,6 +1193,9 @@ def main():
     parser.add_argument("--device", type=str, default=td("device", "auto"),
                         choices=["auto", "cpu", "cuda"],
                         help="학습 device 선택 (auto/cpu/cuda)")
+    parser.add_argument("--allow_data_parallel", "--allow-data-parallel", action="store_true",
+                        default=td("allow_data_parallel", False),
+                        help="Allow single-process nn.DataParallel fallback when multiple GPUs are visible. Default blocks this so accidental non-DDP launches do not plateau past 2 GPUs.")
     parser.add_argument("--compile", action="store_true", default=td("compile", False),
                         help="torch.compile 활성화 (H100/H200에서 20~50%% 가속)")
     parser.add_argument("--prefetch_factor", type=int, default=td("prefetch_factor", 4),
@@ -1539,17 +1542,26 @@ def main():
             find_unused_parameters=args.freeze_backbone_epochs > 0,
         )
     elif device.type == "cuda" and torch.cuda.device_count() > 1:
-        # WARNING: this is the silent-DP fallback. nn.DataParallel has a known
-        # gather/scatter bottleneck on GPU 0 (~no speedup past 2 GPUs). The
-        # intended path is torchrun DDP via AD_TRAIN_DDP_NPROC, which
-        # scripts/sweeps_server/_common.sh::auto_enable_ddp now sets
-        # automatically. If you see this banner, your launcher did NOT export
-        # AD_TRAIN_DDP_NPROC; re-launch through a wrapper that sources
-        # _common.sh and calls auto_enable_ddp, or set the env var manually.
+        allow_dp = (
+            args.allow_data_parallel
+            or os.environ.get("AD_ALLOW_DATA_PARALLEL", "0") == "1"
+            or os.environ.get("AD_NO_DDP", "0") == "1"
+        )
+        if not allow_dp:
+            raise RuntimeError(
+                f"{torch.cuda.device_count()} GPUs are visible, but WORLD_SIZE=1 so DDP is not active. "
+                "Refusing to silently fall back to nn.DataParallel because it bottlenecks on GPU 0 and "
+                "usually stops scaling past 2 GPUs. Launch through a server wrapper, e.g. "
+                "`bash scripts/all-dataset-backbone.sh -x`, or use "
+                "`python -m torch.distributed.run --nproc-per-node=<N> train.py ...`. "
+                "For an intentional single-process DataParallel run, add --allow_data_parallel or set "
+                "AD_ALLOW_DATA_PARALLEL=1."
+            )
+        # Explicit DP fallback. nn.DataParallel has a known gather/scatter
+        # bottleneck on GPU 0; use only for debugging or when AD_NO_DDP=1.
         print(
-            f"  [WARNING] nn.DataParallel fallback: {torch.cuda.device_count()} GPUs visible "
-            f"but WORLD_SIZE=1 (no torchrun). Scaling past 2 GPUs will plateau. "
-            f"Set AD_TRAIN_DDP_NPROC=N (or use a wrapper that auto-enables DDP) for real speedup."
+            f"  [WARNING] nn.DataParallel explicitly allowed: {torch.cuda.device_count()} GPUs visible "
+            f"but WORLD_SIZE=1 (no torchrun). Scaling past 2 GPUs will plateau."
         )
         model = nn.DataParallel(model)
 

@@ -4,6 +4,7 @@
 
 - `--model-name`을 직접 넘긴 서버 실행의 기본 `log_dir_group`에 backbone short name이 빠져 dataset/backbone 진행률 추적이 모호했습니다. `scripts/run_paper_server_all.sh`와 `scripts/sweeps_server/00_all.sh`를 수정해 사용자가 `--log-dir-group`을 명시하지 않은 경우 기본 폴더명이 `<timestamp>_run_paper_<dataset>_<backbone>` 형태가 되게 했습니다. 검증: Git Bash `bash -n scripts/run_paper_server_all.sh scripts/sweeps_server/00_all.sh`.
 - H200만 torch 2.7.0 profile을 쓰고, 기본 서버/PC는 torch 2.3.1/cu121 runtime을 유지합니다. `requirements-h200.txt`를 추가했고 `scripts/check_torch_runtime.py`는 H200 GPU 또는 `AD_TORCH_PROFILE=h200`일 때만 torch 2.7.0 / torchvision 0.22.0 / torchaudio 2.7.0을 기대합니다. `scripts/all-dataset-backbone.sh -x` 출력은 `validations/<ts>_all_dataset_backbone/<ts>_<dataset>/<ts>_<backbone>/` 및 `<ts>_cross_dataset_report/` 구조로 모이게 했습니다. 검증: Python `py_compile`, Git Bash `bash -n`, `git diff --check`.
+- Multi-GPU 직접 실행 안전장치를 추가했습니다. `python train.py`로 다중 GPU가 보이지만 `WORLD_SIZE=1`이면 느린 `nn.DataParallel`로 조용히 fallback하지 않고 에러로 멈춥니다. 서버 wrapper는 `AD_TRAIN_DDP_NPROC`를 통해 controller가 `torch.distributed.run`으로 각 queued run을 띄우므로 DDP가 정상 활성화됩니다. 의도적으로 DP를 테스트할 때만 `--allow_data_parallel` 또는 `AD_ALLOW_DATA_PARALLEL=1`을 사용합니다.
 
 ## 기술 스택
 

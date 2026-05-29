@@ -1,5 +1,9 @@
 # 실험 요약
 
+## 2026-05-29 기록
+
+- `--model-name`을 직접 넘긴 서버 실행의 기본 `log_dir_group`에 backbone short name이 빠져 dataset/backbone 진행률 추적이 모호했습니다. `scripts/run_paper_server_all.sh`와 `scripts/sweeps_server/00_all.sh`를 수정해 사용자가 `--log-dir-group`을 명시하지 않은 경우 기본 폴더명이 `<timestamp>_run_paper_<dataset>_<backbone>` 형태가 되게 했습니다. 검증: Git Bash `bash -n scripts/run_paper_server_all.sh scripts/sweeps_server/00_all.sh`.
+
 ## 기술 스택
 
 | 항목 | 값 |

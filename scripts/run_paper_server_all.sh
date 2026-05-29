@@ -112,14 +112,25 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+short_model_name() {
+  local s="$1"
+  s="${s%%.*}"
+  echo "${s//_/}"
+}
+
 # Default group includes the config basename so parallel runs with different
 # yaml files (e.g. --config dataset.yaml vs --config dataset1.yaml) land in
 # distinct validations/<group>/ folders even if launched in the same second.
+# If a model override is active, include the backbone too; otherwise logs from
+# direct --model-name runs are ambiguous.
 if [[ -z "$LOG_DIR_GROUP" ]]; then
   config_stem="$(basename "$CONFIG")"
   config_stem="${config_stem%.yaml}"
   config_stem="${config_stem%.yml}"
   LOG_DIR_GROUP="$(date +%Y%m%d_%H%M%S)_run_paper_${config_stem}"
+  if [[ -n "$MODEL_NAME" ]]; then
+    LOG_DIR_GROUP="${LOG_DIR_GROUP}_$(short_model_name "$MODEL_NAME")"
+  fi
 fi
 VAL_DIR="validations/${LOG_DIR_GROUP}"
 mkdir -p "$VAL_DIR" logs docs

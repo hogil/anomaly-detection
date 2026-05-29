@@ -65,15 +65,58 @@ SAMPLE_SKIP_ARGS=()
 BACKBONE_ARGS=()
 LOGICAL_TRAIN_ARGS=()
 BKM_COMBINED_ARGS=()
+short_model_name() {
+  local s="$1"
+  s="${s%%.*}"
+  echo "${s//_/}"
+}
+
+default_group_name() {
+  local cfg="${1:-dataset.yaml}"
+  local model="${2:-}"
+  local config_stem
+  config_stem="$(basename "$cfg")"
+  config_stem="${config_stem%.yaml}"
+  config_stem="${config_stem%.yml}"
+  local group
+  group="$(date +%Y%m%d_%H%M%S)_run_paper_${config_stem}"
+  if [[ -n "$model" ]]; then
+    group="${group}_$(short_model_name "$model")"
+  fi
+  echo "$group"
+}
+
 HAS_LOG_DIR_GROUP=0
+GROUP_CONFIG="${CONFIG:-dataset.yaml}"
+GROUP_MODEL="${MODEL_NAME:-}"
+RAW_ARGS=("$@")
 for raw_arg in "$@"; do
   if [[ "$raw_arg" == "--log-dir-group" ]]; then
     HAS_LOG_DIR_GROUP=1
     break
   fi
 done
+scan_idx=0
+while [[ "$scan_idx" -lt "${#RAW_ARGS[@]}" ]]; do
+  raw_arg="${RAW_ARGS[$scan_idx]}"
+  case "$raw_arg" in
+    --config)
+      next_idx=$((scan_idx + 1))
+      GROUP_CONFIG="${RAW_ARGS[$next_idx]:-$GROUP_CONFIG}"
+      scan_idx=$((scan_idx + 2))
+      ;;
+    --model-name)
+      next_idx=$((scan_idx + 1))
+      GROUP_MODEL="${RAW_ARGS[$next_idx]:-$GROUP_MODEL}"
+      scan_idx=$((scan_idx + 2))
+      ;;
+    *)
+      scan_idx=$((scan_idx + 1))
+      ;;
+  esac
+done
 if [[ "$HAS_LOG_DIR_GROUP" -eq 0 ]]; then
-  SHARED_LOG_DIR_GROUP="${LOG_DIR_GROUP:-$(date +%Y%m%d_%H%M%S)_run_paper}"
+  SHARED_LOG_DIR_GROUP="${LOG_DIR_GROUP:-$(default_group_name "$GROUP_CONFIG" "$GROUP_MODEL")}"
   ALL_ARGS=("$@" "--log-dir-group" "$SHARED_LOG_DIR_GROUP")
   echo "[00_all] log_dir_group=$SHARED_LOG_DIR_GROUP"
 else

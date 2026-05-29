@@ -5,8 +5,7 @@
 # Two modes:
 #
 #   1) Legacy (default when --backbones is NOT set): one pass per dataset, with
-#      stage 14 (backbone rotation) running every weights/*.pth. Existing
-#      behavior; produces validations/<ts>_cross_dataset_report/.
+#      stage 14 (backbone rotation) running every weights/*.pth.
 #
 #   2) Cross-product (when --backbones CSV is set): outer loop is
 #      dataset x backbone. Per cell: data prep (once per dataset), then
@@ -101,6 +100,18 @@ Anything after `--` is forwarded verbatim to 00_all.sh, e.g.:
 Long-running on a server? Wrap with nohup:
   nohup bash scripts/all-dataset-backbone.sh -x > /tmp/all_dsbk.log 2>&1 &
   disown
+
+Cross-product output layout:
+  validations/<ts>_all_dataset_backbone/
+    <ts>_dataset/
+      <ts>_prep/
+      <ts>_convnexttiny/
+      <ts>_convnextv2base/
+      <ts>_convnextv2tiny/
+      <ts>_vitbasepatch16clip224/
+    <ts>_dataset1_noise_15/
+      ...
+    <ts>_cross_dataset_report/
 EOF
 }
 
@@ -207,8 +218,11 @@ if [[ "$SKIP_WEIGHTS" -eq 1 ]]; then
 fi
 
 WRAPPER_TS="$(date +%Y%m%d_%H%M%S)"
-REPORT_DIR="validations/${WRAPPER_TS}_cross_dataset_report"
+RUN_ROOT="${WRAPPER_TS}_all_dataset_backbone"
+REPORT_GROUP="${WRAPPER_TS}_cross_dataset_report"
+REPORT_DIR="validations/${RUN_ROOT}/${REPORT_GROUP}"
 echo "== all-dataset-backbone start: $(date -Is) =="
+echo "run_root: $RUN_ROOT"
 echo "datasets: ${RESOLVED[*]}"
 if [[ "$CROSS_PRODUCT" -eq 1 ]]; then
   echo "backbones: ${BACKBONES[*]}"
@@ -358,10 +372,11 @@ for cfg in "${RESOLVED[@]}"; do
   echo "============================================================"
 
   cfg_ts="$(date +%Y%m%d_%H%M%S)"
+  dataset_group="${cfg_ts}_${config_stem}"
   if [[ "$CROSS_PRODUCT" -eq 1 ]]; then
-    prep_group="${WRAPPER_TS}_prep_${config_stem}"
+    prep_group="${RUN_ROOT}/${dataset_group}/${cfg_ts}_prep"
   else
-    prep_group="${cfg_ts}_run_paper_${config_stem}"
+    prep_group="${RUN_ROOT}/${dataset_group}/${cfg_ts}_all_backbones"
   fi
 
   if [[ "$SKIP_PREP" -eq 0 ]]; then
@@ -374,7 +389,7 @@ for cfg in "${RESOLVED[@]}"; do
     for bb in "${BACKBONES[@]}"; do
       bb_short="$(short_bb "$bb")"
       cell_ts="$(date +%Y%m%d_%H%M%S)"
-      group="${cell_ts}_${config_stem}_${bb_short}"
+      group="${RUN_ROOT}/${dataset_group}/${cell_ts}_${bb_short}"
       GROUP_NAMES+=("$group")
       GROUP_CONFIGS+=("$cfg")
       GROUP_MODELS+=("$bb")

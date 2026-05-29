@@ -41,8 +41,8 @@ bash scripts/run_full.sh
 ```
 
 시작하자마자 `torchvision::nms` 에러가 나오면 서버 환경의
-`torch`/`torchvision` binary가 서로 안 맞는 것이다. 아래처럼 같은 cu121
-wheel 조합으로 다시 설치한다.
+`torch`/`torchvision` binary가 서로 안 맞는 것이다. 기본 서버/PC는 아래처럼
+같은 cu121 wheel 조합으로 다시 설치한다.
 
 ```bash
 python -m pip uninstall -y torch torchvision torchaudio
@@ -54,6 +54,22 @@ python -m pip install --no-cache-dir --force-reinstall \
   torchaudio==2.3.1
 python -m pip install -r requirements.txt
 python scripts/check_torch_runtime.py
+```
+
+H200 서버만 torch 2.7.0 조합을 쓴다. 공식 PyTorch 2.7.0 wheel은
+cu126/cu128까지 제공되므로, cu130은 사내 mirror가 별도 build를 제공할 때만
+가능하다.
+
+```bash
+python -m pip uninstall -y torch torchvision torchaudio
+python -m pip cache purge
+rm -rf ~/.cache/pip
+python -m pip install --no-cache-dir --force-reinstall \
+  torch==2.7.0 \
+  torchvision==0.22.0 \
+  torchaudio==2.7.0
+python -m pip install -r requirements-h200.txt
+AD_TORCH_PROFILE=h200 python scripts/check_torch_runtime.py
 ```
 
 이 wrapper가 내부에서 하는 일:
@@ -79,6 +95,26 @@ bash scripts/run_paper_matrix.sh
 
 이 wrapper는 `python download.py`를 먼저 실행하고, 기본 paper dataset x
 기본 backbone cross-product를 돌린다.
+
+`scripts/all-dataset-backbone.sh -x`를 직접 돌리면 결과는 한 루트 아래에 모인다.
+
+```text
+validations/
+└── <YYYYMMDD_HHMMSS>_all_dataset_backbone/
+    ├── <YYYYMMDD_HHMMSS>_dataset/
+    │   ├── <YYYYMMDD_HHMMSS>_prep/
+    │   ├── <YYYYMMDD_HHMMSS>_convnexttiny/
+    │   ├── <YYYYMMDD_HHMMSS>_convnextv2base/
+    │   ├── <YYYYMMDD_HHMMSS>_convnextv2tiny/
+    │   └── <YYYYMMDD_HHMMSS>_vitbasepatch16clip224/
+    ├── <YYYYMMDD_HHMMSS>_dataset1_noise_15/
+    │   └── ...
+    ├── <YYYYMMDD_HHMMSS>_dataset3_anomaly_10/
+    │   └── ...
+    ├── <YYYYMMDD_HHMMSS>_dataset5_all_a10n15/
+    │   └── ...
+    └── <YYYYMMDD_HHMMSS>_cross_dataset_report/
+```
 
 ## 3. 이번 중단 원인
 

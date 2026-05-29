@@ -12,7 +12,7 @@ dataset.yaml  →  데이터/이미지 생성  →  학습  →  추론
 
 ## Python 3.11 환경
 
-서버 검증 환경은 Python 3.11 + torch 2.3.1 + torchvision 0.18.1 + torchaudio 2.3.1 + numpy 1.26.4입니다.
+기본 서버/PC 검증 환경은 Python 3.11 + torch 2.3.1 + torchvision 0.18.1 + torchaudio 2.3.1 + numpy 1.26.4입니다. H200 서버만 별도로 torch 2.7.0 + torchvision 0.22.0 + torchaudio 2.7.0을 씁니다.
 
 ```bash
 conda env create -f environment-py311.yml
@@ -27,7 +27,7 @@ PY
 python scripts/check_torch_runtime.py
 ```
 
-사내망에서는 서버에 설정된 사내 PyPI/mirror에서 cu121 wheel을 받습니다. 외부 PyTorch index URL을 쓰지 않습니다. 실행할 때는 같은 환경을 쓰도록 `--python "$(which python)"`을 붙이는 것을 권장합니다.
+사내망에서는 서버에 설정된 사내 PyPI/mirror에서 기본 cu121 wheel을 받습니다. H200만 `requirements-h200.txt`를 사용합니다. 공식 PyTorch 2.7.0 wheel은 cu126/cu128까지 제공되므로, `2.7.0 cu130`은 사내 mirror가 별도 build를 제공할 때만 가능합니다. 실행할 때는 같은 환경을 쓰도록 `--python "$(which python)"`을 붙이는 것을 권장합니다.
 
 `RuntimeError: operator torchvision::nms does not exist`가 나오면 `torch`와 `torchvision` wheel이 서로 안 맞는 상태입니다. 서버에서는 다음 조합으로 맞춥니다.
 
@@ -41,6 +41,20 @@ python -m pip install --no-cache-dir --force-reinstall \
   torchaudio==2.3.1
 python -m pip install -r requirements.txt
 python scripts/check_torch_runtime.py
+```
+
+H200에서만:
+
+```bash
+python -m pip uninstall -y torch torchvision torchaudio
+python -m pip cache purge
+rm -rf ~/.cache/pip
+python -m pip install --no-cache-dir --force-reinstall \
+  torch==2.7.0 \
+  torchvision==0.22.0 \
+  torchaudio==2.7.0
+python -m pip install -r requirements-h200.txt
+AD_TORCH_PROFILE=h200 python scripts/check_torch_runtime.py
 ```
 
 목차:
@@ -271,20 +285,50 @@ scaling 적용 항목:
 
 서버에서 같이 돌아가려면 repo 코드 외에 각 config의 `output.data_dir/timeseries.csv`, `output.data_dir/scenarios.csv`, `output.image_dir/<split>/<class>/*.png`가 필요합니다. 없으면 prep 단계가 `generate_data.py`와 `generate_images.py`로 다시 만들고, cross-product backbone mode에서는 요청한 `weights/<model_name>.pth`가 먼저 있어야 합니다.
 
-`scripts/all-dataset-backbone.sh` 한 줄. 각 yaml 마다 (1) weights/data/baseline 준비 → (2) `00_all.sh` 실행 (모든 axis + sample_skip + 모든 backbone + logical_train + bkm_combined + postprocess). 각 dataset 이 끝날 때마다 `validations/<timestamp>_cross_dataset_report/` 를 갱신하고, 전부 끝난 뒤 같은 위치에 최종 비교 표·plot 을 다시 생성합니다. Backbone stage 도 각 run 완료 직후 `04_backbone_results.md` / `04_backbone_plot.png` 를 갱신하므로 한 backbone 의 seed 묶음이 끝나는 즉시 현재 순위를 볼 수 있습니다.
+`scripts/all-dataset-backbone.sh -x` 한 줄. Cross-product mode는 한 실행 폴더 아래에 timestamp-prefixed dataset 폴더를 만들고, 그 아래 timestamp-prefixed backbone 폴더를 둡니다. 각 dataset/backbone cell이 끝날 때마다 `<ts>_cross_dataset_report/` 를 갱신하고, 전부 끝난 뒤 같은 위치에 최종 비교 표·plot 을 다시 생성합니다.
 
 기본값은 prep 단계에서 `download.py`를 실행해 `weights/{model_name}.pth`를 준비합니다. 폐쇄망 서버처럼 `weights/*.pth`를 이미 복사해 둔 경우에만 `--skip-weights`를 붙입니다.
 
 ```bash
-bash scripts/all-dataset-backbone.sh
+bash scripts/all-dataset-backbone.sh -x
 # 기본 4 yaml 순차: dataset.yaml, dataset1_noise_15.yaml, dataset3_anomaly_10.yaml, dataset5_all_a10n15.yaml
 # 끝나고:
-#   validations/<ts>_cross_dataset_report/cross_dataset_summary.md
-#   validations/<ts>_cross_dataset_report/cross_dataset_summary.csv
-#   validations/<ts>_cross_dataset_report/cross_dataset_overall.csv
-#   validations/<ts>_cross_dataset_report/cross_dataset_f1.png
-#   validations/<ts>_cross_dataset_report/cross_dataset_backbone.png
-#   validations/<ts>_cross_dataset_report/cross_dataset_overall.png
+#   validations/<ts>_all_dataset_backbone/<ts>_cross_dataset_report/cross_dataset_summary.md
+#   validations/<ts>_all_dataset_backbone/<ts>_cross_dataset_report/cross_dataset_summary.csv
+#   validations/<ts>_all_dataset_backbone/<ts>_cross_dataset_report/cross_dataset_overall.csv
+#   validations/<ts>_all_dataset_backbone/<ts>_cross_dataset_report/cross_dataset_f1.png
+#   validations/<ts>_all_dataset_backbone/<ts>_cross_dataset_report/cross_dataset_backbone.png
+#   validations/<ts>_all_dataset_backbone/<ts>_cross_dataset_report/cross_dataset_overall.png
+```
+
+`-x` cross-product 결과 폴더 예시:
+
+```text
+validations/
+└── 20260529_123456_all_dataset_backbone/
+    ├── 20260529_123500_dataset/
+    │   ├── 20260529_123500_prep/
+    │   ├── 20260529_123620_convnexttiny/
+    │   ├── 20260529_140515_convnextv2base/
+    │   ├── 20260529_153044_convnextv2tiny/
+    │   └── 20260529_170201_vitbasepatch16clip224/
+    ├── 20260529_184030_dataset1_noise_15/
+    │   ├── 20260529_184030_prep/
+    │   ├── 20260529_184155_convnexttiny/
+    │   ├── 20260529_201002_convnextv2base/
+    │   ├── 20260529_213540_convnextv2tiny/
+    │   └── 20260529_230711_vitbasepatch16clip224/
+    ├── 20260530_003300_dataset3_anomaly_10/
+    │   └── ...
+    ├── 20260530_073455_dataset5_all_a10n15/
+    │   └── ...
+    └── 20260529_123456_cross_dataset_report/
+        ├── cross_dataset_summary.md
+        ├── cross_dataset_summary.csv
+        ├── cross_dataset_overall.csv
+        ├── cross_dataset_f1.png
+        ├── cross_dataset_backbone.png
+        └── cross_dataset_overall.png
 ```
 
 옵션:
@@ -378,26 +422,32 @@ nvidia-smi                             # GPU 사용 중인지 확인
 pkill -f run_paper_server_all.sh       # 강제 종료
 ```
 
-각 yaml 결과는 자동으로 분리된 폴더에 (시간순 정렬):
+`all-dataset-backbone.sh -x` 결과는 한 실행 루트 아래 dataset/backbone 하위폴더로 모입니다:
 
 ```
 validations/
-├── 20260502_120000_run_paper_dataset/
-├── 20260502_180000_run_paper_dataset1_noise_15/
-├── 20260503_000000_run_paper_dataset2_noise_30/
-├── 20260503_060000_run_paper_dataset3_anomaly_15/
-├── 20260503_120000_run_paper_dataset4_anomaly_30/
-├── 20260503_180000_run_paper_dataset5_all_15/
-└── 20260504_000000_run_paper_dataset6_all_30/
+└── 20260529_123456_all_dataset_backbone/
+    ├── 20260529_123500_dataset/
+    │   ├── 20260529_123500_prep/
+    │   └── 20260529_153044_convnextv2tiny/
+    ├── 20260529_184030_dataset1_noise_15/
+    │   └── 20260529_213540_convnextv2tiny/
+    ├── 20260530_003300_dataset3_anomaly_10/
+    │   └── 20260530_032912_convnextv2tiny/
+    ├── 20260530_073455_dataset5_all_a10n15/
+    │   └── 20260530_103218_convnextv2tiny/
+    └── 20260529_123456_cross_dataset_report/
 logs/
-└── (같은 group prefix 로 분리됨)
+└── 20260529_123456_all_dataset_backbone/
+    └── 20260529_123500_dataset/
+        └── 20260529_153044_convnextv2tiny/
 ```
 
-데이터셋별 group 폴더만 따로 정리해서 보고 싶으면:
+데이터셋/백본 group 폴더만 따로 정리해서 보고 싶으면:
 
 ```bash
-python scripts/generate_group_report.py --group-dir logs/20260502_120000_run_paper_dataset
-python scripts/generate_group_report.py --group-dir logs/20260502_180000_run_paper_dataset1_noise_15
+python scripts/generate_group_report.py --group-dir logs/20260529_123456_all_dataset_backbone/20260529_123500_dataset/20260529_153044_convnextv2tiny
+python scripts/generate_group_report.py --group-dir logs/20260529_123456_all_dataset_backbone/20260529_184030_dataset1_noise_15/20260529_213540_convnextv2tiny
 # ...
 ```
 
@@ -679,7 +729,7 @@ template 큐는 batch끼리 공유하므로 root에:
 | `validations/02_sweep_queue.json` | 축별 sweep 입력 |
 | `validations/03_sample_skip_queue.json` | sample-skip 1-run 입력 |
 
-**출력은 batch마다 분리**돼서 `validations/<group>/` (group = `<YYYYMMDD_HHMMSS>_run_paper`):
+**출력은 batch마다 분리**돼서 `validations/<group>/`에 쌓입니다. `all-dataset-backbone.sh -x`는 group이 `<ts>_all_dataset_backbone/<ts>_<dataset>/<ts>_<backbone>` 형태입니다.
 
 | 파일 (`<group>/` 안) | 뜻 |
 |---|---|

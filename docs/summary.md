@@ -3,6 +3,7 @@
 ## 2026-05-29 기록
 
 - `--model-name`을 직접 넘긴 서버 실행의 기본 `log_dir_group`에 backbone short name이 빠져 dataset/backbone 진행률 추적이 모호했습니다. `scripts/run_paper_server_all.sh`와 `scripts/sweeps_server/00_all.sh`를 수정해 사용자가 `--log-dir-group`을 명시하지 않은 경우 기본 폴더명이 `<timestamp>_run_paper_<dataset>_<backbone>` 형태가 되게 했습니다. 검증: Git Bash `bash -n scripts/run_paper_server_all.sh scripts/sweeps_server/00_all.sh`.
+- H200만 torch 2.7.0 profile을 쓰고, 기본 서버/PC는 torch 2.3.1/cu121 runtime을 유지합니다. `requirements-h200.txt`를 추가했고 `scripts/check_torch_runtime.py`는 H200 GPU 또는 `AD_TORCH_PROFILE=h200`일 때만 torch 2.7.0 / torchvision 0.22.0 / torchaudio 2.7.0을 기대합니다. `scripts/all-dataset-backbone.sh -x` 출력은 `validations/<ts>_all_dataset_backbone/<ts>_<dataset>/<ts>_<backbone>/` 및 `<ts>_cross_dataset_report/` 구조로 모이게 했습니다. 검증: Python `py_compile`, Git Bash `bash -n`, `git diff --check`.
 
 ## 기술 스택
 
@@ -132,7 +133,7 @@ Updated on 2026-05-27:
 Updated on 2026-05-21:
 
 - DDP torchrun launches no longer rely on `--standalone` auto rendezvous port selection. `scripts/adaptive_experiment_controller.py` now assigns a per-run `127.0.0.1:<free_port>` via `--master-addr/--master-port`, strips stale distributed env vars before spawning torchrun, starts each launch in its own process group, cleans up residual torchrun/train processes between queued runs, waits `AD_TRAIN_RUN_CLEANUP_SLEEP` seconds (default 5), and retries DDP init listen failures before marking a run failed. This targets failures like `DistNetworkError: server socket has failed to listen on any local network address` that can occur between sequential seed launches before training reaches epoch 1. Changed file: `scripts/adaptive_experiment_controller.py`. Verification: Python `py_compile`, DDP dry-run command check with `AD_TRAIN_DDP_NPROC=2`, and `git diff --check`.
-- Server batch reporting now refreshes intermediate and final performance artifacts. `scripts/sweeps_server/14_backbone.sh` passes live comparison outputs to `scripts/adaptive_experiment_controller.py`, so `04_backbone_results.md` and `04_backbone_plot.png` are regenerated after each completed backbone run update. `scripts/all-dataset-backbone.sh` now refreshes `validations/<timestamp>_cross_dataset_report/` after each dataset finishes and once more at final completion. `scripts/generate_cross_dataset_report.py` also writes `cross_dataset_overall.csv` and `cross_dataset_overall.png` with mean F1/FN/FP across available datasets. Changed files: `scripts/adaptive_experiment_controller.py`, `scripts/sweeps_server/14_backbone.sh`, `scripts/all-dataset-backbone.sh`, `scripts/generate_cross_dataset_report.py`, `HOW_TO_RUN.md`, `README.md`. Verification: Python `py_compile`, Git Bash `bash -n` for changed wrappers, Git Bash wrapper `--help` smoke, no-training `all-dataset-backbone.sh --skip-prep --skip-full` smoke, existing-validation smoke for `generate_cross_dataset_report.py` and `generate_stage_comparison.py`, controller `--dry-run` smoke with live comparison args, and `git diff --check`.
+- Server batch reporting refreshes intermediate and final performance artifacts. `scripts/sweeps_server/14_backbone.sh` passes live comparison outputs to `scripts/adaptive_experiment_controller.py`, so `04_backbone_results.md` and `04_backbone_plot.png` are regenerated after each completed backbone run update. Current `scripts/all-dataset-backbone.sh -x` output lives under `validations/<timestamp>_all_dataset_backbone/<timestamp>_<dataset>/<timestamp>_<backbone>/` and refreshes `<timestamp>_cross_dataset_report/` after each cell and at final completion. `scripts/generate_cross_dataset_report.py` also writes `cross_dataset_overall.csv` and `cross_dataset_overall.png` with mean F1/FN/FP across available datasets.
 
 Updated on 2026-05-12:
 
@@ -415,7 +416,7 @@ cp validations/nt_effect.png docs/plots/
 2026-05-28 서버 sweep/report update:
 
 - Active `00_all.sh` 축에서 `gc`를 제외하고 `asl`, `weight_decay`, `smoothing`을 포함했다. ASL 학습 옵션은 `train.py --asl_gamma_neg --asl_gamma_pos --asl_clip`이며, 켜진 경우 loss-family 단일 조건으로 해석한다.
-- Stage comparison plot은 baseline을 dashed line이 아니라 조건 bar로 그린다. Cross-dataset report 폴더는 `validations/<timestamp>_cross_dataset_report/` 형식이며, plot은 dataset 그룹별 bar를 우선한다.
+- Stage comparison plot은 baseline을 dashed line이 아니라 조건 bar로 그린다. Cross-product report 폴더는 `validations/<timestamp>_all_dataset_backbone/<timestamp>_cross_dataset_report/` 형식이며, plot은 dataset 그룹별 bar를 우선한다.
 - `prediction_trend_latest.csv`와 `instability_cases.csv`는 review 핵심 컬럼만 남기고, 전체 세부 정보는 JSON에 보존한다.
 
 | 작업 | 명령어 |

@@ -1,6 +1,7 @@
 # Core (데이터 생성 + 학습 + 추론)
-# Verified runtime: Python 3.11, torch 2.3.1, torchvision 0.18.1, torchaudio 2.3.1, numpy 1.26.4.
-# Company PyPI/mirror must provide CUDA-enabled builds for these versions.
+# Default runtime: Python 3.11, torch 2.3.1, torchvision 0.18.1,
+# torchaudio 2.3.1, numpy 1.26.4. Company PyPI/mirror must provide
+# CUDA 12.1-enabled builds for these versions.
 torch==2.3.1
 torchvision==0.18.1
 torchaudio==2.3.1

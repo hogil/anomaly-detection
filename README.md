@@ -44,11 +44,11 @@
 - `scripts/gradcam_error_report.py`: Grad-CAM overlays for FP/FN samples
 - `scripts/generate_log_history_report.py`: tables and plots from flat or grouped `logs/**/`
 - `scripts/sweeps_server/00_all.sh`: current paper experiment pipeline, ending with color -> sample_skip -> backbone -> logical_train -> BKM combined
-- `scripts/all-dataset-backbone.sh`: one-shot wrapper that runs the full sweep for every dataset yaml (weights/data/baseline prep, all axes including ASL, all backbones, bkm_combined, postprocess) and refreshes the cross-dataset comparison report after each dataset and at the end
+- `scripts/all-dataset-backbone.sh`: one-shot wrapper that runs the full sweep for every dataset yaml; `-x` writes `validations/<ts>_all_dataset_backbone/<ts>_<dataset>/<ts>_<backbone>/` plus `<ts>_cross_dataset_report/`
 - `scripts/all-dataset-backbone-ddp.sh`: same wrapper, but queued train.py runs launch through torchrun DDP; `--batch_size` stays global and each GPU gets a rank-local micro-batch
 - `scripts/generate_cross_dataset_report.py`: per-dataset and overall baseline/BKM/backbone comparison tables and bar plots
 - `docs/summary.md`: current experiment summary
 
-Generated folders such as `data/`, `images/`, `display/`, `logs/`, `weights/`, and `validations/<group>/` are gitignored. Root queue templates under `validations/*.json` that server sweeps require are tracked.
+Generated folders such as `data/`, `images/`, `display/`, `logs/`, `weights/`, and `validations/<group>/` are gitignored. H200 uses `requirements-h200.txt`; other servers/PCs keep the default `requirements.txt` torch 2.3.1/cu121 runtime. Root queue templates under `validations/*.json` that server sweeps require are tracked.
 
 Server sweep wrappers keep checkpoint storage bounded by default: after each controlled run, `best_model.pth` is retained only for the global best run and the best run for each dataset-config + backbone pair. Metrics, summaries, plots, and `best_info.json` remain for every run.

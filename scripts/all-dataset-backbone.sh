@@ -43,6 +43,7 @@ BACKBONES_CSV=""
 SKIP_PREP=0
 SKIP_FULL=0
 SKIP_REPORT=0
+SKIP_CONSENSUS_BKM=0
 RESET_DATA=0
 PREP_DATA_ONLY=0
 SKIP_WEIGHTS=0
@@ -85,6 +86,7 @@ Options:
   --skip-prep            Skip weights/data/baseline prep (assume all present)
   --skip-full            Skip 00_all.sh (only do prep + report)
   --skip-report          Skip cross-dataset report at the end
+  --skip-consensus-bkm   Skip dataset/global average BKM stage after cells
   --reset-data           Delete the config's data/image/display outputs before prep
   --prep-data-only       Prep only data/images/validation; skip baseline refcheck.
                          Auto-enabled in cross-product mode (per-cell baseline
@@ -112,6 +114,13 @@ Cross-product output layout:
     <ts>_dataset1_noise_15/
       ...
     <ts>_cross_dataset_report/
+
+Cross-product also runs consensus BKM after all cells:
+  - cell BKM: already inside every dataset x backbone cell
+  - dataset BKM: average best axis values per dataset, then all backbones
+  - global BKM: average best axis values over all cells, then all cells
+Checkpoints default to --checkpoint-retention dataset-backbone-best
+--checkpoint-retention-scope log-group, so only best_model.pth winners remain.
 EOF
 }
 
@@ -124,6 +133,7 @@ while [[ $# -gt 0 ]]; do
     --skip-prep) SKIP_PREP=1; shift ;;
     --skip-full) SKIP_FULL=1; shift ;;
     --skip-report) SKIP_REPORT=1; shift ;;
+    --skip-consensus-bkm) SKIP_CONSENSUS_BKM=1; shift ;;
     --reset-data) RESET_DATA=1; shift ;;
     --prep-data-only) PREP_DATA_ONLY=1; shift ;;
     --skip-weights) SKIP_WEIGHTS=1; shift ;;
@@ -133,6 +143,25 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
   esac
 done
+
+pass_has_flag() {
+  local flag="$1"
+  local arg
+  for arg in "${PASS_ARGS[@]}"; do
+    [[ "$arg" == "$flag" ]] && return 0
+  done
+  return 1
+}
+
+# The paper matrix produces many exploratory runs. By default keep only the
+# best checkpoint for each dataset-config + backbone group; JSON/MD evidence is
+# still preserved for every run.
+if ! pass_has_flag "--checkpoint-retention"; then
+  PASS_ARGS+=(--checkpoint-retention dataset-backbone-best)
+fi
+if ! pass_has_flag "--checkpoint-retention-scope"; then
+  PASS_ARGS+=(--checkpoint-retention-scope log-group)
+fi
 
 if [[ -n "$DATASETS_CSV" ]]; then
   IFS=',' read -r -a DATASETS <<< "$DATASETS_CSV"
@@ -231,6 +260,7 @@ else
   echo "mode: legacy (single backbone-rotation pass per dataset)"
 fi
 echo "skip_prep=$SKIP_PREP skip_full=$SKIP_FULL skip_report=$SKIP_REPORT reset_data=$RESET_DATA prep_data_only=$PREP_DATA_ONLY skip_weights=$SKIP_WEIGHTS"
+echo "skip_consensus_bkm=$SKIP_CONSENSUS_BKM retention_args=${PASS_ARGS[*]}"
 
 GROUP_NAMES=()
 GROUP_CONFIGS=()
@@ -361,6 +391,65 @@ run_legacy() {
     "${PASS_ARGS[@]}"
 }
 
+collect_consensus_args() {
+  local out=()
+  local idx=0
+  local arg
+  while [[ "$idx" -lt "${#PASS_ARGS[@]}" ]]; do
+    arg="${PASS_ARGS[$idx]}"
+    case "$arg" in
+      --force)
+        out+=("$arg")
+        idx=$((idx + 1))
+        ;;
+      --max-launched|--checkpoint-retention|--checkpoint-retention-scope)
+        if [[ "$((idx + 1))" -lt "${#PASS_ARGS[@]}" ]]; then
+          out+=("$arg" "${PASS_ARGS[$((idx + 1))]}")
+        fi
+        idx=$((idx + 2))
+        ;;
+      *)
+        idx=$((idx + 1))
+        ;;
+    esac
+  done
+  printf '%s\n' "${out[@]}"
+}
+
+run_consensus_bkm() {
+  if [[ "$CROSS_PRODUCT" -ne 1 ]]; then
+    return 0
+  fi
+  if [[ "$SKIP_CONSENSUS_BKM" -eq 1 ]]; then
+    echo "[skip] consensus BKM"
+    return 0
+  fi
+  if [[ "$SKIP_FULL" -eq 1 ]]; then
+    echo "[skip] consensus BKM (--skip-full)"
+    return 0
+  fi
+  if [[ "${#GROUP_NAMES[@]}" -eq 0 ]]; then
+    echo "[skip] consensus BKM (no completed cells)"
+    return 0
+  fi
+
+  local args=()
+  mapfile -t args < <(collect_consensus_args)
+  if [[ -n "$BATCH_SIZE" ]]; then
+    args+=(--batch-size "$BATCH_SIZE")
+  fi
+
+  echo
+  echo "== consensus BKM: dataset/global average conditions =="
+  "$PYTHON" scripts/run_consensus_bkm.py \
+    --groups "$(build_groups_arg)" \
+    --validations-root validations \
+    --out-dir "${REPORT_DIR}/consensus_bkm" \
+    --log-root-group "$RUN_ROOT" \
+    --python "$PYTHON" \
+    "${args[@]}"
+}
+
 for cfg in "${RESOLVED[@]}"; do
   config_stem="$(basename "$cfg")"
   config_stem="${config_stem%.yaml}"
@@ -416,6 +505,8 @@ for cfg in "${RESOLVED[@]}"; do
     write_cross_dataset_report "completed ${#GROUP_NAMES[@]}/${#RESOLVED[@]} datasets"
   fi
 done
+
+run_consensus_bkm
 
 if [[ "$SKIP_REPORT" -eq 1 ]]; then
   echo "[skip] cross-dataset report"

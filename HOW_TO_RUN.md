@@ -285,7 +285,17 @@ scaling 적용 항목:
 
 서버에서 같이 돌아가려면 repo 코드 외에 각 config의 `output.data_dir/timeseries.csv`, `output.data_dir/scenarios.csv`, `output.image_dir/<split>/<class>/*.png`가 필요합니다. 없으면 prep 단계가 `generate_data.py`와 `generate_images.py`로 다시 만들고, cross-product backbone mode에서는 요청한 `weights/<model_name>.pth`가 먼저 있어야 합니다.
 
-`scripts/all-dataset-backbone.sh -x` 한 줄. Cross-product mode는 한 실행 폴더 아래에 timestamp-prefixed dataset 폴더를 만들고, 그 아래 timestamp-prefixed backbone 폴더를 둡니다. 각 dataset/backbone cell이 끝날 때마다 `<ts>_cross_dataset_report/` 를 갱신하고, 전부 끝난 뒤 같은 위치에 최종 비교 표·plot 을 다시 생성합니다.
+`scripts/all-dataset-backbone.sh -x` 한 줄. Cross-product mode는 한 실행 폴더 아래에 timestamp-prefixed dataset 폴더를 만들고, 그 아래 timestamp-prefixed backbone 폴더를 둡니다. 각 dataset/backbone cell이 끝날 때마다 `<ts>_cross_dataset_report/` 를 갱신하고, 전부 끝난 뒤 dataset/global 평균 BKM을 추가로 돌린 다음 최종 비교 표·plot 을 다시 생성합니다.
+
+BKM은 3층입니다.
+
+| 층 | 의미 | 실행 위치 |
+|---|---|---|
+| cell BKM | dataset-backbone cell 안에서 축별 best 조건 결합 | 각 `<ts>_<backbone>/05_bkm_combined_*` |
+| dataset BKM | 같은 dataset의 backbone 4개 평균으로 축별 best 조건 선택 후, 그 dataset의 backbone 4개 재학습 | `<ts>_cross_dataset_report/consensus_bkm/dataset_*/` |
+| global BKM | 4 dataset × 4 backbone 전체 평균으로 축별 best 조건 선택 후, 16 cell 재학습 | `<ts>_cross_dataset_report/consensus_bkm/global/` |
+
+`-x` 기본 checkpoint 정책은 `--checkpoint-retention dataset-backbone-best --checkpoint-retention-scope log-group` 입니다. 그래서 각 log group 안에서 `best_model.pth`는 dataset config + backbone별 winner만 남고, 나머지 sweep run의 `.pth`는 삭제됩니다. `best_info.json`, 결과 json/md/csv는 유지됩니다.
 
 기본값은 prep 단계에서 `download.py`를 실행해 `weights/{model_name}.pth`를 준비합니다. 폐쇄망 서버처럼 `weights/*.pth`를 이미 복사해 둔 경우에만 `--skip-weights`를 붙입니다.
 
@@ -299,6 +309,7 @@ bash scripts/all-dataset-backbone.sh -x
 #   validations/<ts>_all_dataset_backbone/<ts>_cross_dataset_report/cross_dataset_f1.png
 #   validations/<ts>_all_dataset_backbone/<ts>_cross_dataset_report/cross_dataset_backbone.png
 #   validations/<ts>_all_dataset_backbone/<ts>_cross_dataset_report/cross_dataset_overall.png
+#   validations/<ts>_all_dataset_backbone/<ts>_cross_dataset_report/consensus_bkm/
 ```
 
 `-x` cross-product 결과 폴더 예시:
@@ -323,6 +334,13 @@ validations/
     ├── 20260530_073455_dataset5_all_a10n15/
     │   └── ...
     └── 20260529_123456_cross_dataset_report/
+        ├── consensus_bkm/
+        │   ├── consensus_bkm_selection.md
+        │   ├── dataset_dataset/
+        │   ├── dataset_dataset1noise15/
+        │   ├── dataset_dataset3anomaly10/
+        │   ├── dataset_dataset5alla10n15/
+        │   └── global/
         ├── cross_dataset_summary.md
         ├── cross_dataset_summary.csv
         ├── cross_dataset_overall.csv
@@ -344,6 +362,9 @@ bash scripts/all-dataset-backbone.sh --skip-weights
 
 # 끝의 cross-dataset 리포트만 다시
 bash scripts/all-dataset-backbone.sh --skip-prep --skip-full
+
+# dataset/global 평균 BKM은 생략하고 cell BKM + cross report만
+bash scripts/all-dataset-backbone.sh -x --skip-consensus-bkm
 
 # 00_all.sh 로 forward 할 인자는 `--` 뒤에
 bash scripts/all-dataset-backbone.sh -- --max-launched 1 --force

@@ -4,14 +4,9 @@
 # This is the "kitchen sink" comparison against the rawbase baseline.
 #
 # Source of BKM values: docs/summary.md "Best Known Method" table.
-#   normal_ratio     700  -> 3300
-#   label_smoothing  0.00 -> 0.02
-#   asl              off  -> dynamic if completed in this group
-#   stochastic_depth 0.00 -> 0.05
-#   focal_gamma      0.0  -> 2.0
-#   abnormal_weight  1.0  -> 1.5
-#   ema              0.0  -> 0.95
-#   allow_tie_save   off  -> on
+#   lr / warmup / normal_ratio / per_class / weight_decay / smoothing
+#   label_smoothing / asl / stochastic_depth / focal_gamma / abnormal_weight
+#   ema / allow_tie_save
 set -euo pipefail
 
 D="$(cd "$(dirname "$0")" && pwd)"
@@ -111,9 +106,15 @@ from typing import Any
 queue_path, seeds_raw, num_workers, prefetch, batch_size, sweep_results_path, sweep_active_path, model_name = sys.argv[1:9]
 seeds = [int(s.strip()) for s in seeds_raw.split(",") if s.strip()]
 
-# Axes that stage 17 applies together. ASL is one logical axis with three flags.
+# Axes that stage 17 applies together. ASL, LR, and smoothing are logical
+# axes with multiple flags.
 BKM_AXIS_GROUPS = {
+    "lr": ["--lr_backbone", "--lr_head"],
+    "warmup": ["--warmup_epochs"],
     "normal_ratio": ["--normal_ratio"],
+    "per_class": ["--max_per_class"],
+    "weight_decay": ["--weight_decay"],
+    "smoothing": ["--smooth_window", "--smooth_method"],
     "label_smoothing": ["--label_smoothing"],
     "asl": ["--asl_gamma_neg", "--asl_gamma_pos", "--asl_clip"],
     "stochastic_depth": ["--stochastic_depth_rate"],
@@ -126,7 +127,12 @@ BKM_AXIS_GROUPS = {
 # Fallback BKM values from docs/summary.md (v2_tiny x dataset.yaml). Used only
 # when 02 results are unavailable for the current group.
 FALLBACK_BKM = {
+    "lr": {"--lr_backbone": "2e-5", "--lr_head": "2e-4"},
+    "warmup": {"--warmup_epochs": 5},
     "normal_ratio": {"--normal_ratio": 3300},
+    "per_class": {"--max_per_class": 0},
+    "weight_decay": {"--weight_decay": 0.01},
+    "smoothing": {"--smooth_window": 1, "--smooth_method": "median"},
     "label_smoothing": {"--label_smoothing": 0.02},
     "asl": {"--asl_gamma_neg": 0.0, "--asl_gamma_pos": 0.0, "--asl_clip": 0.0},
     "stochastic_depth": {"--stochastic_depth_rate": 0.05},
@@ -155,6 +161,7 @@ base_args = {
     "--weight_decay": 0.01,
     "--normal_ratio": 700,
     "--grad_clip": 0.0,
+    "--max_per_class": 0,
     "--label_smoothing": 0.0,
     "--asl_gamma_neg": 0.0,
     "--asl_gamma_pos": 0.0,

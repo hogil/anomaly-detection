@@ -6,6 +6,7 @@
 
 서버에서 처음부터 전체 재실행하거나 현업 CSV를 추론/추가학습에 쓰는 짧은 runbook은
 [`docs/server_full_run_and_field_data.md`](docs/server_full_run_and_field_data.md)를 봅니다.
+BKM 완료 후 현업 CSV predict만 할 때는 [`docs/bkm_field_predict.md`](docs/bkm_field_predict.md)를 봅니다.
 
 | step | command | output |
 | --- | --- | --- |

@@ -189,6 +189,9 @@ nohup bash scripts/run_full.sh > run_full.log 2>&1 &
 
 ## 5. 현업 CSV 추론
 
+`all-dataset-backbone.sh -x` 완료 후 BKM 모델로 현업 CSV predict만 할 때는
+[`bkm_field_predict.md`](bkm_field_predict.md)를 먼저 본다.
+
 현업 데이터는 합성하지 않는다. 이미 있는 시계열 CSV를 이미지로 렌더링한 뒤
 학습된 모델로 분류한다.
 

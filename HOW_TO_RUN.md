@@ -634,45 +634,31 @@ python scripts/two_stage_predict.py \
 
 ## 7. 현업 CSV 가져왔을 때
 
-현업 데이터는 **`timeseries.csv` 한 개만** 있고 `scenarios.csv`는 없습니다(라벨 모름). production 흐름:
+`all-dataset-backbone.sh -x` 완료 후 BKM 모델로 현업 CSV predict만 할 때는
+[`docs/bkm_field_predict.md`](docs/bkm_field_predict.md)를 기준으로 본다.
+
+현업 데이터는 **`timeseries.csv` 한 개만** 있고 `scenarios.csv`는 없습니다(라벨 모름). production 기본 흐름:
 
 ```bash
-# (1) 현업 timeseries.csv → 모델 입력 이미지 생성
-#     scenarios.csv 없으므로 --scenarios 안 줌. 스크립트가 timeseries 의
-#     chart_id + (eqp_id|chamber|recipe) 로 자동 manifest 생성.
-python scripts/generate_inference_images.py \
-  --timeseries fab_export/timeseries.csv \
-  --out-dir    inference_inputs
-
-# 출력 폴더는 시각 prefix 자동 부여:
-#   <YYMMDD_HHMMSS>_inference_inputs/
-#     ├── model_inputs/         <- 224x224 모델 입력 이미지
-#     ├── display/              <- 사람 확인용
-#     ├── synthesized_scenarios.csv   <- 자동 생성한 scenarios
-#     └── manifest.csv          <- chart_id ↔ 파일 매핑
+MODEL_RUN="logs/<all_dataset_backbone>/<...>_bkm_global/<run_folder>"
+bash scripts/run_field_predict.sh fab_export/timeseries.csv "$MODEL_RUN"
 ```
 
-이미지가 만들어진 후 분류:
+wrapper 내부 순서:
 
-```bash
-# (2) 학습된 모델로 분류 + 텍스트 리스트
-python inference.py \
-  --model logs/<group>/<run>/best_model.pth \
-  --data_dir <YYMMDD_HHMMSS>_inference_inputs \
-  --scenarios <YYMMDD_HHMMSS>_inference_inputs/synthesized_scenarios.csv \
-  --output_dir fab_results
-
-# 출력 <YYMMDD_HHMMSS>_fab_results/:
-#   display/{normal,abnormal}/  <- 분류된 display 이미지
-#   abnormal_list.txt           <- CSV: device,step,item,target,p_abnormal,chart_id,image_file
-#   normal_list.txt             <- 같은 컬럼, p_abnormal 내림차순
-#   predictions.csv             <- 전 chart 통합
-#   predictions.txt             <- ABNORMAL 위 + NORMAL 아래 (CSV 형식)
+```text
+scripts/generate_field_images.py  -> 현업 CSV를 model input image + manifest.csv로 렌더링
+scripts/predict_images.py         -> BKM best_model.pth로 normal/abnormal 판정
 ```
 
-> 합성 데이터(이미 만든 `scenarios.csv` 가 있는 경우)는 `--scenarios` 를 그대로 줘도 됩니다. production 의 핵심은 **scenarios.csv 가 없어도 timeseries 만으로 돌아간다**는 점.
+출력:
 
-`generate_inference_images.py` 는 yaml에서 렌더 스타일만 읽고, 데이터 위치는 `--timeseries`, `--out-dir` 로 직접 받습니다. `dataset.yaml` 안 건드리고 현업 데이터 그대로 처리.
+```text
+field_runs/<YYMMDD_HHMMSS>_images/
+field_runs/<YYMMDD_HHMMSS>_predictions/predictions.csv
+```
+
+라벨 없는 production CSV에서는 `predicted`, `p_normal`, `p_abnormal`만 해석한다. `FN/FP/F1`은 정답 컬럼이 없으면 계산하지 않는다.
 
 ---
 

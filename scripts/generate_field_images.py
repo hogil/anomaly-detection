@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import re
 import shutil
 import sys
 from collections import Counter
 from datetime import datetime
+from multiprocessing import Pool, cpu_count
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +64,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--abnormal-labels", default=",".join(sorted(DEFAULT_ABNORMAL_LABELS)))
     parser.add_argument("--target-col", default=None, help="Optional baseline/target value column.")
     parser.add_argument("--limit", type=int, default=0, help="Limit rendered scenario rows after expansion.")
+    parser.add_argument("--workers", type=int, default=0,
+                        help="Parallel render workers (0=auto, CPU cores-1; 1=serial).")
     parser.add_argument("--no-display", action="store_true")
     parser.add_argument("--no-dev-folders", action="store_true", help="Do not write dev_* folders from --label-col.")
     parser.add_argument("--no-timestamp", action="store_true", help="Use out-dir exactly instead of prefixing YYMMDD_HHMMSS.")
@@ -299,6 +303,46 @@ def build_fleet_data(row: dict[str, Any], chart_ts: pd.DataFrame, x_col: str, va
     return fleet_data
 
 
+# 병렬 렌더링 worker — generate_images.py와 같은 패턴 (initializer + 캐시)
+_worker_cache: dict[str, Any] = {}
+
+
+def _init_field_worker(ts_pickle_path: str, config: dict, x_col: str, value_col: str):
+    import pickle
+    with open(ts_pickle_path, "rb") as f:
+        _worker_cache["ts_grouped"] = pickle.load(f)
+    _worker_cache["renderer"] = ImageRenderer(config)
+    _worker_cache["x_col"] = x_col
+    _worker_cache["value_col"] = value_col
+
+
+def _render_field_task(task: dict) -> tuple[int, str]:
+    """model input (+ display) 이미지 1건 렌더링. 반환 (idx, "ok"|"skip")."""
+    row = task["row"]
+    chart_ts = _worker_cache["ts_grouped"].get(row["chart_id"])
+    if chart_ts is None:
+        return task["idx"], "skip"
+    fleet_data = build_fleet_data(row, chart_ts, _worker_cache["x_col"], _worker_cache["value_col"])
+    highlighted = row["highlighted_member"]
+    if highlighted not in fleet_data:
+        return task["idx"], "skip"
+    renderer = _worker_cache["renderer"]
+    renderer.render_overlay(fleet_data, highlighted, task["input_path"], target=task["target"])
+    if task["display_path"] is not None:
+        renderer.render_overlay_display(
+            fleet_data,
+            highlighted,
+            task["display_path"],
+            anomalous_ids=[],
+            defect_start_idx=None,
+            title=task["title"],
+            x_label=_worker_cache["x_col"],
+            y_label=task["y_label"],
+            target=task["target"],
+        )
+    return task["idx"], "ok"
+
+
 def output_dir(base: Path, no_timestamp: bool, overwrite: bool) -> Path:
     out = base
     if not no_timestamp:
@@ -319,7 +363,6 @@ def rel(path: Path, root: Path) -> str:
 def main() -> int:
     args = parse_args()
     config = load_render_config(args)
-    renderer = ImageRenderer(config)
     img_cfg = config.get("image", {})
     title_columns = img_cfg.get("title_columns", ["device", "step", "item"])
     y_label = img_cfg.get("y_label", "Measurement Value")
@@ -372,41 +415,70 @@ def main() -> int:
                 (out / "dev_binary_display" / cls).mkdir(parents=True, exist_ok=True)
 
     ts_grouped = {str(chart_id): group for chart_id, group in df.groupby("_field_chart_id", sort=True)}
-    manifest_rows: list[dict[str, Any]] = []
-    skipped = 0
-    for idx, row in tqdm(list(enumerate(rows)), total=len(rows), desc="field-images", disable=TQDM_DISABLE):
+
+    # 렌더링 task 사전 구성 (경로/제목은 main에서 결정, 렌더링만 worker가 수행)
+    tasks: list[dict[str, Any]] = []
+    for idx, row in enumerate(rows):
         chart_id = row["chart_id"]
         highlighted = row["highlighted_member"]
-        chart_ts = ts_grouped.get(chart_id)
-        if chart_ts is None:
-            skipped += 1
-            continue
-        fleet_data = build_fleet_data(row, chart_ts, x_col, args.value_col)
-        if highlighted not in fleet_data:
-            skipped += 1
-            continue
-
         stem = f"{idx:06d}_{sanitize_part(chart_id)}_{sanitize_part(highlighted)}"
-        input_path = input_dir / f"{stem}.png"
         target = None if row.get("target") == "" else float(row["target"])
-        renderer.render_overlay(fleet_data, highlighted, str(input_path), target=target)
-
         display_path = None
+        title = ""
         if not args.no_display:
             title_parts = [str(row.get(col)) for col in title_columns if row.get(col) not in (None, "")]
             title = " / ".join(title_parts) if title_parts else chart_id
-            display_path = display_dir / f"{stem}.png"
-            renderer.render_overlay_display(
-                fleet_data,
-                highlighted,
-                str(display_path),
-                anomalous_ids=[],
-                defect_start_idx=None,
-                title=title,
-                x_label=x_col,
-                y_label=y_label,
-                target=target,
-            )
+            display_path = str(display_dir / f"{stem}.png")
+        tasks.append({
+            "idx": idx,
+            "row": row,
+            "stem": stem,
+            "target": target,
+            "input_path": str(input_dir / f"{stem}.png"),
+            "display_path": display_path,
+            "title": title,
+            "y_label": y_label,
+        })
+
+    # auto worker: 작은 작업에서는 worker 스폰 비용이 지배하므로 작업량에 비례해 제한
+    workers = args.workers if args.workers > 0 else min(max(1, cpu_count() - 1), max(1, len(tasks) // 25))
+    status: dict[int, str] = {}
+    if workers == 1:
+        _worker_cache["ts_grouped"] = ts_grouped
+        _worker_cache["renderer"] = ImageRenderer(config)
+        _worker_cache["x_col"] = x_col
+        _worker_cache["value_col"] = args.value_col
+        for task in tqdm(tasks, desc="field-images", disable=TQDM_DISABLE):
+            task_idx, st = _render_field_task(task)
+            status[task_idx] = st
+    else:
+        import pickle
+        import tempfile
+
+        # 처리 대상 chart만 pickle (--limit 사용 시 worker 초기화 비용 대폭 감소)
+        needed = {task["row"]["chart_id"] for task in tasks}
+        ts_subset = {sid: grp for sid, grp in ts_grouped.items() if sid in needed}
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pkl") as handle:
+            pickle.dump(ts_subset, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            ts_pickle_path = handle.name
+        try:
+            with Pool(processes=workers, initializer=_init_field_worker,
+                      initargs=(ts_pickle_path, config, x_col, args.value_col)) as pool:
+                iterator = pool.imap_unordered(_render_field_task, tasks, chunksize=4)
+                for task_idx, st in tqdm(iterator, total=len(tasks), desc="field-images", disable=TQDM_DISABLE):
+                    status[task_idx] = st
+        finally:
+            os.unlink(ts_pickle_path)
+
+    manifest_rows: list[dict[str, Any]] = []
+    skipped = sum(1 for st in status.values() if st != "ok")
+    for task in tasks:
+        if status.get(task["idx"]) != "ok":
+            continue
+        row = task["row"]
+        stem = task["stem"]
+        input_path = Path(task["input_path"])
+        display_path = None if task["display_path"] is None else Path(task["display_path"])
 
         dev_input = ""
         dev_display = ""

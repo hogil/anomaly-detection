@@ -1198,6 +1198,8 @@ def main():
                         help="Allow single-process nn.DataParallel fallback when multiple GPUs are visible. Default blocks this so accidental non-DDP launches do not plateau past 2 GPUs.")
     parser.add_argument("--compile", action="store_true", default=td("compile", False),
                         help="torch.compile 활성화 (H100/H200에서 20~50%% 가속)")
+    parser.add_argument("--channels_last", action="store_true", default=td("channels_last", False),
+                        help="model을 channels_last(NHWC) 메모리 포맷으로 변환 (ConvNeXt 계열 conv + AMP에서 10~30%% 가속)")
     parser.add_argument("--prefetch_factor", type=int, default=td("prefetch_factor", 4),
                         help="DataLoader prefetch_factor (서버: 8~16)")
     args = parser.parse_args()
@@ -1353,6 +1355,7 @@ def main():
         "min_epochs": args.min_epochs,
         "precision": args.precision,
         "compile": args.compile,
+        "channels_last": args.channels_last,
         "progress_bar": not TQDM_DISABLE,
         "filter_nonfinite_loss": args.filter_nonfinite_loss,
         "max_samples_per_split": args.max_samples_per_split,
@@ -1507,6 +1510,11 @@ def main():
         stochastic_depth_rate=args.stochastic_depth_rate,
     )
     params_M = sum(p.numel() for p in model.parameters()) / 1e6
+
+    # channels_last — conv weight가 NHWC면 입력은 첫 conv에서 자동 변환됨 (compile/EMA/DDP wrap 이전에 적용)
+    if args.channels_last and device.type == "cuda":
+        model = model.to(memory_format=torch.channels_last)
+        print("  channels_last: enabled")
 
     # torch.compile (H100/H200 권장: 20~50% 가속)
     if args.compile:

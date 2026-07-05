@@ -131,6 +131,7 @@ python train.py \
 | `--ema_decay` | EMA. `0` 이면 끔 | `--ema_decay 0.95` |
 | `--allow_tie_save` | val_f1 tie 시도 저장 허용 | `--allow_tie_save` |
 | `--filter_nonfinite_loss` | NaN/Inf loss 샘플 step skip | `--filter_nonfinite_loss` |
+| `--channels_last` | model을 NHWC 메모리 포맷으로 변환 (ConvNeXt 계열 + AMP GPU에서 10~30% 가속) | `--channels_last` |
 | `--log_dir_group` | `logs/<group>/<run>/` 형식으로 묶음 (group 명에 시각이 앞에 와야 sort가 깨지지 않음) | `--log_dir_group 20260430_120000_run_paper` |
 
 출력 폴더 (자동으로 시작 시각과 best F1/Recall이 붙음):
@@ -575,6 +576,42 @@ bash scripts/run_paper_server_all.sh --round1-include-axes lr --max-launched 1 -
 python inference.py \
   --model logs/<group>/<run>/best_model.pth \
   --output_dir my_inference
+```
+
+속도 옵션 (기본값으로 병렬 렌더링 + fp16 배치 예측이 켜짐):
+
+| 옵션 | 의미 | 기본 |
+|---|---|---|
+| `--workers N` | 렌더링 병렬 worker 수. 0=auto (작업량·CPU 코어에 맞춤), 1=직렬 | 0 |
+| `--batch-size N` | 예측 배치 크기 | 64 |
+| `--precision fp16/bf16/fp32` | 예측 AMP 정밀도 (CPU는 자동 fp32). fp16이 train.py eval 기본과 동일 경로 | fp16 |
+| `--display-filter all/abnormal/none` | display 이미지 렌더링 대상. 대부분 normal인 현업 데이터는 `abnormal`이 큰 속도 이득 (`none`이면 `image_file` 컬럼 빈 값) | all |
+| `--compile` | torch.compile. 대량 추론 + Linux GPU 서버에서만 이득 (warmup 수십 초) | off |
+
+`scripts/generate_field_images.py`도 `--workers` (0=auto)로 병렬 렌더링하고, `scripts/predict_images.py`는 `--precision`/`--compile`을 지원합니다.
+
+### 차트 종류별 판정 한계 (`--prob-limit-csv`)
+
+item/step마다 민감도를 다르게 가져가고 싶을 때. CSV 한 장으로 관리합니다 (`configs/prob_limits_example.csv` 참고):
+
+```csv
+device,step,item,prob_limit
+,,OVL1,0.30
+DEV_A,S04,,0.20
+,,,0.50
+```
+
+1행: OVL1 item은 `p_abnormal >= 0.30`이면 abnormal (민감). 2행: DEV_A+S04 조합은 0.20 (더 민감). 3행: 나머지 전부(wildcard) 0.50 — argmax와 동일.
+
+- 판정: `p_abnormal >= prob_limit → abnormal`. **limit 낮음 = 민감(FN↓ FP↑), 높음 = 둔감(FP↓ FN↑)**
+- 빈칸 또는 `*` = wildcard. 채워진 필드가 많은 행이 우선, 동률이면 파일 위쪽 우선
+- CSV를 안 주거나 매칭되는 행이 없으면 기존 argmax 판정 그대로
+- 사용된 limit은 `predictions.csv`의 `prob_limit` 컬럼에 기록됨 (감사 추적)
+
+```bash
+python inference.py --model logs/<run> --prob-limit-csv configs/prob_limits_example.csv
+python scripts/predict_images.py --model <run> --manifest <...>/manifest.csv \
+  --output-dir out --prob-limit-csv configs/prob_limits_example.csv   # normal-threshold보다 우선
 ```
 
 출력 폴더는 시각 prefix 자동 부여: `<YYMMDD_HHMMSS>_my_inference/` (덮어쓰기 방지, ls 시간순 정렬):

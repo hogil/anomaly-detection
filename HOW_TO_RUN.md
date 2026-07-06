@@ -614,6 +614,28 @@ python scripts/predict_images.py --model <run> --manifest <...>/manifest.csv \
   --output-dir out --prob-limit-csv configs/prob_limits_example.csv   # normal-threshold보다 우선
 ```
 
+**limit 값 정하기 (시뮬레이션)** — labeled predictions에서 종류별 "limit=X → FN/FP" 표 생성. 최종 값은 수동 결정:
+
+```bash
+python scripts/simulate_prob_limits.py \
+  --predictions <inference_output>/predictions.csv \
+  --group-by item \
+  --out-prefix validations/prob_limit_sim \
+  --emit-csv configs/prob_limits_draft.csv   # fn0 마커로 채운 초안 (수동 검토 필수)
+```
+
+마커: `fn0` = val에서 FN=0을 유지하는 최대 limit, `best_f1` = F1 최대 limit. ⚠️ limit은 val/현업 피드백 기준으로만 정할 것 — test 성능 보고 역산하면 test-peeking.
+
+**limit 변경 후 재판정 (UI 연동용)** — 모델 재실행 없이 기존 추론 결과에 새 limit만 적용. 판정 바뀐 display는 normal/↔abnormal/ 이동, `--display-filter`로 생략됐던 chart는 새로 렌더링, 기존 predictions.csv는 `predictions_prev_<ts>.csv`로 백업:
+
+```bash
+python scripts/apply_prob_limits.py \
+  --run-dir <inference_output_dir> \
+  --prob-limit-csv configs/prob_limits.csv \
+  --data-dir data \
+  --render abnormal        # abnormal 판정분만 렌더링 (all/none 가능)
+```
+
 출력 폴더는 시각 prefix 자동 부여: `<YYMMDD_HHMMSS>_my_inference/` (덮어쓰기 방지, ls 시간순 정렬):
 
 ```

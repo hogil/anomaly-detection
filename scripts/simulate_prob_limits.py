@@ -63,6 +63,22 @@ def sweep_group(p_abn: pd.Series, truth: pd.Series, limits: list[float]) -> pd.D
     return pd.DataFrame(rows)
 
 
+def current_metrics(sub: pd.DataFrame, truth: pd.Series) -> dict:
+    """predicted 컬럼 기준 현재 판정 성능 (FN/FP/recall/precision/F1)."""
+    is_abn = truth == "abnormal"
+    pred_abn = sub["predicted"].astype(str) == "abnormal"
+    n_abn = int(is_abn.sum())
+    fn = int((is_abn & ~pred_abn).sum())
+    fp = int((~is_abn & pred_abn).sum())
+    tp = n_abn - fn
+    recall = tp / n_abn if n_abn else float("nan")
+    precision = tp / (tp + fp) if (tp + fp) else float("nan")
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall > 0 else 0.0
+    return {"n": len(sub), "abnormal": n_abn, "FN": fn, "FP": fp,
+            "recall_abn": round(recall, 4), "precision_abn": round(precision, 4),
+            "f1": round(f1, 4)}
+
+
 def pick_markers(sweep: pd.DataFrame) -> dict:
     """참고용 마커 2개 — 최종 선택은 수동.
     fn0: FN=0을 유지하는 최대 limit (val 기준 하나도 안 놓치면서 FP 최소)
@@ -118,6 +134,26 @@ def main() -> int:
     for key, sub in df.groupby(group_cols):
         name = "/".join(str(v) for v in (key if isinstance(key, tuple) else (key,)))
         groups.append((name, sub))
+
+    # 현재 판정 기준 성능 (predicted 컬럼이 있을 때만)
+    if "predicted" in df.columns:
+        md_lines.append("## 현재 판정 기준 성능 (predicted 컬럼)")
+        md_lines.append("")
+        md_lines.append(f"| {args.group_by} | n | abnormal | FN | FP | recall_abn | precision_abn | f1 |")
+        md_lines.append("|---|---:|---:|---:|---:|---:|---:|---:|")
+        current_rows = []
+        for name, sub in groups:
+            m = current_metrics(sub, truth.loc[sub.index])
+            md_lines.append(
+                f"| {name} | {m['n']} | {m['abnormal']} | {m['FN']} | {m['FP']} "
+                f"| {m['recall_abn']:.4f} | {m['precision_abn']:.4f} | {m['f1']:.4f} |"
+            )
+            current_rows.append({"group": name, **m})
+        md_lines.append("")
+        Path(args.out_prefix).parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(current_rows).to_csv(
+            Path(args.out_prefix).parent / (Path(args.out_prefix).name + "_current.csv"),
+            index=False)
 
     for name, sub in groups:
         sub_p = sub["p_abnormal"].astype(float)

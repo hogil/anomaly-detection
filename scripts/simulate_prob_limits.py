@@ -97,8 +97,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--predictions", required=True, type=Path,
                         help="inference.py 출력 predictions.csv (라벨 컬럼 포함)")
-    parser.add_argument("--group-by", default="item",
-                        help="차트 종류 묶음 컬럼 (콤마 구분, 예: item 또는 device,step,item)")
+    parser.add_argument("--group-by", default="device,step,item",
+                        help="차트 종류 묶음 컬럼 (콤마 구분). 기본 device,step,item 전체 조합. "
+                             "조합당 샘플이 적으면 item 처럼 굵게 묶어서 볼 것")
     parser.add_argument("--limits", default="0.05:0.95:0.05",
                         help="limit 후보. 'start:stop:step' grid 또는 콤마 목록")
     parser.add_argument("--out-prefix", default="validations/prob_limit_sim",
@@ -111,10 +112,14 @@ def main() -> int:
     if "p_abnormal" not in df.columns:
         raise SystemExit("p_abnormal 컬럼이 없습니다")
     truth, label_col = binary_truth(df)
-    group_cols = [c.strip() for c in args.group_by.split(",") if c.strip()]
-    missing = [c for c in group_cols if c not in df.columns]
+    requested = [c.strip() for c in args.group_by.split(",") if c.strip()]
+    group_cols = [c for c in requested if c in df.columns]
+    missing = [c for c in requested if c not in df.columns]
     if missing:
-        raise SystemExit(f"group 컬럼이 predictions에 없습니다: {missing}")
+        print(f"[simulate-prob-limits] 경고: predictions에 없는 group 컬럼 제외 — {missing}")
+    if not group_cols:
+        raise SystemExit(f"group 컬럼이 predictions에 하나도 없습니다: {requested}")
+    group_label = ",".join(group_cols)
     limits = parse_limits(args.limits)
 
     md_lines = [
@@ -139,7 +144,7 @@ def main() -> int:
     if "predicted" in df.columns:
         md_lines.append("## 현재 판정 기준 성능 (predicted 컬럼)")
         md_lines.append("")
-        md_lines.append(f"| {args.group_by} | n | abnormal | FN | FP | recall_abn | precision_abn | f1 |")
+        md_lines.append(f"| {group_label} | n | abnormal | FN | FP | recall_abn | precision_abn | f1 |")
         md_lines.append("|---|---:|---:|---:|---:|---:|---:|---:|")
         current_rows = []
         for name, sub in groups:
@@ -161,7 +166,7 @@ def main() -> int:
         sweep = sweep_group(sub_p, sub_t, limits)
         marks = pick_markers(sweep)
         n_abn = int((sub_t == "abnormal").sum())
-        md_lines.append(f"## {args.group_by}={name} (n={len(sub)}, abnormal={n_abn})")
+        md_lines.append(f"## {group_label}={name} (n={len(sub)}, abnormal={n_abn})")
         md_lines.append("참고 마커: " + ", ".join(f"{k}={v}" for k, v in marks.items()))
         md_lines.append("")
         md_lines.append("| limit | FN | FP | recall_abn | f1 | 마커 |")

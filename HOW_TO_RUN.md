@@ -619,10 +619,11 @@ python scripts/predict_images.py --model <run> --manifest <...>/manifest.csv \
 ```bash
 python scripts/simulate_prob_limits.py \
   --predictions <inference_output>/predictions.csv \
-  --group-by item \
   --out-prefix validations/prob_limit_sim \
   --emit-csv configs/prob_limits_draft.csv   # fn0 마커로 채운 초안 (수동 검토 필수)
 ```
+
+기본 group은 차트 구분자 전체 조합(`device,step,item`). 조합당 샘플이 적어 표가 노이즈면 `--group-by item`처럼 굵게 묶어서 본다.
 
 마커: `fn0` = val에서 FN=0을 유지하는 최대 limit, `best_f1` = F1 최대 limit. ⚠️ limit은 val/현업 피드백 기준으로만 정할 것 — test 성능 보고 역산하면 test-peeking.
 

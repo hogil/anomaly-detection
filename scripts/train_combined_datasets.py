@@ -5,10 +5,10 @@
 이쪽은 여러 데이터셋의 scenarios + 렌더된 이미지를 하나로 합쳐서 **모델 하나**를
 학습한다 (데이터셋마다 조건이 조금씩 다른 현장 데이터를 한 모델로 커버할 때).
 
-  # 프로젝트 폴더의 데이터셋 폴더(data, data_noise_15, data_anomaly_10 …)를 자동으로 전부 합침
+  # 기본 4개 데이터셋(data, data_anomaly_10, data_alla10n15, data_noise_15)을 합침
   python scripts/train_combined_datasets.py logs/<TS>_all_dataset_backbone
 
-  # 일부만 고르고 싶을 때
+  # 다른 폴더를 쓰고 싶을 때만 직접 지정
   python scripts/train_combined_datasets.py logs/<TS>_all_dataset_backbone \
       --data-dirs data,data_noise_15
 
@@ -40,6 +40,9 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+# 기본으로 합치는 데이터셋 폴더. --data-dirs 를 주면 이 목록 대신 그것만 쓴다.
+DEFAULT_DATA_DIRS = ("data", "data_anomaly_10", "data_alla10n15", "data_noise_15")
 
 from scripts.final_train_all_datasets import (  # noqa: E402
     FULL_DATA_ARGS, best_backbone_per_dataset, dataset_yaml_for, find_run_dir,
@@ -128,22 +131,15 @@ def sources_from_data_dirs(specs: list[str]) -> list[tuple[str, Path, Path]]:
     return sources
 
 
-def discover_data_dirs() -> list[tuple[str, Path, Path]]:
-    """프로젝트 폴더의 데이터셋 폴더를 자동으로 찾는다.
-
-    data*/ 중 scenarios CSV 와 짝 이미지 폴더가 둘 다 있는 것만.
-    합쳐서 만든 것(data_combined_*), per-member 파생(data_per_member_*),
-    smoke 테스트용(data_smoke*)은 제외한다.
-    """
-    skip_prefixes = ("data_combined_", "data_per_member_", "data_smoke")
+def default_sources() -> list[tuple[str, Path, Path]]:
+    """기본으로 합치는 4개 데이터셋 폴더 (없는 것은 알리고 건너뛴다)."""
     sources = []
-    for path in sorted(ROOT.glob("data*")):
-        if not path.is_dir() or path.name.startswith(skip_prefixes):
+    for name in DEFAULT_DATA_DIRS:
+        path = ROOT / name
+        if not path.is_dir():
+            print(f"[combine] {name:<28} 건너뜀 — 폴더 없음")
             continue
-        img = image_dir_for(path)
-        if find_scenarios(path) is None or not img.exists():
-            continue
-        sources.append((path.name, path, img))
+        sources.append((name, path, image_dir_for(path)))
     return sources
 
 
@@ -240,10 +236,10 @@ def main() -> int:
     parser.add_argument("source", type=Path,
                         help="matrix run 폴더 (logs/<TS>_all_dataset_backbone 또는 validations/…)")
     parser.add_argument("--data-dirs", default=None,
-                        help="합칠 데이터 폴더를 직접 지정 (콤마 구분). "
-                             "예: data,data_anomaly_10,data_alla10n15,data_noise_15 — "
-                             "이미지 폴더는 data->images 로 자동 대응. "
-                             "다르면 `data_x=images_y` 형태로 지정")
+                        help=f"합칠 데이터 폴더 직접 지정 (콤마 구분). "
+                             f"생략하면 기본 {', '.join(DEFAULT_DATA_DIRS)}. "
+                             f"이미지 폴더는 data->images 로 자동 대응, "
+                             f"다르면 `data_x=images_y` 형태로 지정")
     parser.add_argument("--base-config", default="dataset.yaml",
                         help="--data-dirs 사용 시 classes 등을 가져올 기준 yaml (기본 dataset.yaml)")
     parser.add_argument("--datasets", default=None,
@@ -298,13 +294,11 @@ def main() -> int:
         sources = sources_from_yamls(cfg_paths)
         base_cfg_path = cfg_paths[0]
     else:
-        sources = discover_data_dirs()
+        sources = default_sources()
         if not sources:
             raise SystemExit(
-                "프로젝트 폴더에서 데이터셋 폴더를 찾지 못했습니다 "
-                "(data*/ 안에 scenarios.csv + 짝 images 폴더 필요). "
-                "--data-dirs 로 직접 지정할 수도 있습니다")
-        print(f"[combine] 자동 탐색: {', '.join(label for label, _d, _i in sources)}")
+                f"기본 데이터셋 폴더가 하나도 없습니다: {', '.join(DEFAULT_DATA_DIRS)}. "
+                f"--data-dirs 로 직접 지정하세요")
 
     if not base_cfg_path.exists():
         raise SystemExit(f"--base-config 를 찾지 못했습니다: {base_cfg_path}")

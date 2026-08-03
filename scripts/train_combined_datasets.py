@@ -92,7 +92,51 @@ def source_image(image_dir: Path, row: dict) -> Path | None:
     return None
 
 
-def build_combined(cfg_paths: list[Path], tag: str, rebuild: bool) -> tuple[Path, int]:
+def find_scenarios(data_dir: Path) -> Path | None:
+    """train.py resolve_scenarios_csv 와 같은 철자 오타까지 허용."""
+    for name in ("scenarios.csv", "senarios.csv", "scenarious.csv"):
+        path = data_dir / name
+        if path.exists():
+            return path
+    return None
+
+
+def image_dir_for(data_dir: Path) -> Path:
+    """data_noise_15 -> images_noise_15, data -> images."""
+    name = data_dir.name
+    return data_dir.parent / ("images" + name[len("data"):] if name.startswith("data")
+                              else f"images_{name}")
+
+
+def sources_from_data_dirs(specs: list[str]) -> list[tuple[str, Path, Path]]:
+    """--data-dirs 값 -> (label, data_dir, image_dir). `data_x=images_x` 지정도 허용."""
+    sources = []
+    for raw in specs:
+        raw = raw.strip()
+        if not raw:
+            continue
+        img_override = None
+        if "=" in raw:
+            raw, img_override = (part.strip() for part in raw.split("=", 1))
+        data_dir = Path(raw) if Path(raw).is_absolute() else ROOT / raw
+        img_dir = ((Path(img_override) if Path(img_override).is_absolute()
+                    else ROOT / img_override) if img_override else image_dir_for(data_dir))
+        sources.append((data_dir.name, data_dir, img_dir))
+    return sources
+
+
+def sources_from_yamls(cfg_paths: list[Path]) -> list[tuple[str, Path, Path]]:
+    sources = []
+    for cfg_path in cfg_paths:
+        cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+        out = cfg.get("output", {})
+        sources.append((cfg_path.stem,
+                        ROOT / out["data_dir"], ROOT / out["image_dir"]))
+    return sources
+
+
+def build_combined(sources: list[tuple[str, Path, Path]], base_cfg_path: Path,
+                   tag: str, rebuild: bool) -> tuple[Path, int]:
     """합친 config yaml 경로와 총 이미지 수를 반환."""
     data_dir = ROOT / f"data_combined_{tag}"
     image_dir = ROOT / f"images_combined_{tag}"
@@ -104,22 +148,14 @@ def build_combined(cfg_paths: list[Path], tag: str, rebuild: bool) -> tuple[Path
         print(f"[combine] 기존 결과 재사용: {scen_path} ({n} rows) — 다시 만들려면 --rebuild")
         return out_cfg, n
 
+    base_cfg = yaml.safe_load(base_cfg_path.read_text(encoding="utf-8"))
     rows: list[dict] = []
-    base_cfg = None
     missing_total = 0
-    for cfg_path in cfg_paths:
-        cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
-        if base_cfg is None:
-            base_cfg = cfg
-        prefix = cfg_path.stem
-        src_data = ROOT / cfg["output"]["data_dir"]
-        src_img = ROOT / cfg["output"]["image_dir"]
-        src_scen = src_data / "scenarios.csv"
-        if not src_scen.exists() or not src_img.exists():
-            # 표준 데이터셋(data/, data_noise_15/ …)만 합친다. per-member(logical) 처럼
-            # scenarios.csv 가 없는 파생 데이터셋은 건너뛴다.
-            missing = "scenarios.csv" if not src_scen.exists() else "이미지 폴더"
-            print(f"[combine] {prefix:<28} 건너뜀 — {missing} 없음 ({src_data.name})")
+    for prefix, src_data, src_img in sources:
+        src_scen = find_scenarios(src_data)
+        if src_scen is None or not src_img.exists():
+            lack = "scenarios.csv" if src_scen is None else f"이미지 폴더({src_img.name})"
+            print(f"[combine] {prefix:<28} 건너뜀 — {lack} 없음")
             continue
 
         sdf = pd.read_csv(src_scen)
@@ -157,7 +193,7 @@ def build_combined(cfg_paths: list[Path], tag: str, rebuild: bool) -> tuple[Path
     combined["output"]["data_dir"] = data_dir.name
     combined["output"]["image_dir"] = image_dir.name
     combined["output"]["display_dir"] = f"display_combined_{tag}"
-    combined["combined_from"] = [p.name for p in cfg_paths]
+    combined["combined_from"] = [str(src.name) for _label, src, _img in sources]
     out_cfg.parent.mkdir(parents=True, exist_ok=True)
     out_cfg.write_text(yaml.safe_dump(combined, sort_keys=False, allow_unicode=True),
                        encoding="utf-8")
@@ -181,6 +217,13 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("source", type=Path,
                         help="matrix run 폴더 (logs/<TS>_all_dataset_backbone 또는 validations/…)")
+    parser.add_argument("--data-dirs", default=None,
+                        help="합칠 데이터 폴더를 직접 지정 (콤마 구분). "
+                             "예: data,data_anomaly_10,data_alla10n15,data_noise_15 — "
+                             "이미지 폴더는 data->images 로 자동 대응. "
+                             "다르면 `data_x=images_y` 형태로 지정")
+    parser.add_argument("--base-config", default="dataset.yaml",
+                        help="--data-dirs 사용 시 classes 등을 가져올 기준 yaml (기본 dataset.yaml)")
     parser.add_argument("--datasets", default=None,
                         help="합칠 dataset yaml (콤마 구분). 기본: matrix 에 있는 전부")
     parser.add_argument("--scope", choices=["global", "dataset", "cell"], default="global",
@@ -213,9 +256,15 @@ def main() -> int:
     per_dataset = best_backbone_per_dataset(records)
     bkm = load_bkm_queues(val_root)
 
-    # 합칠 dataset yaml 결정
+    # 합칠 대상 결정 — 폴더 직접 지정이 최우선
+    sources: list[tuple[str, Path, Path]] = []
+    base_cfg_path = ROOT / args.base_config
     cfg_paths: list[Path] = []
-    if args.datasets:
+    if args.data_dirs:
+        sources = sources_from_data_dirs(args.data_dirs.split(","))
+        if not base_cfg_path.exists():
+            raise SystemExit(f"--base-config 를 찾지 못했습니다: {base_cfg_path}")
+    elif args.datasets:
         for raw in args.datasets.split(","):
             raw = raw.strip()
             if not raw:
@@ -234,8 +283,13 @@ def main() -> int:
                 cfg_paths.append(ROOT / found)
             else:
                 print(f"  [skip] {dataset}: 이 repo 에 yaml 이 없습니다")
-    if not cfg_paths:
-        raise SystemExit("합칠 dataset yaml 이 없습니다 (--datasets 로 지정하세요)")
+
+    if not sources:
+        if not cfg_paths:
+            raise SystemExit("합칠 대상이 없습니다 "
+                             "(--data-dirs 로 폴더를, 또는 --datasets 로 yaml 을 지정하세요)")
+        sources = sources_from_yamls(cfg_paths)
+        base_cfg_path = cfg_paths[0]
 
     # backbone: 전체 평균 F1 최고 (--backbone 으로 고정 가능)
     totals: dict[str, list[float]] = {}
@@ -254,11 +308,11 @@ def main() -> int:
     full_model = fulls[short]
     mean_f1 = sum(totals[short]) / len(totals[short])
 
-    tag = args.tag or f"{len(cfg_paths)}ds"
-    print(f"[combine] datasets: {', '.join(p.name for p in cfg_paths)}")
+    tag = args.tag or f"{len(sources)}ds"
+    print(f"[combine] sources: {', '.join(label for label, _d, _i in sources)}")
     print(f"[combine] backbone: {full_model}  (cell 평균 F1 {mean_f1:.4f})")
 
-    cfg_yaml, n_rows = build_combined(cfg_paths, tag, args.rebuild)
+    cfg_yaml, n_rows = build_combined(sources, base_cfg_path, tag, args.rebuild)
     if args.build_only:
         print("[combine] --build-only — 학습은 하지 않았습니다")
         return 0

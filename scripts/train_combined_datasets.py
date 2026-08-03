@@ -5,9 +5,12 @@
 이쪽은 여러 데이터셋의 scenarios + 렌더된 이미지를 하나로 합쳐서 **모델 하나**를
 학습한다 (데이터셋마다 조건이 조금씩 다른 현장 데이터를 한 모델로 커버할 때).
 
+  # 프로젝트 폴더의 데이터셋 폴더(data, data_noise_15, data_anomaly_10 …)를 자동으로 전부 합침
   python scripts/train_combined_datasets.py logs/<TS>_all_dataset_backbone
+
+  # 일부만 고르고 싶을 때
   python scripts/train_combined_datasets.py logs/<TS>_all_dataset_backbone \
-      --datasets dataset.yaml,dataset1_noise_15.yaml
+      --data-dirs data,data_noise_15
 
 backbone(best model) 과 BKM 조건은 matrix run 폴더에서 가져온다 (기본 --scope global
 = 전 cell 평균 BKM). 합친 학습은 seed sweep 없이 1회, sample cap 없이 전체 데이터.
@@ -125,6 +128,25 @@ def sources_from_data_dirs(specs: list[str]) -> list[tuple[str, Path, Path]]:
     return sources
 
 
+def discover_data_dirs() -> list[tuple[str, Path, Path]]:
+    """프로젝트 폴더의 데이터셋 폴더를 자동으로 찾는다.
+
+    data*/ 중 scenarios CSV 와 짝 이미지 폴더가 둘 다 있는 것만.
+    합쳐서 만든 것(data_combined_*), per-member 파생(data_per_member_*),
+    smoke 테스트용(data_smoke*)은 제외한다.
+    """
+    skip_prefixes = ("data_combined_", "data_per_member_", "data_smoke")
+    sources = []
+    for path in sorted(ROOT.glob("data*")):
+        if not path.is_dir() or path.name.startswith(skip_prefixes):
+            continue
+        img = image_dir_for(path)
+        if find_scenarios(path) is None or not img.exists():
+            continue
+        sources.append((path.name, path, img))
+    return sources
+
+
 def sources_from_yamls(cfg_paths: list[Path]) -> list[tuple[str, Path, Path]]:
     sources = []
     for cfg_path in cfg_paths:
@@ -225,7 +247,7 @@ def main() -> int:
     parser.add_argument("--base-config", default="dataset.yaml",
                         help="--data-dirs 사용 시 classes 등을 가져올 기준 yaml (기본 dataset.yaml)")
     parser.add_argument("--datasets", default=None,
-                        help="합칠 dataset yaml (콤마 구분). 기본: matrix 에 있는 전부")
+                        help="dataset yaml 로 지정 (콤마 구분). 폴더 자동 탐색 대신 쓸 때만")
     parser.add_argument("--scope", choices=["global", "dataset", "cell"], default="global",
                         help="어떤 BKM 조합을 쓸지 (기본 global = 전 cell 평균)")
     parser.add_argument("--backbone", default=None,
@@ -256,15 +278,12 @@ def main() -> int:
     per_dataset = best_backbone_per_dataset(records)
     bkm = load_bkm_queues(val_root)
 
-    # 합칠 대상 결정 — 폴더 직접 지정이 최우선
-    sources: list[tuple[str, Path, Path]] = []
+    # 합칠 대상: 기본은 프로젝트 폴더의 데이터셋 폴더 전부 (자동 탐색)
     base_cfg_path = ROOT / args.base_config
-    cfg_paths: list[Path] = []
     if args.data_dirs:
         sources = sources_from_data_dirs(args.data_dirs.split(","))
-        if not base_cfg_path.exists():
-            raise SystemExit(f"--base-config 를 찾지 못했습니다: {base_cfg_path}")
     elif args.datasets:
+        cfg_paths: list[Path] = []
         for raw in args.datasets.split(","):
             raw = raw.strip()
             if not raw:
@@ -276,20 +295,19 @@ def main() -> int:
             if path is None:
                 raise SystemExit(f"dataset yaml 을 찾지 못했습니다: {raw}")
             cfg_paths.append(path)
-    else:
-        for dataset in sorted(per_dataset):
-            found = dataset_yaml_for(dataset, "")
-            if found:
-                cfg_paths.append(ROOT / found)
-            else:
-                print(f"  [skip] {dataset}: 이 repo 에 yaml 이 없습니다")
-
-    if not sources:
-        if not cfg_paths:
-            raise SystemExit("합칠 대상이 없습니다 "
-                             "(--data-dirs 로 폴더를, 또는 --datasets 로 yaml 을 지정하세요)")
         sources = sources_from_yamls(cfg_paths)
         base_cfg_path = cfg_paths[0]
+    else:
+        sources = discover_data_dirs()
+        if not sources:
+            raise SystemExit(
+                "프로젝트 폴더에서 데이터셋 폴더를 찾지 못했습니다 "
+                "(data*/ 안에 scenarios.csv + 짝 images 폴더 필요). "
+                "--data-dirs 로 직접 지정할 수도 있습니다")
+        print(f"[combine] 자동 탐색: {', '.join(label for label, _d, _i in sources)}")
+
+    if not base_cfg_path.exists():
+        raise SystemExit(f"--base-config 를 찾지 못했습니다: {base_cfg_path}")
 
     # backbone: 전체 평균 F1 최고 (--backbone 으로 고정 가능)
     totals: dict[str, list[float]] = {}

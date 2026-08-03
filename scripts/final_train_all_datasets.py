@@ -142,6 +142,20 @@ def dataset_yaml_for(dataset: str, snapshot_cfg: str) -> str | None:
     return None
 
 
+def warn_short_epochs(cmd: list[str]) -> None:
+    """best 저장은 ep10 부터 — 그 전에 끝나면 best_model.pth 가 안 생긴다."""
+    if "--epochs" not in cmd:
+        return
+    try:
+        last = len(cmd) - 1 - cmd[::-1].index("--epochs")
+        epochs = int(cmd[last + 1])
+    except (ValueError, IndexError):
+        return
+    if epochs < 10:
+        print(f"  [경고] --epochs {epochs} 는 best 저장 시작(ep10)보다 짧아 "
+              f"best_model.pth 가 생성되지 않습니다")
+
+
 def find_run_dir(group: str, log_dir: str) -> Path | None:
     base = ROOT / "logs" / group
     if not base.exists():
@@ -255,6 +269,7 @@ def main() -> int:
         cmd += ["--log_dir", log_dir, "--log_dir_group", group, "--seed", str(args.seed)]
         cmd += extras
         print("  + " + " ".join(cmd))
+        warn_short_epochs(cmd)
         if args.dry_run:
             continue
 

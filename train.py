@@ -795,6 +795,7 @@ def evaluate(model, loader, criterion, device, classes, desc="Eval",
     total_loss = 0
     all_preds = []
     all_labels = []
+    all_probs = []
     total = 0
 
     # eval은 default fp16 (속도). bf16 학습이면 bf16 eval.
@@ -828,8 +829,8 @@ def evaluate(model, loader, criterion, device, classes, desc="Eval",
         total_loss += loss.item() * images.size(0)
         total += labels.size(0)
 
+        probs = F.softmax(outputs, dim=1)
         if normal_threshold is not None:
-            probs = F.softmax(outputs, dim=1)
             normal_prob = probs[:, 0]
             is_normal = normal_prob > normal_threshold
             anomaly_preds = torch.argmax(probs[:, 1:], dim=1) + 1
@@ -839,9 +840,11 @@ def evaluate(model, loader, criterion, device, classes, desc="Eval",
 
         all_preds.extend(predicted.cpu().numpy())
         all_labels.extend(labels.cpu().numpy())
+        all_probs.append(probs.detach().float().cpu().numpy())
 
     all_preds = np.array(all_preds)
     all_labels = np.array(all_labels)
+    all_probs = np.concatenate(all_probs) if all_probs else np.zeros((0, len(classes)))
 
     # 클래스별 성능
     class_metrics = {}
@@ -872,7 +875,7 @@ def evaluate(model, loader, criterion, device, classes, desc="Eval",
     avg_recall = float(np.mean([m["recall"] for m in class_metrics.values()]))
     avg_f1 = float(np.mean([m["f1"] for m in class_metrics.values()]))
 
-    return avg_loss, accuracy, avg_recall, avg_f1, class_metrics, all_preds, all_labels
+    return avg_loss, accuracy, avg_recall, avg_f1, class_metrics, all_preds, all_labels, all_probs
 
 
 def print_class_table(metrics, title=""):
@@ -946,7 +949,7 @@ def save_confusion_matrix(labels, preds, classes, save_path, title="Confusion Ma
     plt.close(fig)
 
 
-def save_predictions(dataset, preds, labels, classes, save_dir, correct_cap=100):
+def save_predictions(dataset, preds, labels, classes, save_dir, correct_cap=100, probs=None):
     """4분면 예측 저장 (display 이미지). TN/TP는 correct_cap까지만.
 
     Binary mode 가정 (classes = ["normal", "abnormal"]):
@@ -956,6 +959,9 @@ def save_predictions(dataset, preds, labels, classes, save_dir, correct_cap=100)
       - tp_abnormal/  : pred=abnormal, true=abnormal  (잘 잡음, 최대 cap개)
 
     Multiclass도 지원: 같은 패턴으로 클래스별 4분면.
+
+    probs 를 주면 파일명 앞에 `p{이상확률 %}` 를 붙여 확률순으로 정렬된다
+    (inference.py display 파일명과 같은 규칙). 경계값 샘플을 바로 찾기 위함.
     """
     import shutil
     if save_dir.exists():
@@ -996,9 +1002,19 @@ def save_predictions(dataset, preds, labels, classes, save_dir, correct_cap=100)
         display_path = Path(str(src_path).replace("images", "display", 1))
         copy_src = display_path if display_path.exists() else src_path
 
+        prefix = ""
+        if probs is not None and i < len(probs):
+            row = probs[i]
+            # normal 이 있으면 "이상일 확률", 없으면 예측 클래스 확률
+            if "normal" in classes:
+                p_abn = 1.0 - float(row[classes.index("normal")])
+            else:
+                p_abn = float(row[preds[i]])
+            prefix = f"p{int(round(p_abn * 100)):03d}_"
+
         dest_dir = save_dir / dest_name
         dest_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(copy_src, dest_dir / f"pred_{pred_cls}_{fname}")
+        shutil.copy2(copy_src, dest_dir / f"{prefix}pred_{pred_cls}_{fname}")
 
     saved_tn = min(counts["tn"], correct_cap)
     saved_tp = min(counts["tp"], correct_cap)
@@ -1772,7 +1788,7 @@ def main():
         eval_model = ema.module if ema is not None else model
 
         # Val
-        val_loss, val_acc, val_recall, val_f1, val_metrics, val_preds, val_labels = evaluate(
+        val_loss, val_acc, val_recall, val_f1, val_metrics, val_preds, val_labels, _ = evaluate(
             eval_model, val_loader, criterion, device, classes,
             desc=f"Epoch {epoch}/{args.epochs} [Val]",
             amp_dtype=amp_dtype,
@@ -1786,7 +1802,7 @@ def main():
         is_raw_val_peak = val_f1 > best_raw_val_f1_seen
         force_test_eval = epoch >= early_stop_start
         if args.eval_test_every_epoch or force_test_eval or is_raw_val_peak:
-            _, _, ep_test_recall, ep_test_f1, ep_test_metrics, ep_test_preds, ep_test_labels = evaluate(
+            _, _, ep_test_recall, ep_test_f1, ep_test_metrics, ep_test_preds, ep_test_labels, _ = evaluate(
                 eval_model, test_loader, criterion, device, classes,
                 desc=f"Epoch {epoch}/{args.epochs} [TestEpoch]",
                 amp_dtype=amp_dtype,
@@ -1973,7 +1989,7 @@ def main():
             print(f"\n  * {tag} (target={val_target_recall:.4f}) -> model saved{' (EMA)' if ema is not None else ''}")
 
             # Best 시 test 평가 (eval_model 사용 — EMA 있으면 EMA)
-            test_loss, test_acc, test_recall, test_f1, test_metrics, test_preds, test_labels = evaluate(
+            test_loss, test_acc, test_recall, test_f1, test_metrics, test_preds, test_labels, test_probs = evaluate(
                 eval_model, test_loader, criterion, device, classes,
                 desc=f"Epoch {epoch}/{args.epochs} [Test]",
                 amp_dtype=amp_dtype,
@@ -2030,7 +2046,8 @@ def main():
 
             # 오분류 이미지 저장
             if is_main:
-                save_predictions(test_ds, test_preds, test_labels, classes, predictions_dir, correct_cap=100)
+                save_predictions(test_ds, test_preds, test_labels, classes, predictions_dir,
+                                 correct_cap=100, probs=test_probs)
 
             # Confusion matrix 저장
             if is_main:
@@ -2048,7 +2065,7 @@ def main():
 
                 print(f"\n  Normal Threshold 평가:")
                 for nt in nt_thresholds:
-                    _, nt_acc, nt_recall, nt_f1, nt_metrics_t, nt_preds_t, nt_labels_t = evaluate(
+                    _, nt_acc, nt_recall, nt_f1, nt_metrics_t, nt_preds_t, nt_labels_t, _ = evaluate(
                         eval_model, test_loader, criterion, device, classes,
                         desc=f"NT={nt}", normal_threshold=nt, amp_dtype=amp_dtype,
                     )
@@ -2205,12 +2222,12 @@ def main():
         _unwrap(model).load_state_dict(avg_state)
 
         # val
-        val_loss_a, val_acc_a, val_recall_a, val_f1_a, val_metrics_a, _, _ = evaluate(
+        val_loss_a, val_acc_a, val_recall_a, val_f1_a, val_metrics_a, _, _, _ = evaluate(
             model, val_loader, criterion, device, classes, desc="Avg [Val]",
             amp_dtype=amp_dtype,
         )
         # test
-        test_loss_a, test_acc_a, test_recall_a, test_f1_a, test_metrics_a, test_preds_a, test_labels_a = evaluate(
+        test_loss_a, test_acc_a, test_recall_a, test_f1_a, test_metrics_a, test_preds_a, test_labels_a, test_probs_a = evaluate(
             model, test_loader, criterion, device, classes, desc="Avg [Test]",
             amp_dtype=amp_dtype,
         )
@@ -2229,7 +2246,7 @@ def main():
         )
         # predictions 갱신
         save_predictions(test_ds, test_preds_a, test_labels_a, classes,
-                         predictions_dir, correct_cap=100)
+                         predictions_dir, correct_cap=100, probs=test_probs_a)
 
         # NT 평가 on averaged: selected NT 하나만 기록한다.
         selected_nt = float(args.normal_threshold)
@@ -2237,7 +2254,7 @@ def main():
         nt_results_a = {}
         selected_nt_result_a = None
         for nt in avg_nt_values:
-            _, nt_acc, nt_recall, nt_f1, nt_metrics_t, nt_preds_t, nt_labels_t = evaluate(
+            _, nt_acc, nt_recall, nt_f1, nt_metrics_t, nt_preds_t, nt_labels_t, _ = evaluate(
                 model, test_loader, criterion, device, classes,
                 desc=f"AvgNT={nt}", normal_threshold=nt, amp_dtype=amp_dtype,
             )

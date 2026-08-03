@@ -115,10 +115,12 @@ def build_combined(cfg_paths: list[Path], tag: str, rebuild: bool) -> tuple[Path
         src_data = ROOT / cfg["output"]["data_dir"]
         src_img = ROOT / cfg["output"]["image_dir"]
         src_scen = src_data / "scenarios.csv"
-        if not src_scen.exists():
-            raise SystemExit(f"scenarios.csv 가 없습니다: {src_scen} (데이터 생성 먼저)")
-        if not src_img.exists():
-            raise SystemExit(f"이미지 폴더가 없습니다: {src_img} (generate_images.py 먼저)")
+        if not src_scen.exists() or not src_img.exists():
+            # 표준 데이터셋(data/, data_noise_15/ …)만 합친다. per-member(logical) 처럼
+            # scenarios.csv 가 없는 파생 데이터셋은 건너뛴다.
+            missing = "scenarios.csv" if not src_scen.exists() else "이미지 폴더"
+            print(f"[combine] {prefix:<28} 건너뜀 — {missing} 없음 ({src_data.name})")
+            continue
 
         sdf = pd.read_csv(src_scen)
         linked = missing = 0

@@ -108,24 +108,42 @@ def link_validations_runs(source: Path, records: list[dict]) -> list[dict]:
     return linked
 
 
+def short_dataset(raw: object) -> str:
+    return Path(str(raw or "dataset.yaml")).stem
+
+
+def short_backbone(raw: object) -> str:
+    return str(raw or "").split(".")[0]
+
+
 def rank_candidates(records: list[dict]) -> list[dict]:
-    """candidate 별 seed 평균 성적 (F1 desc, FN asc, FP asc)."""
-    groups: dict[str, list[dict]] = {}
+    """(dataset x backbone) cell 별 candidate 평균 성적 (F1 desc, FN asc, FP asc).
+
+    5개 dataset matrix 처럼 cell 이 섞인 폴더를 그대로 주면 dataset 이 다른 조건끼리
+    비교되므로, cell 을 키에 포함해 같은 데이터셋/백본 안에서만 묶는다.
+    """
+    groups: dict[tuple, list[dict]] = {}
     for record in records:
-        groups.setdefault(str(record["candidate"]), []).append(record)
+        key = (short_dataset(record.get("dataset_config")),
+               short_backbone(record.get("model_name")),
+               str(record["candidate"]))
+        groups.setdefault(key, []).append(record)
 
     rows = []
-    for name, items in groups.items():
+    for (dataset, backbone, name), items in groups.items():
         f1s = [r["test_f1"] for r in items if r["test_f1"] is not None]
         fns = [r["fn"] for r in items if r["fn"] is not None]
         fps = [r["fp"] for r in items if r["fp"] is not None]
         rows.append({
             "candidate": name,
+            "dataset": dataset,
+            "backbone": backbone,
             "n": len(items),
             "mean_f1": mean(f1s) if f1s else float("-inf"),
             "mean_fn": mean(fns) if fns else float("inf"),
             "mean_fp": mean(fps) if fps else float("inf"),
             "best_run": max(items, key=retention_rank),
+            "runs": items,
         })
     rows.sort(key=lambda r: (-r["mean_f1"], r["mean_fn"], r["mean_fp"]))
     return rows
@@ -178,6 +196,10 @@ def main() -> int:
                         help="candidate=seed 평균 F1 최고 조건 (기본), run=단일 run F1 최고")
     parser.add_argument("--candidate", default=None,
                         help="자동 선택 대신 이 조건으로 강제 지정")
+    parser.add_argument("--dataset", default=None,
+                        help="dataset yaml 이름으로 cell 필터 (부분일치, 예: noise_15)")
+    parser.add_argument("--backbone", default=None,
+                        help="backbone 이름으로 cell 필터 (부분일치, 예: convnextv2_tiny)")
     parser.add_argument("--top", type=int, default=5,
                         help="순위표에 보여줄 개수 (기본 5)")
     parser.add_argument("--min-runs", type=int, default=1,
@@ -208,6 +230,14 @@ def main() -> int:
             f"*results*.json 이 있는 폴더를 지정하세요.")
 
     ranking = rank_candidates(records)
+    if args.dataset:
+        ranking = [r for r in ranking if args.dataset in r["dataset"]]
+    if args.backbone:
+        ranking = [r for r in ranking if args.backbone in r["backbone"]]
+    if not ranking:
+        raise SystemExit(f"--dataset/--backbone 필터에 맞는 cell 이 없습니다 "
+                         f"(dataset={args.dataset} backbone={args.backbone})")
+
     if args.min_runs > 1:
         kept = [r for r in ranking if r["n"] >= args.min_runs]
         dropped = len(ranking) - len(kept)
@@ -223,18 +253,27 @@ def main() -> int:
         if chosen is None:
             raise SystemExit(f"--candidate 를 찾지 못했습니다: {args.candidate}")
     elif args.select == "run":
-        winner = max(records, key=retention_rank)
-        chosen = next(r for r in ranking if r["candidate"] == winner["candidate"])
-        chosen = dict(chosen, best_run=winner)
+        # 필터를 통과한 cell 들의 run 중 단일 최고 (F1, -FN, -FP, 최신)
+        chosen = max(ranking, key=lambda r: retention_rank(r["best_run"]))
     else:
         chosen = ranking[0]
 
-    print(f"[retrain] scanned {len(records)} runs / {len(ranking)} candidates under {source}")
+    cells = {(r["dataset"], r["backbone"]) for r in ranking}
+    print(f"[retrain] scanned {len(records)} runs / {len(ranking)} candidates "
+          f"/ {len(cells)} cells (dataset x backbone) under {source}")
+    if len(cells) > 1:
+        print(f"[retrain] cell 이 {len(cells)}개입니다 — dataset 이 다르면 F1 을 직접 비교할 수 없으니 "
+              f"--dataset / --backbone 으로 좁혀서 고르는 것을 권장합니다")
     print(f"[retrain] top {min(args.top, len(ranking))} by mean F1:")
-    print(f"    {'candidate':<52} {'n':>3} {'meanF1':>8} {'meanFN':>7} {'meanFP':>7}")
+    print(f"    {'dataset':<22} {'backbone':<22} {'candidate':<44} "
+          f"{'n':>3} {'meanF1':>8} {'meanFN':>7} {'meanFP':>7}")
     for row in ranking[:args.top]:
-        mark = " *" if row["candidate"] == chosen["candidate"] else "  "
-        print(f"  {mark}{row['candidate']:<52} {row['n']:>3} {row['mean_f1']:>8.4f} "
+        mark = " *" if row is chosen or (
+            row["candidate"] == chosen["candidate"]
+            and row["dataset"] == chosen["dataset"]
+            and row["backbone"] == chosen["backbone"]) else "  "
+        print(f"  {mark}{row['dataset']:<22} {row['backbone']:<22} {row['candidate']:<44} "
+              f"{row['n']:>3} {row['mean_f1']:>8.4f} "
               f"{row['mean_fn']:>7.1f} {row['mean_fp']:>7.1f}")
 
     max_n = max(r["n"] for r in ranking)

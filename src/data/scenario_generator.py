@@ -626,9 +626,18 @@ class ScenarioGenerator:
             mask[:start] = False
             context_data[mid] = (values, mask)
 
-        kept = int(context_data[target][1].sum())
+        mask_now = context_data[target][1]
+        kept = int(mask_now.sum())
         too_few = kept < int(cfg.get("min_points", 3)) or (
             cls != "normal" and kept < int(cfg.get("min_defect_points", 10)))
+        # mean_shift / standard_deviation / drift 는 '우측 구간 vs 자기 좌측' 으로
+        # 정의된다. 늦게 시작해서 좌측 baseline 이 없으면 불량 자체가 성립하지 않는다
+        # (그냥 다른 레벨에서 시작한 것과 구분 불가) -> 되돌린다.
+        if not too_few and cls in ("mean_shift", "standard_deviation", "drift"):
+            vi = np.where(mask_now)[0]
+            baseline = int((vi < int(len(mask_now) * 0.7)).sum())
+            if baseline < int(cfg.get("min_baseline_points", 15)):
+                too_few = True
         if too_few:
             for mid, m in original.items():
                 context_data[mid] = (context_data[mid][0], m)
@@ -1127,7 +1136,13 @@ class ScenarioGenerator:
         # target 현재 평균
         target_mean = float(np.mean(values[valid]))
 
-        deviation_type = str(self.rng.choice(["mean", "std", "both"]))
+        dt_w = dev_cfg.get("deviation_type_weights")
+        if dt_w:
+            _names = [k for k, w in dt_w.items() if float(w) > 0] or ["mean"]
+            _p = np.array([float(dt_w[k]) for k in _names], dtype=float)
+            deviation_type = str(self.rng.choice(_names, p=_p / _p.sum()))
+        else:
+            deviation_type = str(self.rng.choice(["mean", "std", "both"]))
         mean_shift = 0.0
         std_scale = 1.0
 

@@ -1,4 +1,8 @@
-# v20 — early_stop 추가: target 이 왼쪽에만 있고 최근에 안 돌린 경우 정상.
+# v21 — 최우선 오검 2건(신규 진행 설비 / eqp 2대)에 커버리지 최대화 +
+#   late_start 에서 좌측 baseline 없는 mean_shift/std/drift 를 만들지 않도록 수정
+#   (좌측이 없으면 '늦게 시작' 과 '우측 변동' 이 구분 불가라 라벨이 틀린다).
+# ---
+# early_stop: target 이 왼쪽에만 있고 최근에 안 돌린 경우 정상.
 # ---
 # context avg 민감도 완화:
 #   불량 하한 2.8 -> 3.6σ, 정상 context_like 0.8~2.0 -> 0.8~3.0σ (18%).
@@ -20,7 +24,7 @@
 #   2.4~3.4σ -> 1.8~2.8σ, floor 2.8 -> 2.1.
 #   너무 크게 잡으면 중간 강도의 진짜 avg 불량을 정상으로 흘린다(FN).
 #   정상 right_minor 상한 1.4σ 와는 그대로 분리된다.
-# v20 — 현업 FP(정상을 불량으로 오검) 대응 데이터셋.
+# v21 — 현업 FP(정상을 불량으로 오검) 대응 데이터셋.
 #
 # 현업 오검 증상 -> 대응
 #   spike 2~3개도 불량        -> normal_variants.few_spike (개수로만 판별)
@@ -68,7 +72,10 @@ episode:
   # 남은 점이 전부 불량 구간에 몰려 오검. scope 로 두 상황을 다 만든다.
   # 불량 클래스는 꼬리 점이 min_defect_points 미만이면 되돌린다.
   late_start:
-    prob: 0.35
+    prob: 0.45
+    # 좌측 baseline 이 이만큼 없으면 mean_shift/std/drift 는 성립하지 않는다
+    # (늦게 시작한 것과 우측 변동을 구분할 수 없다) -> 그 chart 는 late_start 를 취소
+    min_baseline_points: 15
     # target 만 늦게 시작(다른 eqp 는 계속 진행) / 다 같이 늦게 시작 둘 다 만든다
     scope_weights:
       target: 0.55
@@ -86,12 +93,12 @@ episode:
   small_fleet:
     # 현업에서 eqp 2대짜리가 계속 불량으로 나온다 -> 2대 비중을 높인다.
     # 멤버가 2대면 fleet 이 '밴드' 가 아니라 기준선 1개라 작은 차이도 크게 보인다.
-    prob: 0.42
+    prob: 0.50
     count_weights:
-      2: 0.75
-      3: 0.25
+      2: 0.80
+      3: 0.20
   sparse_chart:
-    prob: 0.35
+    prob: 0.45
     # mode=member: 특정 설비(레전드) 하나만 성긴 경우 — 현업에서 흔하다
     mode_weights:
       chart: 0.45
@@ -243,6 +250,11 @@ context:
     - 0.003
     - 0.007
   target_deviation:
+    # avg 단독 불량도 확실히 만든다 (약하면 normal, 세면 anomaly)
+    deviation_type_weights:
+      mean: 0.4
+      std: 0.25
+      both: 0.35
     mean_reference: between
     mean_sigma_range:
     - 3.6
@@ -288,8 +300,8 @@ normal_variants:
     - 0.6
     - 1.4
     spread_scale_range:
-    - 1.2
-    - 1.7
+    - 1.15
+    - 1.5
     min_points: 5
   recovered:
     # 중간에서 이상이 났다가 되돌아온 정상 (PM 후 회복 등).
@@ -369,8 +381,8 @@ defect:
     difficulty_scale_floor: 0.9
   standard_deviation:
     scale_range:
-    - 2.8
-    - 4.0
+    - 3.2
+    - 4.5
   spike:
     magnitude_sigma_range:
     - 8.0
@@ -401,7 +413,7 @@ defect:
   enforcement:
     mean_shift_floor_sigma: 2.1
     mean_shift_self_floor_sigma: 1.7
-    std_floor_ratio: 3.4
+    std_floor_ratio: 3.8
     spike_floor_sigma: 13.0
     drift_floor_sigma: 3.2
     context_floor_sigma: 4.8
@@ -433,7 +445,7 @@ image:
   x_label: null
   y_label: Measurement Value (nm)
 dataset:
-  version: v20
+  version: v21
   samples_per_class:
     mean_shift: 1000
     standard_deviation: 1000
@@ -455,6 +467,6 @@ dataset:
   test_difficulty_scale: 0.8
   val_difficulty_scale: 0.8
 output:
-  data_dir: data_v20
-  image_dir: images_v20
-  display_dir: display_v20
+  data_dir: data_v21
+  image_dir: images_v21
+  display_dir: display_v21

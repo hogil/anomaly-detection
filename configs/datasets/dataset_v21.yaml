@@ -273,13 +273,13 @@ context:
 normal_variants:
   # 정상 클래스 하위 유형 비율. clean 만 있으면 v11 과 동일 동작.
   weights:
-    clean: 0.06
-    recovered: 0.16
-    mid_shift: 0.12
-    right_minor: 0.16
-    few_spike: 0.20
-    context_like: 0.18
-    loose_target: 0.12
+    clean: 0.08
+    recovered: 0.18
+    mid_shift: 0.13
+    right_minor: 0.18
+    few_spike: 0.22
+    context_like: 0.10
+    loose_target: 0.11
     common_mode: 0.0
   context_like:
     # fleet 에서 '조금' 떨어진 정상. context 불량 하한(mean_min_within_ratio 2.8σ)의

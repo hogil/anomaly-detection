@@ -432,11 +432,18 @@ class ScenarioGenerator:
             return {}
         within, _between = self._fleet_spread(context_data, members, target)
         sigma = float(self.rng.uniform(*cfg.get("shift_sigma_range", [1.0, 2.5])))
+        # 중간 변화라도 뒤쪽이 길면 전체 평균이 통째로 밀려 context(mean) 불량처럼 보인다.
+        # context 하한(mean_min_within_ratio) 아래로 유지되게 shift 를 깎는다.
+        max_mean = float(cfg.get("max_mean_offset_sigma", 1.5))
+        frac_after = len(after) / len(vi)
+        if frac_after * sigma > max_mean:
+            sigma = max_mean / max(frac_after, 1e-6)
         sign = 1 if self.rng.random() < 0.5 else -1
         values[after] += within * sigma * sign
         context_data[target] = (values, mask)
         return {"normal_variant": "mid_shift", "start_ratio": round(ratio, 3),
                 "shift_sigma": round(sigma, 3),
+                "mean_offset_sigma": round(frac_after * sigma, 3),
                 "points_after": int(len(after)), "points_before": int(len(before))}
 
     def _inject_few_spike_normal(self, context_data, target) -> dict:

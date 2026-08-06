@@ -198,10 +198,10 @@ context:
 normal_variants:
   # 정상 클래스 하위 유형 비율. clean 만 있으면 v11 과 동일 동작.
   weights:
-    clean: 0.42
-    mid_shift: 0.22
-    few_spike: 0.18
-    loose_target: 0.18
+    clean: 0.25
+    mid_shift: 0.28
+    few_spike: 0.24
+    loose_target: 0.23
     common_mode: 0.0
   mid_shift:
     # 불량 mean_shift 는 우측 끝 14~30% 구간. 여기는 25~55% 지점에서 바뀌고
@@ -213,6 +213,9 @@ normal_variants:
     - 1.0
     - 2.5
     min_side_points: 5
+    # 뒤쪽이 길면 전체 평균이 통째로 밀려 context(mean) 불량처럼 보인다.
+    # context 하한(mean_min_within_ratio 1.8) 아래로 유지.
+    max_mean_offset_sigma: 1.5
   few_spike:
     # 판별 기준은 '크기'가 아니라 '개수'다. 크기를 작게 두면 모델은
     # "작은 튐은 정상"만 배우고, 현업의 크고 개수 적은 2~3매는 계속 잡는다.
@@ -221,8 +224,8 @@ normal_variants:
     - 1
     - 3
     magnitude_sigma_range:
-    - 4.0
-    - 8.0
+    - 5.0
+    - 10.0
   loose_target:
     # 이웃보다 '조금' 넓은 정상. 월등히 넓은 것은 context 불량이 맡는다 —
     # context 하한이 fleet_visual_spread x 1.25 이므로 여기 상한은 1.0 으로 막는다.
@@ -253,23 +256,23 @@ defect:
   - 0.3
   mean_shift:
     shift_sigma_range:
-    - 1.4
-    - 2.2
+    - 1.9
+    - 2.8
     difficulty_scale_floor: 0.9
   standard_deviation:
     scale_range:
-    - 1.6
-    - 2.4
+    - 2.2
+    - 3.2
   spike:
     magnitude_sigma_range:
-    - 5.0
-    - 8.0
+    - 6.5
+    - 10.0
     difficulty_scale_floor: 0.9
     spike_ratio_range:
     - 0.12
     - 0.28
-    min_spikes: 10
-    min_magnitude_sigma: 5.0
+    min_spikes: 14
+    min_magnitude_sigma: 6.5
     region_ratio_range:
     - 0.12
     - 0.18
@@ -288,10 +291,10 @@ defect:
     max_range_scale: 0.7
     drift_method: index
   enforcement:
-    mean_shift_floor_sigma: 1.8
-    mean_shift_self_floor_sigma: 1.4
-    std_floor_ratio: 2.2
-    spike_floor_sigma: 9.0
+    mean_shift_floor_sigma: 2.2
+    mean_shift_self_floor_sigma: 1.8
+    std_floor_ratio: 2.8
+    spike_floor_sigma: 11.0
     drift_floor_sigma: 2.6
     context_floor_sigma: 2.6
     normal_max_right_dev_sigma: 0.5

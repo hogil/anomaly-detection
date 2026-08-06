@@ -43,6 +43,14 @@ SECTIONS = [
       ("class", "mean_shift", 2,
        lambda d: '<span class="hl-abn">불량</span> — 우측 끝 구간에서 변화, 안정 구간 없음')]),
 
+    ("↩", "중간에 났다가 되돌아온 건 양호", "recovered",
+     "mean_shift · std · drift · spike 를 시계열 <b>중간 구간</b>에만 넣고 그 뒤는 baseline 으로 "
+     "복귀시킨다. 진폭은 <b>진짜 불량과 같은 설정</b>이다 — 약하게 넣으면 모델이 “작으면 정상”을 "
+     "배울 뿐 복귀 여부를 안 본다. <b>우측 끝이 깨끗한가</b>만으로 갈려야 한다.",
+     [("normal_variant", "recovered", 4,
+       lambda d: f'<b>{d.get("kind")}</b> · {d.get("start_ratio", 0):.0%}~'
+                 f'{d.get("end_ratio", 0):.0%} 구간 · 이후 <b>{d.get("points_after")}점</b> 복귀')]),
+
     ("①", "spike 2~3개도 불량으로 나옴", "few_spike",
      "판별 기준은 <b>크기가 아니라 개수</b>다. 크기를 작게 두면 모델은 “작은 튐은 정상”만 배우고 "
      "현업의 크고 개수 적은 2~3매는 계속 잡는다 — 그래서 불량 spike 와 <b>같은 스케일</b>로 두고 "

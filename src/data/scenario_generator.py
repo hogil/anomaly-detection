@@ -149,6 +149,8 @@ class ScenarioGenerator:
                 defect_params = self._inject_few_spike_normal(context_data, target)
             elif subtype == "mid_shift":
                 defect_params = self._inject_mid_shift_normal(context_data, members, target)
+            elif subtype == "recovered":
+                defect_params = self._inject_recovered_normal(context_data, members, target)
             elif subtype == "common_mode":
                 defect_params = self._inject_common_mode_normal(context_data, members)
             elif subtype == "loose_target":
@@ -520,6 +522,60 @@ class ScenarioGenerator:
         return {"normal_variant": "common_mode", "kind": "spike",
                 "num_spikes": int(n),
                 "avg_magnitude_sigma": round(float(np.mean(sigmas)), 3)}
+
+    def _inject_recovered_normal(self, context_data, members, target) -> dict:
+        """중간에서 이상이 났다가 **되돌아온** 정상.
+
+        mean_shift / standard_deviation / drift / spike 를 시계열 중간 구간에만
+        넣고 그 뒤는 baseline 그대로 둔다 — 우측 끝이 깨끗하면 양호라는 규칙을
+        데이터에 새긴다. 진폭은 **진짜 불량과 같은 설정**을 쓴다. 약하게 넣으면
+        모델이 "작으면 정상" 을 배울 뿐 복귀 여부를 안 본다.
+        """
+        cfg = self._normal_variant_cfg().get("recovered") or {}
+        values, mask = context_data[target]
+        vi = np.where(mask)[0]
+        if len(vi) < 20:
+            return {}
+
+        kinds = cfg.get("kind_weights") or {
+            "mean_shift": 0.3, "standard_deviation": 0.25, "drift": 0.25, "spike": 0.2}
+        names = [k for k, w in kinds.items() if float(w) > 0] or ["mean_shift"]
+        p = np.array([float(kinds[k]) for k in names], dtype=float)
+        kind = str(self.rng.choice(names, p=p / p.sum()))
+
+        total = len(mask)
+        start_r = float(self.rng.uniform(*cfg.get("start_ratio_range", [0.15, 0.42])))
+        span_r = float(self.rng.uniform(*cfg.get("span_ratio_range", [0.12, 0.26])))
+        end_r = min(start_r + span_r, float(cfg.get("max_end_ratio", 0.65)))
+        start, end = int(total * start_r), int(total * end_r)
+        inside = vi[(vi >= start) & (vi < end)]
+        after = vi[vi >= end]
+        if len(inside) < int(cfg.get("min_points", 8)) or len(after) < int(
+                cfg.get("min_recovery_points", 12)):
+            return {}
+
+        fleet_vals = []
+        for mid in members:
+            if mid == target:
+                continue
+            fv, fm = context_data[mid]
+            fvi = np.where(fm)[0]
+            if len(fvi) > 0:
+                fleet_vals.extend(fv[fvi].tolist())
+        if fleet_vals:
+            p5, p95 = np.percentile(fleet_vals, [5, 95])
+            fleet_range = max(float(p95 - p5), 0.05)
+            fleet_noise = max(float(np.std(fleet_vals)), 0.01)
+        else:
+            fleet_range, fleet_noise = 0.1, 0.05
+
+        new_values, info = self.defect_synth.inject(
+            values, mask, kind, fleet_range=fleet_range,
+            fleet_noise_std=fleet_noise, defect_bounds=(start, end))
+        context_data[target] = (new_values, mask)
+        return {"normal_variant": "recovered", "kind": kind,
+                "start_ratio": round(start_r, 3), "end_ratio": round(end_r, 3),
+                "points_inside": int(len(inside)), "points_after": int(len(after))}
 
     def _apply_loose_target(self, context_data, members, target) -> dict:
         """target 산포를 전 구간 균일하게 **조금만** 키운다 (평균 유지).

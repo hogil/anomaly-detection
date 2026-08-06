@@ -5,7 +5,7 @@
 
   python scripts/train_new_dataset.py --validation validations/<TS>_all_dataset_backbone
 
-기본값: dataset = configs/datasets/dataset_v22.yaml
+기본값: dataset = configs/datasets/dataset_v23.yaml
         backbone = convnext_tiny.dinov3_lvd1689m
         전체 데이터 (--max_per_class 0 --normal_ratio 0), seed 42, BKM scope global
 
@@ -98,8 +98,8 @@ def main() -> int:
                         help="예전 sweep 폴더 (validations/<TS>_all_dataset_backbone 또는 logs/…)")
     parser.add_argument("source", type=Path, nargs="?", default=None,
                         help="--validation 대신 위치 인자로 줘도 된다")
-    parser.add_argument("--config", default="configs/datasets/dataset_v22.yaml",
-                        help="학습할 새 데이터셋 yaml (기본 v22)")
+    parser.add_argument("--config", default="configs/datasets/dataset_v23.yaml",
+                        help="학습할 새 데이터셋 yaml (기본 v23)")
     parser.add_argument("--workers", type=int, default=0,
                         help="데이터/이미지 생성 병렬 worker (0=auto)")
     parser.add_argument("--no-generate", action="store_true",

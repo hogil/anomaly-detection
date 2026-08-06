@@ -434,7 +434,7 @@ class ScenarioGenerator:
         else:
             chosen = list(members)
 
-        guard = cls != "normal" and target in chosen
+        guard = cls not in ("normal", "context") and target in chosen
         original = context_data[target][1].copy() if guard else None
 
         min_points = int(cfg.get("min_points", 8))
@@ -506,16 +506,21 @@ class ScenarioGenerator:
         vi = np.where(mask)[0]
         if len(vi) < 5:
             return {}
-        lo, hi = cfg.get("count_range", [1, 5])
-        n = min(int(self.rng.integers(int(lo), int(hi) + 1)), len(vi))
-        # 우측에 몰아넣는 경우 — 불량 구간과 같은 위치라 '개수' 로만 갈리게 된다
-        right = False
-        pool = vi
-        if self.rng.random() < float(cfg.get("right_prob", 0.0)):
-            start = int(len(mask) * float(cfg.get("right_start_ratio", 0.7)))
-            cand = vi[vi >= start]
-            if len(cand) >= n:
-                pool, right = cand, True
+        # 위치를 먼저 정하고, 위치에 따라 개수 범위를 다르게 준다.
+        #   우측 : 불량(10개+)과 같은 구간이므로 개수를 확실히 적게 (1~3)
+        #   중/좌: 개수가 많아도 정상 — 불량 구간이 아니기 때문 (1~9)
+        start = int(len(mask) * float(cfg.get("right_start_ratio", 0.7)))
+        cand_right = vi[vi >= start]
+        cand_left = vi[vi < start]
+        right = (self.rng.random() < float(cfg.get("right_prob", 0.0))
+                 and len(cand_right) >= 1)
+        if right:
+            lo, hi = cfg.get("right_count_range", [1, 3])
+            pool = cand_right
+        else:
+            lo, hi = cfg.get("count_range", [1, 9])
+            pool = cand_left if len(cand_left) >= int(lo) else vi
+        n = min(int(self.rng.integers(int(lo), int(hi) + 1)), len(pool))
         idx = self.rng.choice(pool, size=n, replace=False)
         std = max(float(np.nanstd(values[vi])), 1e-6)
         sigmas = self.rng.uniform(*cfg.get("magnitude_sigma_range", [2.0, 3.0]), size=n)

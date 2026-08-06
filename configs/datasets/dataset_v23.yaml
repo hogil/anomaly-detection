@@ -1,4 +1,7 @@
-# v22 — normal 쪽 avg 계열 값을 살짝 축소 (context_like / mid_shift / right_minor),
+# v23 — FN 반영: mean_shift 불량 상향(FN 최다), spike 는 위치별 개수 규칙,
+#   소수 데이터라도 fleet 에서 명확히 멀면 context 불량으로 만든다.
+# ---
+# normal 쪽 avg 계열 값 축소 (context_like / mid_shift / right_minor),
 #   멤버 2~3대 chart 의 소수 데이터 정상을 대폭 확대.
 # ---
 # 최우선 오검 2건(신규 진행 설비 / eqp 2대) 커버리지 최대화 +
@@ -27,7 +30,7 @@
 #   2.4~3.4σ -> 1.8~2.8σ, floor 2.8 -> 2.1.
 #   너무 크게 잡으면 중간 강도의 진짜 avg 불량을 정상으로 흘린다(FN).
 #   정상 right_minor 상한 1.4σ 와는 그대로 분리된다.
-# v22 — 현업 FP(정상을 불량으로 오검) 대응 데이터셋.
+# v23 — 현업 FP(정상을 불량으로 오검) 대응 데이터셋.
 #
 # 현업 오검 증상 -> 대응
 #   spike 2~3개도 불량        -> normal_variants.few_spike (개수로만 판별)
@@ -346,10 +349,14 @@ normal_variants:
     # 판별 기준은 '크기'가 아니라 '개수'다. 크기를 작게 두면 모델은
     # "작은 튐은 정상"만 배우고, 현업의 크고 개수 적은 2~3매는 계속 잡는다.
     # -> 불량 spike(5.0~8.0σ)와 같은 스케일로 두고 개수(1~3 vs 8+)로만 가른다.
-    count_range:
+    # 위치별 개수: 우측(불량 구간)은 확실히 적게, 중/좌측은 많아도 정상
+    count_range:          # 중/좌측
     - 1
-    - 5
-    right_prob: 0.6
+    - 9
+    right_count_range:    # 우측 — 불량은 10개+ 라 3 이하로 확실히 분리
+    - 1
+    - 3
+    right_prob: 0.5
     right_start_ratio: 0.7
     magnitude_sigma_range:
     - 5.0
@@ -384,8 +391,8 @@ defect:
   - 0.3
   mean_shift:
     shift_sigma_range:
-    - 1.8
-    - 2.8
+    - 2.2
+    - 3.2
     difficulty_scale_floor: 0.9
   standard_deviation:
     scale_range:
@@ -399,7 +406,7 @@ defect:
     spike_ratio_range:
     - 0.12
     - 0.28
-    min_spikes: 16
+    min_spikes: 10
     min_magnitude_sigma: 8.0
     region_ratio_range:
     - 0.12
@@ -419,8 +426,8 @@ defect:
     max_range_scale: 0.7
     drift_method: index
   enforcement:
-    mean_shift_floor_sigma: 2.1
-    mean_shift_self_floor_sigma: 1.7
+    mean_shift_floor_sigma: 2.6
+    mean_shift_self_floor_sigma: 2.1
     std_floor_ratio: 3.8
     spike_floor_sigma: 13.0
     drift_floor_sigma: 3.2
@@ -453,7 +460,7 @@ image:
   x_label: null
   y_label: Measurement Value (nm)
 dataset:
-  version: v22
+  version: v23
   samples_per_class:
     mean_shift: 1000
     standard_deviation: 1000
@@ -475,6 +482,6 @@ dataset:
   test_difficulty_scale: 0.8
   val_difficulty_scale: 0.8
 output:
-  data_dir: data_v22
-  image_dir: images_v22
-  display_dir: display_v22
+  data_dir: data_v23
+  image_dir: images_v23
+  display_dir: display_v23

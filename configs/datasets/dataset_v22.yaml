@@ -1,4 +1,7 @@
-# v21 — 최우선 오검 2건(신규 진행 설비 / eqp 2대)에 커버리지 최대화 +
+# v22 — normal 쪽 avg 계열 값을 살짝 축소 (context_like / mid_shift / right_minor),
+#   멤버 2~3대 chart 의 소수 데이터 정상을 대폭 확대.
+# ---
+# 최우선 오검 2건(신규 진행 설비 / eqp 2대) 커버리지 최대화 +
 #   late_start 에서 좌측 baseline 없는 mean_shift/std/drift 를 만들지 않도록 수정
 #   (좌측이 없으면 '늦게 시작' 과 '우측 변동' 이 구분 불가라 라벨이 틀린다).
 # ---
@@ -24,7 +27,7 @@
 #   2.4~3.4σ -> 1.8~2.8σ, floor 2.8 -> 2.1.
 #   너무 크게 잡으면 중간 강도의 진짜 avg 불량을 정상으로 흘린다(FN).
 #   정상 right_minor 상한 1.4σ 와는 그대로 분리된다.
-# v21 — 현업 FP(정상을 불량으로 오검) 대응 데이터셋.
+# v22 — 현업 FP(정상을 불량으로 오검) 대응 데이터셋.
 #
 # 현업 오검 증상 -> 대응
 #   spike 2~3개도 불량        -> normal_variants.few_spike (개수로만 판별)
@@ -108,8 +111,13 @@ episode:
     - 0.4
     target_prob: 0.6
     keep_ratio_range:
-    - 0.05
-    - 0.28
+    - 0.04
+    - 0.26
+    # 멤버 2~3대 chart 에서는 더 자주, 더 성기게 (현업 오검이 여기 몰려 있다)
+    small_fleet_prob: 0.65
+    small_fleet_keep_ratio_range:
+    - 0.03
+    - 0.18
     min_points: 8
     # 불량 클래스: 불량 구간에 이만큼은 남겨야 한다. 점 3개짜리 불량은
     # 판정 근거가 못 되므로 keep 을 위로 올리거나 성기게 만들지 않는다.
@@ -273,20 +281,20 @@ context:
 normal_variants:
   # 정상 클래스 하위 유형 비율. clean 만 있으면 v11 과 동일 동작.
   weights:
-    clean: 0.08
-    recovered: 0.18
-    mid_shift: 0.13
-    right_minor: 0.18
-    few_spike: 0.22
-    context_like: 0.10
-    loose_target: 0.11
+    clean: 0.06
+    recovered: 0.16
+    mid_shift: 0.12
+    right_minor: 0.16
+    few_spike: 0.20
+    context_like: 0.18
+    loose_target: 0.12
     common_mode: 0.0
   context_like:
     # fleet 에서 '조금' 떨어진 정상. context 불량 하한(mean_min_within_ratio 2.8σ)의
     # max_ratio_of_floor 배 아래로 clamp 되므로 절대 겹치지 않는다.
     mean_offset_sigma_range:
-    - 0.8
-    - 3.0
+    - 0.6
+    - 2.2
     max_ratio_of_floor: 0.75
   right_minor:
     # 우측 끝 소량 변동. 불량 mean_shift 하한(2.8σ) 아래로 유지해 경계를 만든다.
@@ -297,8 +305,8 @@ normal_variants:
     - 0.72
     - 0.90
     shift_sigma_range:
-    - 0.6
-    - 1.4
+    - 0.5
+    - 1.2
     spread_scale_range:
     - 1.15
     - 1.5
@@ -328,8 +336,8 @@ normal_variants:
     - 0.25
     - 0.55
     shift_sigma_range:
-    - 1.0
-    - 2.5
+    - 0.9
+    - 2.0
     min_side_points: 5
     # 뒤쪽이 길면 전체 평균이 통째로 밀려 context(mean) 불량처럼 보인다.
     # context 하한(mean_min_within_ratio 1.8) 아래로 유지.
@@ -445,7 +453,7 @@ image:
   x_label: null
   y_label: Measurement Value (nm)
 dataset:
-  version: v21
+  version: v22
   samples_per_class:
     mean_shift: 1000
     standard_deviation: 1000
@@ -467,6 +475,6 @@ dataset:
   test_difficulty_scale: 0.8
   val_difficulty_scale: 0.8
 output:
-  data_dir: data_v21
-  image_dir: images_v21
-  display_dir: display_v21
+  data_dir: data_v22
+  image_dir: images_v22
+  display_dir: display_v22

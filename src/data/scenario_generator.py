@@ -162,7 +162,8 @@ class ScenarioGenerator:
         late = None if stopped else self._maybe_late_start(context_data, members, target, cls)
         if late:
             variants.append(late)
-        thinned = self._maybe_thin(context_data, members, target, cls)
+        thinned = self._maybe_thin(context_data, members, target, cls,
+                                   small_fleet=bool(small_fleet_tag))
         sparse_keep = None
         if thinned is not None:
             tag, sparse_keep = thinned
@@ -398,7 +399,8 @@ class ScenarioGenerator:
         vi = np.where(mask)[0]
         return int((vi >= int(len(mask) * (1 - region))).sum())
 
-    def _maybe_thin(self, context_data, members, target, cls) -> tuple[str, float] | None:
+    def _maybe_thin(self, context_data, members, target, cls,
+                    small_fleet: bool = False) -> tuple[str, float] | None:
         """계측 모수 축소. mode=chart(전 멤버) / member(일부 멤버만).
 
         현업에는 특정 설비 하나만 계측이 성긴 경우가 흔한데 기존에는 그런 그림이
@@ -406,10 +408,14 @@ class ScenarioGenerator:
         않게 한다.
         """
         cfg = (self.cfg.get("episode") or {}).get("sparse_chart") or {}
-        prob = float(cfg.get("prob", 0.0))
+        # 멤버가 2~3대인 chart 는 현업에서 '소수인데 불량' 오검이 특히 많다.
+        # 그 조합을 확률·강도 양쪽으로 더 만든다.
+        prob = float(cfg.get("small_fleet_prob", cfg.get("prob", 0.0)) if small_fleet
+                     else cfg.get("prob", 0.0))
         if prob <= 0 or self.rng.random() >= prob:
             return None
-        keep = float(self.rng.uniform(*cfg.get("keep_ratio_range", [0.08, 0.30])))
+        keep_range = cfg.get("small_fleet_keep_ratio_range") if small_fleet else None
+        keep = float(self.rng.uniform(*(keep_range or cfg.get("keep_ratio_range", [0.08, 0.30]))))
 
         modes = cfg.get("mode_weights") or {"chart": 0.5, "member": 0.5}
         names = [m for m, w in modes.items() if float(w) > 0] or ["chart"]

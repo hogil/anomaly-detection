@@ -154,6 +154,8 @@ def _scenario_row(result, family_id: str, chart_id: str, cls: str, target: float
         "defect_start_idx": result.defect_start_idx,
         "defect_params": json.dumps(result.defect_params),
         "target": round(float(target), 6),
+        # 정상 하위 유형 / chart 변형 — 어떤 유형이 FP 를 남기는지 사후 분석용
+        "variant": getattr(result, "variant", ""),
     }
 
 

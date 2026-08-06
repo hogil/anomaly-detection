@@ -1,8 +1,13 @@
-# v15 — 현업 FP 대응 데이터셋. v14 대비 mean_shift(avg 변동) 하향:
+# v16 — 현업 FP 대응. v15 대비 context 완화:
+#   context 불량 하한 상향 (avg 가 너무 민감했다) + normal 에 context_like 신설.
+#   정상은 fleet 평균 0.6σ 이내로 강제되고 context 는 1.8σ 이상이라
+#   그 사이가 비어 '조금만 치우쳐도 context 불량' 이 됐다.
+# ---
+# v14 대비 mean_shift(avg 변동) 하향:
 #   2.4~3.4σ -> 1.8~2.8σ, floor 2.8 -> 2.1.
 #   너무 크게 잡으면 중간 강도의 진짜 avg 불량을 정상으로 흘린다(FN).
 #   정상 right_minor 상한 1.4σ 와는 그대로 분리된다.
-# v15 — 현업 FP(정상을 불량으로 오검) 대응 데이터셋.
+# v16 — 현업 FP(정상을 불량으로 오검) 대응 데이터셋.
 #
 # 현업 오검 증상 -> 대응
 #   spike 2~3개도 불량        -> normal_variants.few_spike (개수로만 판별)
@@ -42,10 +47,12 @@ episode:
   # 멤버 2~3대 chart. 기본 count_range 최소가 4라 이런 그림이 아예 없었다.
   # "eqp 2대 중 한쪽 모수가 적으면 그쪽이 불량" 오검의 배경. 전 클래스 공통.
   small_fleet:
-    prob: 0.18
-    count_range:
-    - 2
-    - 3
+    # 현업에서 eqp 2대짜리가 계속 불량으로 나온다 -> 2대 비중을 높인다.
+    # 멤버가 2대면 fleet 이 '밴드' 가 아니라 기준선 1개라 작은 차이도 크게 보인다.
+    prob: 0.30
+    count_weights:
+      2: 0.65
+      3: 0.35
   sparse_chart:
     prob: 0.35
     # mode=member: 특정 설비(레전드) 하나만 성긴 경우 — 현업에서 흔하다
@@ -201,29 +208,37 @@ context:
   target_deviation:
     mean_reference: between
     mean_sigma_range:
-    - 2.0
-    - 3.2
-    mean_min_within_ratio: 1.8
+    - 2.8
+    - 4.2
+    mean_min_within_ratio: 2.8
     std_reference: within
     std_sigma_range:
-    - 2.0
-    - 3.2
+    - 2.6
+    - 4.0
     std_range:
-    - 2.0
-    - 3.2
-    std_min_scale: 2.2
-    min_mean_nsigma: 2.0
-    min_std_nsigma: 2.0
+    - 2.6
+    - 4.0
+    std_min_scale: 2.6
+    min_mean_nsigma: 2.8
+    min_std_nsigma: 2.6
 normal_variants:
   # 정상 클래스 하위 유형 비율. clean 만 있으면 v11 과 동일 동작.
   weights:
-    clean: 0.10
-    recovered: 0.18
-    mid_shift: 0.14
-    right_minor: 0.18
-    few_spike: 0.26
-    loose_target: 0.14
+    clean: 0.08
+    recovered: 0.16
+    mid_shift: 0.12
+    right_minor: 0.16
+    few_spike: 0.22
+    context_like: 0.14
+    loose_target: 0.12
     common_mode: 0.0
+  context_like:
+    # fleet 에서 '조금' 떨어진 정상. context 불량 하한(mean_min_within_ratio 2.8σ)의
+    # max_ratio_of_floor 배 아래로 clamp 되므로 절대 겹치지 않는다.
+    mean_offset_sigma_range:
+    - 0.8
+    - 2.0
+    max_ratio_of_floor: 0.75
   right_minor:
     # 우측 끝 소량 변동. 불량 mean_shift 하한(2.8σ) 아래로 유지해 경계를 만든다.
     kind_weights:
@@ -352,7 +367,7 @@ defect:
     std_floor_ratio: 3.4
     spike_floor_sigma: 13.0
     drift_floor_sigma: 3.2
-    context_floor_sigma: 3.2
+    context_floor_sigma: 4.0
     normal_max_right_dev_sigma: 0.5
     normal_max_right_shift_sigma: 0.5
     min_defect_points_range:
@@ -381,7 +396,7 @@ image:
   x_label: null
   y_label: Measurement Value (nm)
 dataset:
-  version: v15
+  version: v16
   samples_per_class:
     mean_shift: 1000
     standard_deviation: 1000
@@ -403,6 +418,6 @@ dataset:
   test_difficulty_scale: 0.8
   val_difficulty_scale: 0.8
 output:
-  data_dir: data_v15
-  image_dir: images_v15
-  display_dir: display_v15
+  data_dir: data_v16
+  image_dir: images_v16
+  display_dir: display_v16

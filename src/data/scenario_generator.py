@@ -102,8 +102,15 @@ class ScenarioGenerator:
             count = 1
             small_fleet_tag = "single_legend"
         elif float(sf_cfg.get("prob", 0.0)) > 0 and self.rng.random() < float(sf_cfg["prob"]):
-            sf_lo, sf_hi = sf_cfg.get("count_range", [2, 3])
-            count = int(self.rng.integers(int(sf_lo), min(int(sf_hi), len(pool)) + 1))
+            cw = sf_cfg.get("count_weights")
+            if cw:
+                opts = [int(k) for k, w in cw.items() if float(w) > 0 and int(k) <= len(pool)]
+                pw = np.array([float(cw[k]) for k in cw
+                               if float(cw[k]) > 0 and int(k) <= len(pool)], dtype=float)
+                count = int(self.rng.choice(opts, p=pw / pw.sum()))
+            else:
+                sf_lo, sf_hi = sf_cfg.get("count_range", [2, 3])
+                count = int(self.rng.integers(int(sf_lo), min(int(sf_hi), len(pool)) + 1))
             small_fleet_tag = f"smallfleet{count}"
         else:
             count = self.rng.integers(lo, min(hi, len(pool)) + 1)
@@ -173,6 +180,8 @@ class ScenarioGenerator:
                 defect_params = self._inject_recovered_normal(context_data, members, target)
             elif subtype == "common_mode":
                 defect_params = self._inject_common_mode_normal(context_data, members)
+            elif subtype == "context_like":
+                defect_params = self._apply_context_like_normal(context_data, members, target)
             elif subtype == "loose_target":
                 defect_params = self._apply_loose_target(context_data, members, target)
         elif cls == "context":
@@ -650,6 +659,36 @@ class ScenarioGenerator:
         return {"normal_variant": "recovered", "kind": kind,
                 "start_ratio": round(start_r, 3), "end_ratio": round(end_r, 3),
                 "points_inside": int(len(inside)), "points_after": int(len(after))}
+
+    def _apply_context_like_normal(self, context_data, members, target) -> dict:
+        """fleet 에서 **조금** 떨어져 있는 정상 — context 느낌은 나지만 불량은 아니다.
+
+        기존 normal 은 target 전체 평균이 fleet 평균의 0.6σ 이내로 강제되고
+        (_normalize_normal_target), context 불량은 mean_min_within_ratio 이상 떨어져야
+        한다. 그 사이 구간이 비어 있어 "조금만 치우쳐도 context 불량" 이 됐다.
+        여기서 그 구간을 채운다. 상한은 context 하한 아래로 clamp 한다.
+        """
+        cfg = self._normal_variant_cfg().get("context_like") or {}
+        values, mask = context_data[target]
+        vi = np.where(mask)[0]
+        if len(vi) < 5:
+            return {}
+        within, _between = self._fleet_spread(context_data, members, target)
+
+        lo, hi = cfg.get("mean_offset_sigma_range", [0.8, 2.0])
+        # context 불량 하한(mean_min_within_ratio) 아래로 반드시 유지
+        ceiling = float(self.ctx_cfg.get("target_deviation", {}).get(
+            "mean_min_within_ratio", 1.8)) * float(cfg.get("max_ratio_of_floor", 0.75))
+        hi = min(float(hi), ceiling)
+        if hi <= float(lo):
+            return {"normal_variant": "context_like", "offset_sigma": 0.0, "capped": True}
+
+        offset = float(self.rng.uniform(float(lo), hi))
+        sign = 1 if self.rng.random() < 0.5 else -1
+        values[vi] += within * offset * sign
+        context_data[target] = (values, mask)
+        return {"normal_variant": "context_like",
+                "offset_sigma": round(offset, 3), "ceiling_sigma": round(ceiling, 3)}
 
     def _apply_loose_target(self, context_data, members, target) -> dict:
         """target 산포를 전 구간 균일하게 **조금만** 키운다 (평균 유지).

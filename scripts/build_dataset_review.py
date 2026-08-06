@@ -4,7 +4,7 @@
 생성한 데이터가 의도대로인지 눈으로 확인하는 용도. 표본을 새로 뽑아 렌더하고,
 이미지를 base64 로 박아 **파일 하나로 완결**되게 만든다 (외부 요청 0, 오프라인 열람 가능).
 
-  python scripts/build_dataset_review.py --config configs/datasets/dataset_v15.yaml
+  python scripts/build_dataset_review.py --config configs/datasets/dataset_v16.yaml
 
 기본 출력은 docs/dataset_review_<version>.html. 사내망처럼 외부가 막힌 곳에서는
 repo 를 pull 받아 이 파일을 브라우저로 바로 열면 된다.
@@ -80,6 +80,17 @@ SECTIONS = [
       ("variant", "sparse_chart", 2, lambda d: '정상 — 차트 전체가 성김'),
       ("abn_sparse", "", 2, lambda d: '<span class="hl-abn">불량</span> — 성겨도 불량 구간에는 '
                                       '점이 남는다')]),
+
+    ("≠", "fleet 에서 조금 떨어진 정상 — eqp 2대짜리 포함", "context_like",
+     "정상은 target 전체 평균이 fleet 평균의 <b>0.6σ 이내</b>로 강제되고 context 불량은 그보다 "
+     "훨씬 멀어야 했다. 그 사이가 비어 <b>조금만 치우쳐도 context 불량</b>이 됐다. "
+     "0.8~2.0σ 구간을 정상으로 채우고 context 하한도 올렸다. 멤버가 <b>2대</b>면 fleet 이 밴드가 "
+     "아니라 기준선 1개라 작은 차이도 크게 보이므로, 2대짜리 chart 비중을 올렸다.",
+     [("normal_variant", "context_like", 3,
+       lambda d: f'fleet 평균에서 <b>{d.get("offset_sigma", 0):.2f}σ</b> 이격 · 전 구간 균일'),
+      ("variant", "smallfleet2", 2, lambda d: '멤버 <b>2대</b> — 기준선이 하나뿐'),
+      ("class", "context", 1,
+       lambda d: '<span class="hl-abn">context 불량</span> — <b>훨씬</b> 멀리 떨어진다')]),
 
     ("＋", "이웃보다 산포가 큰 정상 — 단, 월등히 크면 불량", "loose_target",
      "정상은 fleet 대비 <b>조금만</b> 넓게. 월등히 넓은 것은 context 불량이 맡고, 그쪽 하한을 "
@@ -258,7 +269,7 @@ footer { margin-top:56px; padding-top:18px; border-top:1px solid var(--line); fo
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--config", default="configs/datasets/dataset_v15.yaml")
+    parser.add_argument("--config", default="configs/datasets/dataset_v16.yaml")
     parser.add_argument("--out", default=None, help="기본 docs/dataset_review_<version>.html")
     parser.add_argument("--normal", type=int, default=160, help="표본 정상 장수")
     parser.add_argument("--abnormal", type=int, default=26, help="표본 불량 클래스당 장수")

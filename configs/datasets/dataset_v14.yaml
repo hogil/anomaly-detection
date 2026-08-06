@@ -1,13 +1,18 @@
-# v12 n12k — 현업 FP 대응. normal 12000 / sparse 0.35 / noise +40%.
-# 설정을 바꾸면 반드시 output 폴더명도 함께 바꿀 것 —
-# 폴더가 이미 있으면 생성을 건너뛰므로 옛 데이터로 학습된다.
-#   1) spike 2~3개도 불량      -> normal_variants.few_spike
-#   2) 가운데 avg 변동도 불량  -> 미해결 (렌더러 판정구간 표시 필요, LR flip 실험 후)
-#   3) 타 eqp 동반 불량        -> normal_variants.common_mode
-#   4) 계측 모수 적으면 불량   -> episode.sparse_chart (전 클래스 공통)
-#   + 이웃보다 산포 큰 정상    -> normal_variants.loose_target
-# 불량 강도는 하한을 올려 약한 불량이 경계를 normal 쪽으로 끌어당기지 않게 했다.
-# v11 대비 변경점만 보려면: diff dataset.yaml configs/datasets/dataset_v13.yaml
+# v14 — 현업 FP(정상을 불량으로 오검) 대응 데이터셋.
+#
+# 현업 오검 증상 -> 대응
+#   spike 2~3개도 불량        -> normal_variants.few_spike (개수로만 판별)
+#   가운데 avg 변동도 불량     -> normal_variants.mid_shift
+#   났다가 되돌아온 것도 불량   -> normal_variants.recovered
+#   우측 소량 변동도 불량      -> normal_variants.right_minor
+#   계측 모수 적으면 불량      -> episode.sparse_chart (전 클래스 공통)
+#   멤버 2대 중 하나가 불량    -> episode.small_fleet
+#   멤버 1개인데 불량         -> episode.single_legend (정상 전용)
+#   이웃보다 산포 크면 불량    -> normal_variants.loose_target
+#
+# 불량은 하한을 계속 올려 왔다 — 약한 불량이 경계를 normal 쪽으로 끌어당기기 때문.
+# 설정을 바꾸면 dataset.version 과 output 폴더명을 함께 올릴 것
+# (폴더가 이미 있으면 생성을 건너뛰므로 옛 데이터로 학습된다).
 
 seed: 42
 episode:
@@ -27,6 +32,16 @@ episode:
     max_count: 3
   # 계측 모수 축소. 클래스와 무관하게 적용한다 —
   # normal 에만 걸면 '점이 적다 = 정상' 이라는 새 지름길이 생긴다.
+  # 멤버 1개 — 비교 대상이 없으니 판정 불가 -> 정상. normal 에만 적용.
+  single_legend:
+    prob: 0.12
+  # 멤버 2~3대 chart. 기본 count_range 최소가 4라 이런 그림이 아예 없었다.
+  # "eqp 2대 중 한쪽 모수가 적으면 그쪽이 불량" 오검의 배경. 전 클래스 공통.
+  small_fleet:
+    prob: 0.18
+    count_range:
+    - 2
+    - 3
   sparse_chart:
     prob: 0.35
     # mode=member: 특정 설비(레전드) 하나만 성긴 경우 — 현업에서 흔하다
@@ -43,7 +58,7 @@ episode:
     min_points: 8
     # 불량 클래스: 불량 구간에 이만큼은 남겨야 한다. 점 3개짜리 불량은
     # 판정 근거가 못 되므로 keep 을 위로 올리거나 성기게 만들지 않는다.
-    min_defect_points: 8
+    min_defect_points: 10
     defect_region_ratio: 0.12
   member_variation:
     event_count_range:
@@ -192,18 +207,34 @@ context:
     std_range:
     - 2.0
     - 3.2
-    std_min_scale: 1.8
+    std_min_scale: 2.2
     min_mean_nsigma: 2.0
     min_std_nsigma: 2.0
 normal_variants:
   # 정상 클래스 하위 유형 비율. clean 만 있으면 v11 과 동일 동작.
   weights:
-    clean: 0.18
-    recovered: 0.26
-    mid_shift: 0.20
-    few_spike: 0.18
-    loose_target: 0.18
+    clean: 0.10
+    recovered: 0.18
+    mid_shift: 0.14
+    right_minor: 0.18
+    few_spike: 0.26
+    loose_target: 0.14
     common_mode: 0.0
+  right_minor:
+    # 우측 끝 소량 변동. 불량 mean_shift 하한(2.8σ) 아래로 유지해 경계를 만든다.
+    kind_weights:
+      shift: 0.6
+      spread: 0.4
+    start_ratio_range:
+    - 0.72
+    - 0.90
+    shift_sigma_range:
+    - 0.6
+    - 1.4
+    spread_scale_range:
+    - 1.2
+    - 1.7
+    min_points: 5
   recovered:
     # 중간에서 이상이 났다가 되돌아온 정상 (PM 후 회복 등).
     # 진폭은 진짜 불량과 같은 설정을 쓴다 — 약하게 넣으면 모델이 '작으면 정상'을
@@ -241,7 +272,9 @@ normal_variants:
     # -> 불량 spike(5.0~8.0σ)와 같은 스케일로 두고 개수(1~3 vs 8+)로만 가른다.
     count_range:
     - 1
-    - 3
+    - 5
+    right_prob: 0.6
+    right_start_ratio: 0.7
     magnitude_sigma_range:
     - 5.0
     - 10.0
@@ -275,47 +308,47 @@ defect:
   - 0.3
   mean_shift:
     shift_sigma_range:
-    - 1.9
-    - 2.8
+    - 2.4
+    - 3.4
     difficulty_scale_floor: 0.9
   standard_deviation:
     scale_range:
-    - 2.2
-    - 3.2
+    - 2.8
+    - 4.0
   spike:
     magnitude_sigma_range:
-    - 6.5
-    - 10.0
+    - 8.0
+    - 12.0
     difficulty_scale_floor: 0.9
     spike_ratio_range:
     - 0.12
     - 0.28
-    min_spikes: 14
-    min_magnitude_sigma: 6.5
+    min_spikes: 16
+    min_magnitude_sigma: 8.0
     region_ratio_range:
     - 0.12
     - 0.18
   drift:
     slope_sigma_range:
-    - 1.2
-    - 2.6
+    - 1.8
+    - 3.2
     region_ratio_range:
     - 0.2
     - 0.375
     visible_span_ratio_range:
     - 0.12
     - 0.18
-    min_max_drift_sigma: 2.4
-    visual_floor_sigma: 2.8
+    min_max_drift_sigma: 3.0
+    visual_floor_sigma: 3.4
     max_range_scale: 0.7
     drift_method: index
   enforcement:
-    mean_shift_floor_sigma: 2.2
-    mean_shift_self_floor_sigma: 1.8
-    std_floor_ratio: 2.8
-    spike_floor_sigma: 11.0
-    drift_floor_sigma: 2.6
-    context_floor_sigma: 2.6
+    mean_shift_floor_sigma: 2.8
+    mean_shift_self_floor_sigma: 2.2
+    std_floor_ratio: 3.4
+    spike_floor_sigma: 13.0
+    drift_floor_sigma: 3.2
+    context_floor_sigma: 3.2
     normal_max_right_dev_sigma: 0.5
     normal_max_right_shift_sigma: 0.5
     min_defect_points_range:
@@ -342,14 +375,14 @@ image:
   x_label: null
   y_label: Measurement Value (nm)
 dataset:
-  version: v13
+  version: v14
   samples_per_class:
     mean_shift: 1000
     standard_deviation: 1000
     spike: 1000
     drift: 1000
     context: 1000
-    normal: 12000
+    normal: 16000
   classes:
   - mean_shift
   - standard_deviation
@@ -364,6 +397,6 @@ dataset:
   test_difficulty_scale: 0.8
   val_difficulty_scale: 0.8
 output:
-  data_dir: data_v13
-  image_dir: images_v13
-  display_dir: display_v13
+  data_dir: data_v14
+  image_dir: images_v14
+  display_dir: display_v14

@@ -90,7 +90,23 @@ class ScenarioGenerator:
         # 3) Member 선택
         pool = self._ctx_pool[legend_axis]
         lo, hi = self._ctx_count[legend_axis]
-        count = self.rng.integers(lo, min(hi, len(pool)) + 1)
+        # 멤버가 2~3대뿐인 chart. 기본 count_range 는 최소 4라 이런 그림이 아예 없었고,
+        # "eqp 2대 중 한쪽 모수가 적으면 그쪽이 불량" 이라는 현업 오검의 배경이 된다.
+        small_fleet_tag = None
+        ep_cfg = self.cfg.get("episode") or {}
+        sl_cfg = ep_cfg.get("single_legend") or {}
+        sf_cfg = ep_cfg.get("small_fleet") or {}
+        # 멤버가 1개뿐이면 비교 대상이 없다 -> 판정 불가 -> 양호. normal 에만 적용한다.
+        if (cls == "normal" and float(sl_cfg.get("prob", 0.0)) > 0
+                and self.rng.random() < float(sl_cfg["prob"])):
+            count = 1
+            small_fleet_tag = "single_legend"
+        elif float(sf_cfg.get("prob", 0.0)) > 0 and self.rng.random() < float(sf_cfg["prob"]):
+            sf_lo, sf_hi = sf_cfg.get("count_range", [2, 3])
+            count = int(self.rng.integers(int(sf_lo), min(int(sf_hi), len(pool)) + 1))
+            small_fleet_tag = f"smallfleet{count}"
+        else:
+            count = self.rng.integers(lo, min(hi, len(pool)) + 1)
         members = [str(m) for m in self.rng.choice(pool, size=count, replace=False)]
 
         # 4) Highlighted member 선택
@@ -131,6 +147,8 @@ class ScenarioGenerator:
         # 7b) 계측 모수 축소. 클래스와 무관하게 적용한다 — normal 에만 걸면
         # "점이 적다 = 정상" 이라는 새 지름길이 생긴다.
         variants = []
+        if small_fleet_tag:
+            variants.append(small_fleet_tag)
         thinned = self._maybe_thin(context_data, members, target, cls)
         sparse_keep = None
         if thinned is not None:
@@ -149,6 +167,8 @@ class ScenarioGenerator:
                 defect_params = self._inject_few_spike_normal(context_data, target)
             elif subtype == "mid_shift":
                 defect_params = self._inject_mid_shift_normal(context_data, members, target)
+            elif subtype == "right_minor":
+                defect_params = self._inject_right_minor_normal(context_data, members, target)
             elif subtype == "recovered":
                 defect_params = self._inject_recovered_normal(context_data, members, target)
             elif subtype == "common_mode":
@@ -348,7 +368,12 @@ class ScenarioGenerator:
             if len(vi) > 2:
                 stds.append(float(np.nanstd(v[vi])))
                 means.append(float(np.nanmean(v[vi])))
-        within = max(float(np.mean(stds)), 1e-6) if stds else 0.05
+        if not stds:  # 멤버가 1개뿐이면 비교 대상이 없다 -> target 자기 산포를 쓴다
+            tv, tm = context_data[target]
+            tvi = np.where(tm)[0]
+            within = max(float(np.nanstd(tv[tvi])), 1e-6) if len(tvi) > 2 else 0.05
+            return within, within * 0.1
+        within = max(float(np.mean(stds)), 1e-6)
         between = max(float(np.std(means)), 1e-6) if len(means) > 1 else within * 0.1
         return within, between
 
@@ -460,14 +485,23 @@ class ScenarioGenerator:
         vi = np.where(mask)[0]
         if len(vi) < 5:
             return {}
-        lo, hi = cfg.get("count_range", [1, 4])
+        lo, hi = cfg.get("count_range", [1, 5])
         n = min(int(self.rng.integers(int(lo), int(hi) + 1)), len(vi))
-        idx = self.rng.choice(vi, size=n, replace=False)
+        # 우측에 몰아넣는 경우 — 불량 구간과 같은 위치라 '개수' 로만 갈리게 된다
+        right = False
+        pool = vi
+        if self.rng.random() < float(cfg.get("right_prob", 0.0)):
+            start = int(len(mask) * float(cfg.get("right_start_ratio", 0.7)))
+            cand = vi[vi >= start]
+            if len(cand) >= n:
+                pool, right = cand, True
+        idx = self.rng.choice(pool, size=n, replace=False)
         std = max(float(np.nanstd(values[vi])), 1e-6)
         sigmas = self.rng.uniform(*cfg.get("magnitude_sigma_range", [2.0, 3.0]), size=n)
         values[idx] += std * sigmas * self.rng.choice([-1, 1], size=n)
         context_data[target] = (values, mask)
         return {"normal_variant": "few_spike", "num_spikes": int(n),
+                "position": "right" if right else "any",
                 "avg_magnitude_sigma": round(float(np.mean(sigmas)), 3)}
 
     def _inject_common_mode_normal(self, context_data, members) -> dict:
@@ -522,6 +556,46 @@ class ScenarioGenerator:
         return {"normal_variant": "common_mode", "kind": "spike",
                 "num_spikes": int(n),
                 "avg_magnitude_sigma": round(float(np.mean(sigmas)), 3)}
+
+    def _inject_right_minor_normal(self, context_data, members, target) -> dict:
+        """우측 끝에서 **소량** 변동 — 불량 판정 하한 아래로 유지한다.
+
+        기존 normal 은 우측이 거의 평평하도록 강제(normal_max_right_*_sigma 0.5)돼
+        "우측이 조금이라도 움직이면 불량" 이 돼 버렸다. 불량 floor 와 그 0.5 사이의
+        빈 구간을 정상으로 채워 경계를 만든다.
+        """
+        cfg = self._normal_variant_cfg().get("right_minor") or {}
+        values, mask = context_data[target]
+        vi = np.where(mask)[0]
+        if len(vi) < 12:
+            return {}
+        ratio = float(self.rng.uniform(*cfg.get("start_ratio_range", [0.72, 0.90])))
+        start = int(len(mask) * ratio)
+        right = vi[vi >= start]
+        left = vi[vi < start]
+        if len(right) < int(cfg.get("min_points", 5)) or len(left) < 5:
+            return {}
+
+        kinds = cfg.get("kind_weights") or {"shift": 0.6, "spread": 0.4}
+        names = [k for k, w in kinds.items() if float(w) > 0] or ["shift"]
+        p = np.array([float(kinds[k]) for k in names], dtype=float)
+        kind = str(self.rng.choice(names, p=p / p.sum()))
+        within, _between = self._fleet_spread(context_data, members, target)
+
+        if kind == "shift":
+            sigma = float(self.rng.uniform(*cfg.get("shift_sigma_range", [0.6, 1.4])))
+            sign = 1 if self.rng.random() < 0.5 else -1
+            values[right] += within * sigma * sign
+            detail = {"kind": "shift", "shift_sigma": round(sigma, 3)}
+        else:
+            scale = float(self.rng.uniform(*cfg.get("spread_scale_range", [1.2, 1.7])))
+            mean = float(np.nanmean(values[right]))
+            values[right] = mean + (values[right] - mean) * scale
+            detail = {"kind": "spread", "spread_scale": round(scale, 3)}
+
+        context_data[target] = (values, mask)
+        return {"normal_variant": "right_minor", "start_ratio": round(ratio, 3),
+                "points_right": int(len(right)), **detail}
 
     def _inject_recovered_normal(self, context_data, members, target) -> dict:
         """중간에서 이상이 났다가 **되돌아온** 정상.
@@ -1027,7 +1101,9 @@ class ScenarioGenerator:
             # 추가: 가장 가까운 fleet 멤버보다 fleet_within_std 이상 떨어져야 함
             _closest_fleet = min(_fm_means, key=lambda m: abs(m - post_target_mean))
             _gap_from_closest = abs(post_target_mean - _closest_fleet)
-            _fleet_within_avg = float(np.mean([ms_val for mid, ms_val in zip(members, fleet_member_stds) if mid != target])) if fleet_member_stds else 0.01
+            # fleet_member_stds 는 위에서 이미 target 을 뺀 목록이다. members 와 zip 하면
+            # 길이가 어긋나 엉뚱한 멤버가 걸러졌고, 멤버가 2개일 때는 빈 목록이 됐다.
+            _fleet_within_avg = float(np.mean(fleet_member_stds)) if fleet_member_stds else 0.01
             _min_gap = _fleet_within_avg * float(dev_cfg.get("mean_min_within_ratio", 1.5))
 
             need_boost = False

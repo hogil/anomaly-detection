@@ -156,7 +156,10 @@ class ScenarioGenerator:
         variants = []
         if small_fleet_tag:
             variants.append(small_fleet_tag)
-        late = self._maybe_late_start(context_data, members, target, cls)
+        stopped = self._maybe_early_stop(context_data, target, cls)
+        if stopped:
+            variants.append(stopped)
+        late = None if stopped else self._maybe_late_start(context_data, members, target, cls)
         if late:
             variants.append(late)
         thinned = self._maybe_thin(context_data, members, target, cls)
@@ -568,6 +571,30 @@ class ScenarioGenerator:
         return {"normal_variant": "common_mode", "kind": "spike",
                 "num_spikes": int(n),
                 "avg_magnitude_sigma": round(float(np.mean(sigmas)), 3)}
+
+    def _maybe_early_stop(self, context_data, target, cls) -> str | None:
+        """target 이 **왼쪽에만 있고 최근(우측)에는 없는** chart. normal 전용.
+
+        최근에 안 돌린 설비. 불량은 전부 우측 끝 구간에 들어가므로 그 구간에 점이
+        아예 없으면 판정 대상 자체가 아니다 — context(avg/std)처럼 전 구간을 보는
+        것도 마찬가지로 "최근 데이터가 없으면 판정하지 않는다" 로 둔다.
+        fleet 은 전 구간 유지해서 "혼자만 최근에 안 돌았다" 가 드러나게 한다.
+        """
+        if cls != "normal":
+            return None
+        cfg = (self.cfg.get("episode") or {}).get("early_stop") or {}
+        prob = float(cfg.get("prob", 0.0))
+        if prob <= 0 or self.rng.random() >= prob:
+            return None
+        values, mask = context_data[target]
+        original = mask.copy()
+        head = float(self.rng.uniform(*cfg.get("head_ratio_range", [0.35, 0.80])))
+        mask[int(len(mask) * head):] = False
+        if int(mask.sum()) < int(cfg.get("min_points", 5)):
+            context_data[target] = (values, original)
+            return None
+        context_data[target] = (values, mask)
+        return f"early_stop{head:.2f}"
 
     def _maybe_late_start(self, context_data, members, target, cls) -> str | None:
         """**우측 끝 구간에서 뒤늦게 시작**한 chart.

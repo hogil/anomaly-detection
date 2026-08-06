@@ -128,13 +128,14 @@ class ScenarioGenerator:
                 values[valid] += (tgt - cur)
                 context_data[mid] = (values, mask)
 
-        # 7b) Chart 수준 변형: 계측 모수 축소.
-        # 클래스와 무관하게 같은 확률로 적용한다 — normal 에만 걸면
-        # "점이 적다 = 정상" 이라는 새 지름길이 생겨 sparse 차트의 진짜 불량을 놓친다.
+        # 7b) 계측 모수 축소. 클래스와 무관하게 적용한다 — normal 에만 걸면
+        # "점이 적다 = 정상" 이라는 새 지름길이 생긴다.
         variants = []
-        sparse_keep = self._maybe_thin_chart(context_data)
-        if sparse_keep is not None:
-            variants.append(f"sparse{sparse_keep:.2f}")
+        thinned = self._maybe_thin(context_data, members, target, cls)
+        sparse_keep = None
+        if thinned is not None:
+            tag, sparse_keep = thinned
+            variants.append(tag)
 
         # 8) 불량 주입
         defect_start_idx = -1
@@ -146,10 +147,12 @@ class ScenarioGenerator:
             self._normalize_normal_target(context_data, members, target)
             if subtype == "few_spike":
                 defect_params = self._inject_few_spike_normal(context_data, target)
+            elif subtype == "mid_shift":
+                defect_params = self._inject_mid_shift_normal(context_data, members, target)
             elif subtype == "common_mode":
                 defect_params = self._inject_common_mode_normal(context_data, members)
             elif subtype == "loose_target":
-                defect_params = self._apply_loose_target(context_data, target)
+                defect_params = self._apply_loose_target(context_data, members, target)
         elif cls == "context":
             defect_params = self._inject_context(context_data, members, target)
             # 사후 검증: context는 전체 평균이 fleet 평균에서 floor 이상 이격
@@ -332,15 +335,63 @@ class ScenarioGenerator:
         p = np.array([float(weights[n]) for n in names], dtype=float)
         return str(self.rng.choice(names, p=p / p.sum()))
 
-    def _maybe_thin_chart(self, context_data) -> float | None:
-        """계측 모수가 적은 chart 를 확률적으로 만든다 (전 멤버 동시). keep 비율 반환."""
+    def _fleet_spread(self, context_data, members, target) -> tuple[float, float]:
+        """(within, between) — 멤버 내부 noise 평균, 멤버 평균들의 산포."""
+        stds, means = [], []
+        for mid in members:
+            if mid == target:
+                continue
+            v, m = context_data[mid]
+            vi = np.where(m)[0]
+            if len(vi) > 2:
+                stds.append(float(np.nanstd(v[vi])))
+                means.append(float(np.nanmean(v[vi])))
+        within = max(float(np.mean(stds)), 1e-6) if stds else 0.05
+        between = max(float(np.std(means)), 1e-6) if len(means) > 1 else within * 0.1
+        return within, between
+
+    @staticmethod
+    def _defect_region_points(mask, region: float) -> int:
+        """불량 구간(우측 region 비율)에 남아 있는 유효 점 수."""
+        vi = np.where(mask)[0]
+        return int((vi >= int(len(mask) * (1 - region))).sum())
+
+    def _maybe_thin(self, context_data, members, target, cls) -> tuple[str, float] | None:
+        """계측 모수 축소. mode=chart(전 멤버) / member(일부 멤버만).
+
+        현업에는 특정 설비 하나만 계측이 성긴 경우가 흔한데 기존에는 그런 그림이
+        없었다. 불량 클래스에서는 불량 구간 점 수를 먼저 확인해 지나치게 깎이지
+        않게 한다.
+        """
         cfg = (self.cfg.get("episode") or {}).get("sparse_chart") or {}
         prob = float(cfg.get("prob", 0.0))
         if prob <= 0 or self.rng.random() >= prob:
             return None
-        keep = float(self.rng.uniform(*cfg.get("keep_ratio_range", [0.12, 0.35])))
-        min_points = int(cfg.get("min_points", 10))
-        for mid, (values, mask) in context_data.items():
+        keep = float(self.rng.uniform(*cfg.get("keep_ratio_range", [0.08, 0.30])))
+
+        modes = cfg.get("mode_weights") or {"chart": 0.5, "member": 0.5}
+        names = [m for m, w in modes.items() if float(w) > 0] or ["chart"]
+        p = np.array([float(modes[m]) for m in names], dtype=float)
+        mode = str(self.rng.choice(names, p=p / p.sum()))
+
+        if mode == "member":
+            frac = float(self.rng.uniform(*cfg.get("member_frac_range", [0.2, 0.5])))
+            n = max(1, int(round(len(members) * frac)))
+            others = [m for m in members if m != target]
+            self.rng.shuffle(others)
+            if self.rng.random() < float(cfg.get("target_prob", 0.6)):
+                chosen = [target] + others[:n - 1]
+            else:
+                chosen = others[:n]
+        else:
+            chosen = list(members)
+
+        guard = cls != "normal" and target in chosen
+        original = context_data[target][1].copy() if guard else None
+
+        min_points = int(cfg.get("min_points", 8))
+        for mid in chosen:
+            values, mask = context_data[mid]
             vi = np.where(mask)[0]
             n_keep = max(min_points, int(round(len(vi) * keep)))
             if n_keep >= len(vi):
@@ -348,7 +399,45 @@ class ScenarioGenerator:
             drop = self.rng.choice(vi, size=len(vi) - n_keep, replace=False)
             mask[drop] = False
             context_data[mid] = (values, mask)
-        return keep
+
+        # 불량 구간에 점이 너무 적게 남으면 target 만 원래대로 되돌린다.
+        # 점 3개짜리 불량은 판정 근거가 못 되므로 그런 표본은 만들지 않는다.
+        if guard:
+            region = float(cfg.get("defect_region_ratio", 0.12))
+            if self._defect_region_points(context_data[target][1], region) < int(
+                    cfg.get("min_defect_points", 8)):
+                context_data[target] = (context_data[target][0], original)
+                if mode == "member" and len(chosen) == 1:
+                    return None
+                return f"sparse_{mode}{keep:.2f}_fleetonly", keep
+        return f"sparse_{mode}{keep:.2f}", keep
+
+    def _inject_mid_shift_normal(self, context_data, members, target) -> dict:
+        """target 한 멤버만 시계열 중간에서 레벨이 바뀌고 그대로 유지된다.
+
+        불량 mean_shift 는 우측 끝 구간(14~30%)에만 들어간다. 여기서는 훨씬 앞에서
+        바뀌므로 "바뀐 뒤 안정 구간이 얼마나 긴가" 가 구분 신호가 된다 — 절대 위치가
+        아니라 폭 특징이라 global average pooling 구조에서도 상대적으로 배우기 쉽다.
+        """
+        cfg = self._normal_variant_cfg().get("mid_shift") or {}
+        values, mask = context_data[target]
+        vi = np.where(mask)[0]
+        if len(vi) < 12:
+            return {}
+        ratio = float(self.rng.uniform(*cfg.get("start_ratio_range", [0.25, 0.55])))
+        start = int(len(mask) * ratio)
+        after, before = vi[vi >= start], vi[vi < start]
+        min_side = int(cfg.get("min_side_points", 5))
+        if len(after) < min_side or len(before) < min_side:
+            return {}
+        within, _between = self._fleet_spread(context_data, members, target)
+        sigma = float(self.rng.uniform(*cfg.get("shift_sigma_range", [1.0, 2.5])))
+        sign = 1 if self.rng.random() < 0.5 else -1
+        values[after] += within * sigma * sign
+        context_data[target] = (values, mask)
+        return {"normal_variant": "mid_shift", "start_ratio": round(ratio, 3),
+                "shift_sigma": round(sigma, 3),
+                "points_after": int(len(after)), "points_before": int(len(before))}
 
     def _inject_few_spike_normal(self, context_data, target) -> dict:
         """target 에 1~4개짜리 약한 튐.
@@ -425,24 +514,35 @@ class ScenarioGenerator:
                 "num_spikes": int(n),
                 "avg_magnitude_sigma": round(float(np.mean(sigmas)), 3)}
 
-    def _apply_loose_target(self, context_data, target) -> dict:
-        """target 산포만 전 구간 균일하게 키운다 (평균 유지).
+    def _apply_loose_target(self, context_data, members, target) -> dict:
+        """target 산포를 전 구간 균일하게 **조금만** 키운다 (평균 유지).
 
-        기존 normal 은 target_std <= fleet_within_std * 1.2 로 강제돼
-        "이웃보다 산포가 큰 정상" 이 한 장도 없었다. std 불량은
-        '우측 구간이 자기 좌측보다 넓다'(enforcement.std_floor_ratio) 로
-        판별되므로 전 구간 균일한 산포와는 겹치지 않는다.
+        이웃보다 월등히 넓은 것은 context 불량이 맡는다. context 는
+        target_std >= fleet_visual_spread * std_min_scale(1.25) 를 하한으로 쓰므로,
+        여기서는 fleet_visual_spread * max_visual_ratio(<1) 로 상한을 걸어 겹침을
+        원천 차단한다. std 불량과는 또 다르게, 이쪽은 좌우가 균일해서
+        '우측이 자기 좌측보다 넓다' 판별에도 걸리지 않는다.
         """
         cfg = self._normal_variant_cfg().get("loose_target") or {}
-        scale = float(self.rng.uniform(*cfg.get("std_scale_range", [1.8, 3.0])))
         values, mask = context_data[target]
         vi = np.where(mask)[0]
-        if len(vi) == 0:
+        if len(vi) < 5:
             return {}
+        scale = float(self.rng.uniform(*cfg.get("std_scale_range", [1.15, 1.6])))
+        within, between = self._fleet_spread(context_data, members, target)
+        cap = (within + between) * float(cfg.get("max_visual_ratio", 1.0))
+
+        cur = max(float(np.nanstd(values[vi])), 1e-6)
+        desired = min(cur * scale, cap)
+        if desired <= cur * 1.02:
+            return {"normal_variant": "loose_target", "std_scale": 1.0, "capped": True}
         mean = float(np.nanmean(values[vi]))
-        values[vi] = mean + (values[vi] - mean) * scale
+        values[vi] = mean + (values[vi] - mean) * (desired / cur)
         context_data[target] = (values, mask)
-        return {"normal_variant": "loose_target", "std_scale": round(scale, 3)}
+        return {"normal_variant": "loose_target",
+                "std_scale": round(desired / cur, 3),
+                "vs_fleet_within": round(desired / within, 3),
+                "capped": bool(desired < cur * scale * 0.999)}
 
     def _normalize_normal_target(self, context_data, members, target):
         """Normal 클래스에서 target이 fleet 대비 이상해 보이지 않도록 강제 보정.

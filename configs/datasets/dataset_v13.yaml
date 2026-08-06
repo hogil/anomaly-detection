@@ -7,7 +7,7 @@
 #   4) 계측 모수 적으면 불량   -> episode.sparse_chart (전 클래스 공통)
 #   + 이웃보다 산포 큰 정상    -> normal_variants.loose_target
 # 불량 강도는 하한을 올려 약한 불량이 경계를 normal 쪽으로 끌어당기지 않게 했다.
-# v11 대비 변경점만 보려면: diff dataset.yaml configs/datasets/dataset_v12_n12k.yaml
+# v11 대비 변경점만 보려면: diff dataset.yaml configs/datasets/dataset_v13.yaml
 
 seed: 42
 episode:
@@ -342,7 +342,7 @@ image:
   x_label: null
   y_label: Measurement Value (nm)
 dataset:
-  version: v12_n12k
+  version: v13
   samples_per_class:
     mean_shift: 1000
     standard_deviation: 1000
@@ -364,6 +364,6 @@ dataset:
   test_difficulty_scale: 0.8
   val_difficulty_scale: 0.8
 output:
-  data_dir: data_v12_n12k
-  image_dir: images_v12_n12k
-  display_dir: display_v12_n12k
+  data_dir: data_v13
+  image_dir: images_v13
+  display_dir: display_v13

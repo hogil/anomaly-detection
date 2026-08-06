@@ -1,4 +1,8 @@
-# v14 — 현업 FP(정상을 불량으로 오검) 대응 데이터셋.
+# v15 — 현업 FP 대응 데이터셋. v14 대비 mean_shift(avg 변동) 하향:
+#   2.4~3.4σ -> 1.8~2.8σ, floor 2.8 -> 2.1.
+#   너무 크게 잡으면 중간 강도의 진짜 avg 불량을 정상으로 흘린다(FN).
+#   정상 right_minor 상한 1.4σ 와는 그대로 분리된다.
+# v15 — 현업 FP(정상을 불량으로 오검) 대응 데이터셋.
 #
 # 현업 오검 증상 -> 대응
 #   spike 2~3개도 불량        -> normal_variants.few_spike (개수로만 판별)
@@ -308,8 +312,8 @@ defect:
   - 0.3
   mean_shift:
     shift_sigma_range:
-    - 2.4
-    - 3.4
+    - 1.8
+    - 2.8
     difficulty_scale_floor: 0.9
   standard_deviation:
     scale_range:
@@ -343,8 +347,8 @@ defect:
     max_range_scale: 0.7
     drift_method: index
   enforcement:
-    mean_shift_floor_sigma: 2.8
-    mean_shift_self_floor_sigma: 2.2
+    mean_shift_floor_sigma: 2.1
+    mean_shift_self_floor_sigma: 1.7
     std_floor_ratio: 3.4
     spike_floor_sigma: 13.0
     drift_floor_sigma: 3.2
@@ -362,11 +366,13 @@ image:
   outlier_sigma: 5
   baseline_line: true
   overlay:
-    fleet_color: '#B0B0B0'
-    fleet_alpha: 0.4
+    # 학습 이미지 전용 (display 는 자체 색상 상수를 쓴다).
+    # target = 빨강, fleet = 아주 연한 회색.
+    fleet_color: '#DEDEDE'
+    fleet_alpha: 0.7
     fleet_marker_size: 14
-    target_color: '#4878CF'
-    target_alpha: 0.75
+    target_color: '#D62728'
+    target_alpha: 0.85
     target_marker_size: 16
   title_columns:
   - device
@@ -375,7 +381,7 @@ image:
   x_label: null
   y_label: Measurement Value (nm)
 dataset:
-  version: v14
+  version: v15
   samples_per_class:
     mean_shift: 1000
     standard_deviation: 1000
@@ -397,6 +403,6 @@ dataset:
   test_difficulty_scale: 0.8
   val_difficulty_scale: 0.8
 output:
-  data_dir: data_v14
-  image_dir: images_v14
-  display_dir: display_v14
+  data_dir: data_v15
+  image_dir: images_v15
+  display_dir: display_v15

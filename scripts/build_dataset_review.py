@@ -4,7 +4,7 @@
 생성한 데이터가 의도대로인지 눈으로 확인하는 용도. 표본을 새로 뽑아 렌더하고,
 이미지를 base64 로 박아 **파일 하나로 완결**되게 만든다 (외부 요청 0, 오프라인 열람 가능).
 
-  python scripts/build_dataset_review.py --config configs/datasets/dataset_v14.yaml
+  python scripts/build_dataset_review.py --config configs/datasets/dataset_v15.yaml
 
 기본 출력은 docs/dataset_review_<version>.html. 사내망처럼 외부가 막힌 곳에서는
 repo 를 pull 받아 이 파일을 브라우저로 바로 열면 된다.
@@ -114,16 +114,26 @@ def sample_dataset(cfg_path: Path, work: Path, n_normal: int, n_abn: int,
 
     snap_dir = ROOT / "configs" / "datasets"
     before = set(snap_dir.glob("*.yaml")) if snap_dir.is_dir() else set()
+    # generate_data.py 는 latest.yaml 포인터를 갱신한다. 표본 생성으로 그게 바뀌면
+    # "마지막에 만든 데이터셋" 이 표본용 config 를 가리키게 되므로 원래대로 되돌린다.
+    latest = snap_dir / "latest.yaml"
+    latest_backup = latest.read_bytes() if latest.exists() else None
+
     for script in ("generate_data.py", "generate_images.py"):
         print(f"  [review] {script}")
         rc = subprocess.run([python, script, "--config", str(tmp_cfg),
                              "--workers", str(workers)], cwd=ROOT).returncode
         if rc != 0:
             raise SystemExit(f"{script} 실패 (rc={rc})")
-    # generate_data.py 가 남긴 스냅샷 yaml 정리 (표본용이라 보존 가치 없음)
+
+    # 표본용 스냅샷 yaml 정리 (보존 가치 없음)
     for path in (set(snap_dir.glob("*.yaml")) - before):
         if path.stem.startswith(f"dataset_{version}"):
             path.unlink(missing_ok=True)
+    if latest_backup is not None:
+        latest.write_bytes(latest_backup)
+    elif latest.exists():
+        latest.unlink()
     return work
 
 
@@ -248,7 +258,7 @@ footer { margin-top:56px; padding-top:18px; border-top:1px solid var(--line); fo
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--config", default="configs/datasets/dataset_v14.yaml")
+    parser.add_argument("--config", default="configs/datasets/dataset_v15.yaml")
     parser.add_argument("--out", default=None, help="기본 docs/dataset_review_<version>.html")
     parser.add_argument("--normal", type=int, default=160, help="표본 정상 장수")
     parser.add_argument("--abnormal", type=int, default=26, help="표본 불량 클래스당 장수")

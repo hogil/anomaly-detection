@@ -4,7 +4,7 @@
 생성한 데이터가 의도대로인지 눈으로 확인하는 용도. 표본을 새로 뽑아 렌더하고,
 이미지를 base64 로 박아 **파일 하나로 완결**되게 만든다 (외부 요청 0, 오프라인 열람 가능).
 
-  python scripts/build_dataset_review.py --config configs/datasets/dataset_v16.yaml
+  python scripts/build_dataset_review.py --config configs/datasets/dataset_v18.yaml
 
 기본 출력은 docs/dataset_review_<version>.html. 사내망처럼 외부가 막힌 곳에서는
 repo 를 pull 받아 이 파일을 브라우저로 바로 열면 된다.
@@ -70,6 +70,18 @@ SECTIONS = [
       ("class", "spike", 2,
        lambda d: f'<span class="hl-abn">불량</span> — 튄 점 <b>{d.get("num_spikes")}개</b>, '
                  f'우측 구간 집중')]),
+
+    ("⏱", "그 설비만 최근에 시작한 건 양호", "late_start",
+     "2달치 데이터인데 특정 설비만 <b>마지막 며칠</b>만 진행된 경우. target 의 점이 전부 "
+     "불량 구간(우측)에 몰려 있어 오검이 많이 났다. fleet 은 전 구간 그대로 두고 target 만 "
+     "우측 끝 3~25% 에서 시작하게 만든다. 불량 클래스에서는 꼬리에 점이 10개 미만이면 "
+     "되돌린다 — <b>점 몇 개로는 판정하지 않는다.</b>",
+     [("variant", "late_start_target", 2,
+       lambda d: '<b>그 설비만</b> 늦게 시작 — 다른 eqp 는 계속 진행'),
+      ("variant", "late_start_all", 2,
+       lambda d: '<b>다 같이</b> 늦게 시작 — chart 전체가 우측에만'),
+      ("abn_late", "", 2, lambda d: '<span class="hl-abn">불량</span> — 꼬리에 점이 '
+                                    '충분히 있을 때만 불량으로 만든다')]),
 
     ("④", "계측 모수가 작으면 불량으로만 나옴", "sparse_chart",
      "<b>차트 전체</b>가 성긴 경우와 <b>특정 설비 하나만</b> 성긴 경우를 모두 만든다. 클래스와 "
@@ -164,6 +176,8 @@ def build_cards(df: pd.DataFrame, work: Path, specs) -> str:
             mask = df["dp"].map(lambda d: d.get("normal_variant") == key)
         elif kind == "variant":
             mask = df["variant"].str.contains(key) & (df["class"] == "normal")
+        elif kind == "abn_late":
+            mask = (df["class"] != "normal") & df["variant"].str.contains("late_start")
         elif kind == "abn_sparse":
             mask = (df["class"] != "normal") & df["sparse"] & ~df["variant"].str.contains("fleetonly")
         elif kind == "clean":
@@ -269,7 +283,7 @@ footer { margin-top:56px; padding-top:18px; border-top:1px solid var(--line); fo
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--config", default="configs/datasets/dataset_v16.yaml")
+    parser.add_argument("--config", default="configs/datasets/dataset_v18.yaml")
     parser.add_argument("--out", default=None, help="기본 docs/dataset_review_<version>.html")
     parser.add_argument("--normal", type=int, default=160, help="표본 정상 장수")
     parser.add_argument("--abnormal", type=int, default=26, help="표본 불량 클래스당 장수")

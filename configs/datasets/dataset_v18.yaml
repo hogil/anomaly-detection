@@ -1,4 +1,11 @@
-# v16 — 현업 FP 대응. v15 대비 context 완화:
+# v18 — 현업 FP 대응. 현재 최대 오검 2건에 커버리지를 몰았다:
+#   (1) 우측 끝에만 데이터가 있는 설비  -> episode.late_start  prob 0.35
+#   (2) 전체 설비가 2대뿐인 chart       -> episode.small_fleet prob 0.42 (2대 75%)
+#   둘 다 클래스와 무관하게 적용한다 — 정상에만 걸면 새 지름길이 생긴다.
+# ---
+# v16 대비 late_start(우측 끝에서 뒤늦게 시작) 추가.
+# ---
+# v15 대비 context 완화:
 #   context 불량 하한 상향 (avg 가 너무 민감했다) + normal 에 context_like 신설.
 #   정상은 fleet 평균 0.6σ 이내로 강제되고 context 는 1.8σ 이상이라
 #   그 사이가 비어 '조금만 치우쳐도 context 불량' 이 됐다.
@@ -7,7 +14,7 @@
 #   2.4~3.4σ -> 1.8~2.8σ, floor 2.8 -> 2.1.
 #   너무 크게 잡으면 중간 강도의 진짜 avg 불량을 정상으로 흘린다(FN).
 #   정상 right_minor 상한 1.4σ 와는 그대로 분리된다.
-# v16 — 현업 FP(정상을 불량으로 오검) 대응 데이터셋.
+# v18 — 현업 FP(정상을 불량으로 오검) 대응 데이터셋.
 #
 # 현업 오검 증상 -> 대응
 #   spike 2~3개도 불량        -> normal_variants.few_spike (개수로만 판별)
@@ -41,6 +48,20 @@ episode:
     max_count: 3
   # 계측 모수 축소. 클래스와 무관하게 적용한다 —
   # normal 에만 걸면 '점이 적다 = 정상' 이라는 새 지름길이 생긴다.
+  # 우측 끝에서 뒤늦게 시작한 chart. 2달치 중 최근 며칠만 진행 ->
+  # 남은 점이 전부 불량 구간에 몰려 오검. scope 로 두 상황을 다 만든다.
+  # 불량 클래스는 꼬리 점이 min_defect_points 미만이면 되돌린다.
+  late_start:
+    prob: 0.35
+    # target 만 늦게 시작(다른 eqp 는 계속 진행) / 다 같이 늦게 시작 둘 다 만든다
+    scope_weights:
+      target: 0.55
+      all: 0.45
+    tail_ratio_range:
+    - 0.03
+    - 0.25
+    min_points: 3
+    min_defect_points: 10
   # 멤버 1개 — 비교 대상이 없으니 판정 불가 -> 정상. normal 에만 적용.
   single_legend:
     prob: 0.12
@@ -49,10 +70,10 @@ episode:
   small_fleet:
     # 현업에서 eqp 2대짜리가 계속 불량으로 나온다 -> 2대 비중을 높인다.
     # 멤버가 2대면 fleet 이 '밴드' 가 아니라 기준선 1개라 작은 차이도 크게 보인다.
-    prob: 0.30
+    prob: 0.42
     count_weights:
-      2: 0.65
-      3: 0.35
+      2: 0.75
+      3: 0.25
   sparse_chart:
     prob: 0.35
     # mode=member: 특정 설비(레전드) 하나만 성긴 경우 — 현업에서 흔하다
@@ -396,7 +417,7 @@ image:
   x_label: null
   y_label: Measurement Value (nm)
 dataset:
-  version: v16
+  version: v18
   samples_per_class:
     mean_shift: 1000
     standard_deviation: 1000
@@ -418,6 +439,6 @@ dataset:
   test_difficulty_scale: 0.8
   val_difficulty_scale: 0.8
 output:
-  data_dir: data_v16
-  image_dir: images_v16
-  display_dir: display_v16
+  data_dir: data_v18
+  image_dir: images_v18
+  display_dir: display_v18

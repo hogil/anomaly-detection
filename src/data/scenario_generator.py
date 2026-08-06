@@ -156,6 +156,9 @@ class ScenarioGenerator:
         variants = []
         if small_fleet_tag:
             variants.append(small_fleet_tag)
+        late = self._maybe_late_start(context_data, members, target, cls)
+        if late:
+            variants.append(late)
         thinned = self._maybe_thin(context_data, members, target, cls)
         sparse_keep = None
         if thinned is not None:
@@ -565,6 +568,45 @@ class ScenarioGenerator:
         return {"normal_variant": "common_mode", "kind": "spike",
                 "num_spikes": int(n),
                 "avg_magnitude_sigma": round(float(np.mean(sigmas)), 3)}
+
+    def _maybe_late_start(self, context_data, members, target, cls) -> str | None:
+        """**우측 끝 구간에서 뒤늦게 시작**한 chart.
+
+        2달치 데이터인데 최근 며칠만 진행된 경우. 남은 점이 전부 불량 구간에 몰려
+        있어 오검이 많이 났다. 두 가지를 다 만든다:
+          scope=target : 그 설비만 늦게 시작, 다른 eqp 는 계속 진행 (fleet 전 구간)
+          scope=all    : 다들 안 돌다가 같이 최근에 시작 (chart 전체가 우측에만)
+
+        불량 클래스에서는 꼬리에 점이 min_defect_points 미만이면 되돌린다 —
+        점 몇 개로는 판정하지 않는다.
+        """
+        cfg = (self.cfg.get("episode") or {}).get("late_start") or {}
+        prob = float(cfg.get("prob", 0.0))
+        if prob <= 0 or self.rng.random() >= prob:
+            return None
+        scopes = cfg.get("scope_weights") or {"target": 0.5, "all": 0.5}
+        names = [k for k, w in scopes.items() if float(w) > 0] or ["target"]
+        p = np.array([float(scopes[k]) for k in names], dtype=float)
+        scope = str(self.rng.choice(names, p=p / p.sum()))
+
+        tail = float(self.rng.uniform(*cfg.get("tail_ratio_range", [0.03, 0.25])))
+        chosen = list(members) if scope == "all" else [target]
+        original = {mid: context_data[mid][1].copy() for mid in chosen}
+        start = None
+        for mid in chosen:
+            values, mask = context_data[mid]
+            start = int(len(mask) * (1.0 - tail))
+            mask[:start] = False
+            context_data[mid] = (values, mask)
+
+        kept = int(context_data[target][1].sum())
+        too_few = kept < int(cfg.get("min_points", 3)) or (
+            cls != "normal" and kept < int(cfg.get("min_defect_points", 10)))
+        if too_few:
+            for mid, m in original.items():
+                context_data[mid] = (context_data[mid][0], m)
+            return None
+        return f"late_start_{scope}{tail:.2f}"
 
     def _inject_right_minor_normal(self, context_data, members, target) -> dict:
         """우측 끝에서 **소량** 변동 — 불량 판정 하한 아래로 유지한다.

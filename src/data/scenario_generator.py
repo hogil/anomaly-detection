@@ -174,7 +174,8 @@ class ScenarioGenerator:
         defect_params = {}
 
         if cls == "normal":
-            subtype = self._pick_normal_subtype()
+            subtype = self._pick_normal_subtype(
+                n_points=int(context_data[target][1].sum()))
             variants.append(subtype)
             self._normalize_normal_target(context_data, members, target)
             if subtype == "few_spike":
@@ -367,11 +368,25 @@ class ScenarioGenerator:
     def _normal_variant_cfg(self) -> dict:
         return self.cfg.get("normal_variants") or {}
 
-    def _pick_normal_subtype(self) -> str:
-        weights = self._normal_variant_cfg().get("weights") or {}
+    def _pick_normal_subtype(self, n_points: int | None = None) -> str:
+        """정상 하위 유형 추첨.
+
+        모양 기반 유형(mid_shift, recovered, right_minor …)은 그 모양이 보일 만큼
+        점이 있어야 의미가 있다. 점 15개짜리 차트에 mid_shift 를 넣으면 "변화 후
+        안정 구간이 길다" 는 신호가 6점으로 표현돼 학습에 쓸 수 없는 그림이 된다.
+        min_points 미달인 유형은 후보에서 빼고 나머지로 다시 정규화한다.
+        """
+        cfg = self._normal_variant_cfg()
+        weights = cfg.get("weights") or {}
         names = [n for n, w in weights.items() if float(w) > 0]
         if not names:
             return "clean"
+        if n_points is not None:
+            allowed = [n for n in names
+                       if n_points >= int((cfg.get(n) or {}).get("min_points_for_shape", 0))]
+            names = allowed or ["clean"]
+            if names == ["clean"]:
+                return "clean"
         p = np.array([float(weights[n]) for n in names], dtype=float)
         return str(self.rng.choice(names, p=p / p.sum()))
 

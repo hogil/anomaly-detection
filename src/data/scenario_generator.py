@@ -203,7 +203,9 @@ class ScenarioGenerator:
             if sparse_keep is not None:
                 # 성긴 chart 는 불량 구간도 같이 성기다. 여기서 되채우면
                 # "우측만 촘촘하다" 는 인공 단서가 생겨 오히려 지름길이 된다.
-                MIN_DEFECT_POINTS = max(5, int(MIN_DEFECT_POINTS * sparse_keep))
+                # 하한 8 — 정상 few_spike 가 최대 6개라 그 아래로 내려가면
+                # spike 불량 개수가 정상 범위와 겹쳐 라벨이 모호해진다.
+                MIN_DEFECT_POINTS = max(8, int(MIN_DEFECT_POINTS * sparse_keep))
 
             values, mask = context_data[target]
             total_len = len(mask)
@@ -644,6 +646,13 @@ class ScenarioGenerator:
         # mean_shift / standard_deviation / drift 는 '우측 구간 vs 자기 좌측' 으로
         # 정의된다. 늦게 시작해서 좌측 baseline 이 없으면 불량 자체가 성립하지 않는다
         # (그냥 다른 레벨에서 시작한 것과 구분 불가) -> 되돌린다.
+        # 꼬리 전체 점 수가 충분해도 그게 넓게 퍼져 있으면 실제 불량 구간(우측 12%)에는
+        # 몇 개 안 남는다. spike 개수가 정상 범위까지 내려가 라벨이 겹치므로 여기도 본다.
+        if not too_few and cls != "normal":
+            region = float(cfg.get("defect_region_ratio", 0.12))
+            if self._defect_region_points(mask_now, region) < int(
+                    cfg.get("min_defect_points", 10)):
+                too_few = True
         if not too_few and cls in ("mean_shift", "standard_deviation", "drift"):
             vi = np.where(mask_now)[0]
             baseline = int((vi < int(len(mask_now) * 0.7)).sum())

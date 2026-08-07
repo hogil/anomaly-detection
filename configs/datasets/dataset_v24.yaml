@@ -1,4 +1,9 @@
-# v23 — FN 반영: mean_shift 불량 상향(FN 최다), spike 는 위치별 개수 규칙,
+# v24 — FN 의 진짜 원인은 파라미터가 아니라 클래스 비율이었다.
+#   normal 을 16000 까지 늘리는 동안 불량은 클래스당 1000 고정 -> 모양 축별로
+#   정상:불량이 5:1 (우측 레벨변화), 4.8:1 (fleet 이격), 7.3:1 (late_start).
+#   불량 장수를 올리고, 무조건 정상인 유형(single_legend/early_stop)은 줄인다.
+# ---
+# mean_shift 불량 상향(FN 최다), spike 는 위치별 개수 규칙,
 #   소수 데이터라도 fleet 에서 명확히 멀면 context 불량으로 만든다.
 # ---
 # normal 쪽 avg 계열 값 축소 (context_like / mid_shift / right_minor),
@@ -30,7 +35,7 @@
 #   2.4~3.4σ -> 1.8~2.8σ, floor 2.8 -> 2.1.
 #   너무 크게 잡으면 중간 강도의 진짜 avg 불량을 정상으로 흘린다(FN).
 #   정상 right_minor 상한 1.4σ 와는 그대로 분리된다.
-# v23 — 현업 FP(정상을 불량으로 오검) 대응 데이터셋.
+# v24 — 현업 FP(정상을 불량으로 오검) 대응 데이터셋.
 #
 # 현업 오검 증상 -> 대응
 #   spike 2~3개도 불량        -> normal_variants.few_spike (개수로만 판별)
@@ -69,7 +74,7 @@ episode:
   # context(avg/std) 처럼 전 구간을 보는 것도 같은 규칙으로 정상 처리한다.
   # normal 전용 (fleet 은 전 구간 유지 -> '혼자만 최근에 안 돌았다' 가 드러난다).
   early_stop:
-    prob: 0.18
+    prob: 0.12
     head_ratio_range:
     - 0.30
     - 0.80
@@ -90,10 +95,11 @@ episode:
     - 0.03
     - 0.25
     min_points: 3
-    min_defect_points: 10
+    min_defect_points: 12
+    defect_region_ratio: 0.12
   # 멤버 1개 — 비교 대상이 없으니 판정 불가 -> 정상. normal 에만 적용.
   single_legend:
-    prob: 0.12
+    prob: 0.08
   # 멤버 2~3대 chart. 기본 count_range 최소가 4라 이런 그림이 아예 없었다.
   # "eqp 2대 중 한쪽 모수가 적으면 그쪽이 불량" 오검의 배경. 전 클래스 공통.
   small_fleet:
@@ -351,11 +357,11 @@ normal_variants:
     # -> 불량 spike(5.0~8.0σ)와 같은 스케일로 두고 개수(1~3 vs 8+)로만 가른다.
     # 위치별 개수: 우측(불량 구간)은 확실히 적게, 중/좌측은 많아도 정상
     count_range:          # 중/좌측
-    - 1
-    - 9
-    right_count_range:    # 우측 — 불량은 10개+ 라 3 이하로 확실히 분리
-    - 1
     - 3
+    - 6
+    right_count_range:    # 우측 — 불량은 10개+ 라 더 적게 둔다
+    - 1
+    - 4
     right_prob: 0.5
     right_start_ratio: 0.7
     magnitude_sigma_range:
@@ -460,13 +466,15 @@ image:
   x_label: null
   y_label: Measurement Value (nm)
 dataset:
-  version: v23
+  version: v24
   samples_per_class:
-    mean_shift: 1000
-    standard_deviation: 1000
-    spike: 1000
-    drift: 1000
-    context: 1000
+    # normal 을 계속 늘리는 동안 불량이 1000 으로 고정돼 있었다.
+    # 모양 축별로 정상:불량이 5:1 까지 벌어져 모델이 normal 로 기울었다(FN).
+    mean_shift: 3000          # FN 최다
+    standard_deviation: 1800
+    spike: 1500
+    drift: 1800
+    context: 3000             # FN 2위
     normal: 16000
   classes:
   - mean_shift
@@ -482,6 +490,6 @@ dataset:
   test_difficulty_scale: 0.8
   val_difficulty_scale: 0.8
 output:
-  data_dir: data_v23
-  image_dir: images_v23
-  display_dir: display_v23
+  data_dir: data_v24
+  image_dir: images_v24
+  display_dir: display_v24

@@ -4,7 +4,7 @@
 생성한 데이터가 의도대로인지 눈으로 확인하는 용도. 표본을 새로 뽑아 렌더하고,
 이미지를 base64 로 박아 **파일 하나로 완결**되게 만든다 (외부 요청 0, 오프라인 열람 가능).
 
-  python scripts/build_dataset_review.py --config configs/datasets/dataset_v26.yaml
+  python scripts/build_dataset_review.py --config configs/datasets/dataset_v27.yaml
 
 기본 출력은 docs/dataset_review_<version>.html. 사내망처럼 외부가 막힌 곳에서는
 repo 를 pull 받아 이 파일을 브라우저로 바로 열면 된다.
@@ -43,26 +43,35 @@ SECTIONS = [
       ("class", "mean_shift", 2,
        lambda d: '<span class="hl-abn">불량</span> — 우측 끝 구간에서 변화, 안정 구간 없음')]),
 
-    ("→", "우측 소량 변동 · 멤버 1~3대도 양호", "right_minor",
-     "우측 끝이 <b>조금</b> 움직인 정상. 기존에는 우측이 거의 평평하도록 강제돼 “우측이 "
-     "움직이면 불량”이 돼 버렸다. 불량 하한 아래 구간을 정상으로 채운다. 멤버가 <b>1개면</b> "
-     "비교 대상이 없어 판정 불가 → 정상, <b>2~3대</b>짜리 chart 도 새로 만든다 (기존 최소 4).",
+    ("→", "우측 끝이 조금 움직인 건 양호", "right_minor",
+     "기존에는 우측이 거의 평평하도록 강제돼 “우측이 움직이면 불량”이 돼 버렸다. "
+     "불량 하한(2.2σ) 아래 구간을 정상으로 채운다 — 이동 0.5~1.2σ 또는 산포 1.15~1.5배.",
      [("normal_variant", "right_minor", 3,
        lambda d: f'우측 {d.get("start_ratio", 0):.0%}~ · <b>{d.get("kind")}</b> '
                  f'{d.get("shift_sigma") or d.get("spread_scale")}'),
-      ("variant", "single_legend", 2, lambda d: '멤버 <b>1개</b> — 비교 대상 없음'),
-      ("variant", "smallfleet", 1, lambda d: '멤버 <b>2~3대</b>'),
       ("class", "mean_shift", 1,
        lambda d: '<span class="hl-abn">비교용 불량</span> — 같은 우측 구간, 훨씬 큰 변동'),
       ("class", "standard_deviation", 1,
        lambda d: '<span class="hl-abn">비교용 불량</span> — 같은 우측 구간, 훨씬 큰 산포')]),
 
+    ("👥", "멤버가 1~3대뿐인 chart", "small_fleet",
+     "기존 데이터는 멤버가 최소 4대라 이런 그림이 아예 없었다. 멤버가 <b>1개면</b> 비교 대상이 "
+     "없어 판정 불가 → 정상. <b>2~3대</b>면 fleet 이 밴드가 아니라 기준선 하나라 작은 차이도 "
+     "크게 보인다 — 현업 오검이 여기 몰려 있어 비중을 크게 잡았다.",
+     [("variant", "single_legend", 2, lambda d: '멤버 <b>1개</b> — 비교 대상 없음'),
+      ("variant", "smallfleet2", 2, lambda d: '멤버 <b>2대</b> — 기준선이 하나뿐'),
+      ("abn_small", "mean_shift", 1,
+       lambda d: '<span class="hl-abn">비교용 불량</span> — 2~3대에서도 우측 변동이 크면 불량'),
+      ("abn_small", "context", 1,
+       lambda d: '<span class="hl-abn">비교용 불량</span> — 이웃 하나뿐이어도 명확히 멀면 불량')]),
+
     ("↩", "중간에 났다가 되돌아온 건 양호", "recovered",
      "mean_shift · std · drift · spike 를 시계열 <b>중간 구간</b>에만 넣고 그 뒤는 baseline 으로 "
      "복귀시킨다. 진폭은 <b>진짜 불량과 같은 설정</b>이다 — 약하게 넣으면 모델이 “작으면 정상”을 "
      "배울 뿐 복귀 여부를 안 본다. <b>우측 끝이 깨끗한가</b>만으로 갈려야 한다.",
-     [("recovered_kind", "mean_shift", 1, None), ("recovered_kind", "drift", 1, None),
-      ("recovered_kind", "standard_deviation", 1, None), ("recovered_kind", "spike", 1, None),
+     [("recovered_kind", "drift_return", 2, None), ("recovered_kind", "mean_shift", 1, None),
+      ("recovered_kind", "drift", 1, None), ("recovered_kind", "standard_deviation", 1, None),
+      ("recovered_kind", "spike", 1, None),
       ("class", "mean_shift", 1,
        lambda d: '<span class="hl-abn">비교용 불량</span> — 우측 끝에서 변하고 <b>복귀 없음</b>'),
       ("class", "drift", 1,
@@ -216,6 +225,9 @@ def build_cards(df: pd.DataFrame, work: Path, specs) -> str:
                 if card:
                     cards.append(card)
             continue
+        elif kind == "abn_small":
+            nmem = df["members"].astype(str).str.count(",") + 1
+            mask = (df["class"] == key) & (nmem <= 3)
         elif kind == "abn_late":
             mask = (df["class"] == key) & df["variant"].str.contains("late_start")
         elif kind == "abn_sparse":
@@ -334,7 +346,7 @@ footer { margin-top:56px; padding-top:18px; border-top:1px solid var(--line); fo
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--config", default="configs/datasets/dataset_v26.yaml")
+    parser.add_argument("--config", default="configs/datasets/dataset_v27.yaml")
     parser.add_argument("--out", default=None, help="기본 docs/dataset_review_<version>.html")
     parser.add_argument("--normal", type=int, default=160, help="표본 정상 장수")
     parser.add_argument("--abnormal", type=int, default=26, help="표본 불량 클래스당 장수")

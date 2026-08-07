@@ -496,19 +496,19 @@ class ScenarioGenerator:
         if len(after) < min_side or len(before) < min_side:
             return {}
         within, _between = self._fleet_spread(context_data, members, target)
-        sigma = float(self.rng.uniform(*cfg.get("shift_sigma_range", [1.0, 2.5])))
-        # 중간 변화라도 뒤쪽이 길면 전체 평균이 통째로 밀려 context(mean) 불량처럼 보인다.
-        # context 하한(mean_min_within_ratio) 아래로 유지되게 shift 를 깎는다.
+        sigma = float(self.rng.uniform(*cfg.get("shift_sigma_range", [0.4, 2.0])))
+        # **앞쪽**을 어긋나게 둔다 — 예전에 벗어나 있다가 중간에 정상으로 돌아온 그림.
+        # 뒤쪽을 올리면 우측 끝이 fleet 대비 떠 버려서 그건 불량이 맞다.
         max_mean = float(cfg.get("max_mean_offset_sigma", 1.5))
-        frac_after = len(after) / len(vi)
-        if frac_after * sigma > max_mean:
-            sigma = max_mean / max(frac_after, 1e-6)
+        frac_before = len(before) / len(vi)
+        if frac_before * sigma > max_mean:
+            sigma = max_mean / max(frac_before, 1e-6)
         sign = 1 if self.rng.random() < 0.5 else -1
-        values[after] += within * sigma * sign
+        values[before] += within * sigma * sign
         context_data[target] = (values, mask)
         return {"normal_variant": "mid_shift", "start_ratio": round(ratio, 3),
                 "shift_sigma": round(sigma, 3),
-                "mean_offset_sigma": round(frac_after * sigma, 3),
+                "mean_offset_sigma": round(frac_before * sigma, 3),
                 "points_after": int(len(after)), "points_before": int(len(before))}
 
     def _inject_few_spike_normal(self, context_data, target) -> dict:
@@ -784,6 +784,22 @@ class ScenarioGenerator:
             fleet_noise = max(float(np.std(fleet_vals)), 0.01)
         else:
             fleet_range, fleet_noise = 0.1, 0.05
+
+        if kind == "drift_return":
+            # 좌~중 서서히 열화 -> 정점 -> 우측으로 가며 서서히 원복 (봉우리 모양).
+            # 실제 fab 에서 가장 흔한 회복 패턴이고, 계단식 복귀보다 자연스럽다.
+            std = max(float(np.nanstd(values[vi])), 1e-6)
+            peak = float(self.rng.uniform(*cfg.get("drift_return_sigma_range", [1.5, 3.0])))
+            sign = 1 if self.rng.random() < 0.5 else -1
+            mid = (start + end) / 2.0
+            for t in inside:
+                frac = 1.0 - abs(t - mid) / max((end - start) / 2.0, 1e-6)
+                values[t] += std * peak * sign * max(frac, 0.0)
+            context_data[target] = (values, mask)
+            return {"normal_variant": "recovered", "kind": "drift_return",
+                    "peak_sigma": round(peak, 3),
+                    "start_ratio": round(start_r, 3), "end_ratio": round(end_r, 3),
+                    "points_inside": int(len(inside)), "points_after": int(len(after))}
 
         new_values, info = self.defect_synth.inject(
             values, mask, kind, fleet_range=fleet_range,

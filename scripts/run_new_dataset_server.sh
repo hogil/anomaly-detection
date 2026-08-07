@@ -4,14 +4,14 @@
 #
 #   ./scripts/run_new_dataset_server.sh validations/<TS>_all_dataset_backbone
 #   ./scripts/run_new_dataset_server.sh validations/<TS>_all_dataset_backbone \
-#        configs/datasets/dataset_v24.yaml
+#        configs/datasets/dataset_v25.yaml
 #
 # python 으로 직접 돌려도 완전히 같다:
 #   python scripts/train_new_dataset.py --validation validations/<TS>_all_dataset_backbone
 #
 # 인자
 #   $1  예전 sweep 폴더 (validations/ 또는 logs/ 어느 쪽이든)  [필수]
-#   $2  데이터셋 yaml   (기본 configs/datasets/dataset_v24.yaml)
+#   $2  데이터셋 yaml   (기본 configs/datasets/dataset_v25.yaml)
 #
 # 환경변수
 #   BACKBONE=convnext_tiny.dinov3_lvd1689m   학습 backbone

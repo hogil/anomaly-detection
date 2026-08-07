@@ -4,7 +4,7 @@
 생성한 데이터가 의도대로인지 눈으로 확인하는 용도. 표본을 새로 뽑아 렌더하고,
 이미지를 base64 로 박아 **파일 하나로 완결**되게 만든다 (외부 요청 0, 오프라인 열람 가능).
 
-  python scripts/build_dataset_review.py --config configs/datasets/dataset_v24.yaml
+  python scripts/build_dataset_review.py --config configs/datasets/dataset_v25.yaml
 
 기본 출력은 docs/dataset_review_<version>.html. 사내망처럼 외부가 막힌 곳에서는
 repo 를 pull 받아 이 파일을 브라우저로 바로 열면 된다.
@@ -57,9 +57,12 @@ SECTIONS = [
      "mean_shift · std · drift · spike 를 시계열 <b>중간 구간</b>에만 넣고 그 뒤는 baseline 으로 "
      "복귀시킨다. 진폭은 <b>진짜 불량과 같은 설정</b>이다 — 약하게 넣으면 모델이 “작으면 정상”을 "
      "배울 뿐 복귀 여부를 안 본다. <b>우측 끝이 깨끗한가</b>만으로 갈려야 한다.",
-     [("normal_variant", "recovered", 4,
-       lambda d: f'<b>{d.get("kind")}</b> · {d.get("start_ratio", 0):.0%}~'
-                 f'{d.get("end_ratio", 0):.0%} 구간 · 이후 <b>{d.get("points_after")}점</b> 복귀')]),
+     [("recovered_kind", "mean_shift", 1, None), ("recovered_kind", "drift", 1, None),
+      ("recovered_kind", "standard_deviation", 1, None), ("recovered_kind", "spike", 1, None),
+      ("class", "mean_shift", 1,
+       lambda d: '<span class="hl-abn">비교용 불량</span> — 우측 끝에서 변하고 <b>복귀 없음</b>'),
+      ("class", "drift", 1,
+       lambda d: '<span class="hl-abn">비교용 불량</span> — 우측 끝 drift, 복귀 없음')]),
 
     ("①", "spike 2~3개도 불량으로 나옴", "few_spike",
      "판별 기준은 <b>크기가 아니라 개수</b>다. 크기를 작게 두면 모델은 “작은 튐은 정상”만 배우고 "
@@ -76,10 +79,12 @@ SECTIONS = [
      "들어가므로 그 구간에 점이 아예 없으면 <b>판정 대상이 아니다</b> — context(avg/std)처럼 "
      "전 구간을 보는 것도 같은 규칙으로 정상 처리한다. fleet 은 전 구간 유지해서 "
      "“혼자만 최근에 안 돌았다”가 드러나게 한다. 불량 클래스에는 적용하지 않는다.",
-     [("variant", "early_stop", 4,
+     [("variant", "early_stop", 2,
        lambda d: 'target 만 <b>왼쪽에서 끊김</b>' + (
-           f' · fleet 대비 {d["offset_sigma"]:.2f}σ 치우침' if d.get("offset_sigma") else
-           f' · 산포 {d["std_scale"]}배' if d.get("std_scale") else ''))]),
+           f' · fleet 대비 {d["offset_sigma"]:.2f}σ 치우침' if d.get("offset_sigma") else '')),
+      ("variant", "degraded", 2, lambda d: '<b>열화된 채로 멈춤</b> — 최근 데이터가 없으니 정상'),
+      ("class", "drift", 1,
+       lambda d: '<span class="hl-abn">비교용 불량</span> — 우측 끝까지 데이터가 있고 거기서 열화')]),
 
     ("⏱", "그 설비만 최근에 시작한 건 양호", "late_start",
      "2달치 데이터인데 특정 설비만 <b>마지막 며칠</b>만 진행된 경우. target 의 점이 전부 "
@@ -90,7 +95,7 @@ SECTIONS = [
        lambda d: '<b>그 설비만</b> 늦게 시작 — 다른 eqp 는 계속 진행'),
       ("variant", "late_start_all", 2,
        lambda d: '<b>다 같이</b> 늦게 시작 — chart 전체가 우측에만'),
-      ("abn_late", "", 2, lambda d: '<span class="hl-abn">불량</span> — 꼬리에 점이 '
+      ("abn_late", "", 2, lambda d: '<span class="hl-abn">비교용 불량</span> — 꼬리에 점이 '
                                     '충분히 있을 때만 불량으로 만든다')]),
 
     ("④", "계측 모수가 작으면 불량으로만 나옴", "sparse_chart",
@@ -98,8 +103,8 @@ SECTIONS = [
      "무관하게 적용하는 것이 핵심 — 정상에만 걸면 “점이 적으면 정상”이라는 새 지름길이 생긴다. "
      "다만 불량 구간에 점이 최소치 미만으로 남으면 target 은 원래 밀도로 되돌린다 — "
      "<b>점 3개짜리 불량은 판정 근거가 안 된다.</b>",
-     [("variant", "sparse_member", 2, lambda d: '정상 — <b>특정 설비만</b> 계측이 성김'),
-      ("variant", "sparse_chart", 2, lambda d: '정상 — 차트 전체가 성김'),
+     [("fewest", "sparse_member", 2, lambda d: '정상 — <b>특정 설비만</b> 계측이 성김'),
+      ("fewest", "sparse_chart", 2, lambda d: '정상 — 차트 전체가 성김'),
       ("abn_sparse", "", 2, lambda d: '<span class="hl-abn">불량</span> — 성겨도 불량 구간에는 '
                                       '점이 남는다')]),
 
@@ -186,6 +191,16 @@ def build_cards(df: pd.DataFrame, work: Path, specs) -> str:
             mask = df["dp"].map(lambda d: d.get("normal_variant") == key)
         elif kind == "variant":
             mask = df["variant"].str.contains(key) & (df["class"] == "normal")
+        elif kind == "recovered_kind":
+            mask = df["dp"].map(lambda d: d.get("normal_variant") == "recovered"
+                                and d.get("kind") == key)
+            note_fn = (lambda d: f'<b>{d.get("kind")}</b> 가 {d.get("start_ratio", 0):.0%}~'
+                                 f'{d.get("end_ratio", 0):.0%} 구간에 났다가 이후 '
+                                 f'<b>{d.get("points_after")}점</b> 복귀')
+        elif kind == "fewest":
+            base = df["variant"].str.contains(key) & (df["class"] == "normal")
+            thin = base & (df["npoints"] <= df.loc[df["class"] == "normal", "npoints"].quantile(0.3))
+            mask = thin if thin.any() else base
         elif kind == "abn_late":
             mask = (df["class"] != "normal") & df["variant"].str.contains("late_start")
         elif kind == "abn_sparse":
@@ -293,7 +308,7 @@ footer { margin-top:56px; padding-top:18px; border-top:1px solid var(--line); fo
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--config", default="configs/datasets/dataset_v24.yaml")
+    parser.add_argument("--config", default="configs/datasets/dataset_v25.yaml")
     parser.add_argument("--out", default=None, help="기본 docs/dataset_review_<version>.html")
     parser.add_argument("--normal", type=int, default=160, help="표본 정상 장수")
     parser.add_argument("--abnormal", type=int, default=26, help="표본 불량 클래스당 장수")
@@ -321,6 +336,18 @@ def main() -> int:
         df["dp"] = df["defect_params"].map(
             lambda s: json.loads(s) if isinstance(s, str) and s != "{}" else {})
         df["sparse"] = df["variant"].str.contains("sparse")
+        ts = pd.read_csv(work / "data" / "timeseries.csv")
+        by_chart = {cid: sub for cid, sub in ts.groupby("chart_id")}
+
+        def _npoints(row):
+            sub = by_chart.get(row["chart_id"])
+            if sub is None:
+                return 0
+            return int((sub[row["legend_axis"]].astype(str)
+                        == str(row["highlighted_member"])).sum())
+
+        df["npoints"] = df.apply(_npoints, axis=1)
+        df = df.sort_values("npoints")
 
         blocks = []
         for sym, title, key, body, specs in SECTIONS:

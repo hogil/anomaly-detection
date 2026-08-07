@@ -1,4 +1,8 @@
-# v24 — FN 의 진짜 원인은 파라미터가 아니라 클래스 비율이었다.
+# v25 — 검토 피드백 반영: mid_shift 미세 변화 / mean_shift 중간 강도 /
+#   우측 5개 정상 spike / 열화된 채 멈춘 설비 / 한 설비만 우측 비중 상향 /
+#   context_like 더 붙게 / sparse 더 성기게.
+# ---
+# FN 의 원인은 파라미터가 아니라 클래스 비율이었다.
 #   normal 을 16000 까지 늘리는 동안 불량은 클래스당 1000 고정 -> 모양 축별로
 #   정상:불량이 5:1 (우측 레벨변화), 4.8:1 (fleet 이격), 7.3:1 (late_start).
 #   불량 장수를 올리고, 무조건 정상인 유형(single_legend/early_stop)은 줄인다.
@@ -35,7 +39,7 @@
 #   2.4~3.4σ -> 1.8~2.8σ, floor 2.8 -> 2.1.
 #   너무 크게 잡으면 중간 강도의 진짜 avg 불량을 정상으로 흘린다(FN).
 #   정상 right_minor 상한 1.4σ 와는 그대로 분리된다.
-# v24 — 현업 FP(정상을 불량으로 오검) 대응 데이터셋.
+# v25 — 현업 FP(정상을 불량으로 오검) 대응 데이터셋.
 #
 # 현업 오검 증상 -> 대응
 #   spike 2~3개도 불량        -> normal_variants.few_spike (개수로만 판별)
@@ -75,6 +79,12 @@ episode:
   # normal 전용 (fleet 은 전 구간 유지 -> '혼자만 최근에 안 돌았다' 가 드러난다).
   early_stop:
     prob: 0.12
+    # 최근에 안 돌렸는데 그 전에 열화가 있던 경우도 정상
+    degrade_prob: 0.45
+    degrade_kind_weights:
+      drift: 0.45
+      mean_shift: 0.35
+      standard_deviation: 0.2
     head_ratio_range:
     - 0.30
     - 0.80
@@ -89,8 +99,8 @@ episode:
     min_baseline_points: 15
     # target 만 늦게 시작(다른 eqp 는 계속 진행) / 다 같이 늦게 시작 둘 다 만든다
     scope_weights:
-      target: 0.55
-      all: 0.45
+      target: 0.72      # 한 설비만 우측에 (다른 설비는 계속 진행) — 현업 오검 다수
+      all: 0.28
     tail_ratio_range:
     - 0.03
     - 0.25
@@ -120,8 +130,8 @@ episode:
     - 0.4
     target_prob: 0.6
     keep_ratio_range:
-    - 0.04
-    - 0.26
+    - 0.03
+    - 0.20
     # 멤버 2~3대 chart 에서는 더 자주, 더 성기게 (현업 오검이 여기 몰려 있다)
     small_fleet_prob: 0.65
     small_fleet_keep_ratio_range:
@@ -302,8 +312,8 @@ normal_variants:
     # fleet 에서 '조금' 떨어진 정상. context 불량 하한(mean_min_within_ratio 2.8σ)의
     # max_ratio_of_floor 배 아래로 clamp 되므로 절대 겹치지 않는다.
     mean_offset_sigma_range:
-    - 0.6
-    - 2.2
+    - 0.5
+    - 1.6
     max_ratio_of_floor: 0.75
   right_minor:
     # 우측 끝 소량 변동. 불량 mean_shift 하한(2.8σ) 아래로 유지해 경계를 만든다.
@@ -344,8 +354,8 @@ normal_variants:
     start_ratio_range:
     - 0.25
     - 0.55
-    shift_sigma_range:
-    - 0.9
+    shift_sigma_range:   # 미세한 변화(0.4σ)부터 포함
+    - 0.4
     - 2.0
     min_side_points: 5
     # 뒤쪽이 길면 전체 평균이 통째로 밀려 context(mean) 불량처럼 보인다.
@@ -359,9 +369,9 @@ normal_variants:
     count_range:          # 중/좌측
     - 3
     - 6
-    right_count_range:    # 우측 — 불량은 10개+ 라 더 적게 둔다
-    - 1
-    - 4
+    right_count_range:    # 우측 — 불량과 위치·크기 동일, 개수(<=5 vs 10+)로만 갈린다
+    - 2
+    - 5
     right_prob: 0.5
     right_start_ratio: 0.7
     magnitude_sigma_range:
@@ -396,9 +406,9 @@ defect:
   - 0.14
   - 0.3
   mean_shift:
-    shift_sigma_range:
-    - 2.2
-    - 3.2
+    shift_sigma_range:   # 심한 것만이 아니라 중간 강도도 불량으로
+    - 1.9
+    - 3.4
     difficulty_scale_floor: 0.9
   standard_deviation:
     scale_range:
@@ -432,7 +442,7 @@ defect:
     max_range_scale: 0.7
     drift_method: index
   enforcement:
-    mean_shift_floor_sigma: 2.6
+    mean_shift_floor_sigma: 2.2
     mean_shift_self_floor_sigma: 2.1
     std_floor_ratio: 3.8
     spike_floor_sigma: 13.0
@@ -466,7 +476,7 @@ image:
   x_label: null
   y_label: Measurement Value (nm)
 dataset:
-  version: v24
+  version: v25
   samples_per_class:
     # normal 을 계속 늘리는 동안 불량이 1000 으로 고정돼 있었다.
     # 모양 축별로 정상:불량이 5:1 까지 벌어져 모델이 normal 로 기울었다(FN).
@@ -490,6 +500,6 @@ dataset:
   test_difficulty_scale: 0.8
   val_difficulty_scale: 0.8
 output:
-  data_dir: data_v24
-  image_dir: images_v24
-  display_dir: display_v24
+  data_dir: data_v25
+  image_dir: images_v25
+  display_dir: display_v25

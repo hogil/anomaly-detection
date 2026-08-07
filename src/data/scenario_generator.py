@@ -203,9 +203,9 @@ class ScenarioGenerator:
             if sparse_keep is not None:
                 # 성긴 chart 는 불량 구간도 같이 성기다. 여기서 되채우면
                 # "우측만 촘촘하다" 는 인공 단서가 생겨 오히려 지름길이 된다.
-                # 하한 8 — 정상 few_spike 가 최대 6개라 그 아래로 내려가면
+                # 하한 10 — 정상 few_spike 가 우측에서 최대 5개라 그 아래로 내려가면
                 # spike 불량 개수가 정상 범위와 겹쳐 라벨이 모호해진다.
-                MIN_DEFECT_POINTS = max(8, int(MIN_DEFECT_POINTS * sparse_keep))
+                MIN_DEFECT_POINTS = max(10, int(MIN_DEFECT_POINTS * sparse_keep))
 
             values, mask = context_data[target]
             total_len = len(mask)
@@ -607,7 +607,27 @@ class ScenarioGenerator:
             context_data[target] = (values, original)
             return None
         context_data[target] = (values, mask)
-        return f"early_stop{head:.2f}"
+
+        # 최근에 안 돌렸는데 그 전 구간에 열화(drift/shift/std)가 있는 경우도 정상이다.
+        # 판정할 최근 데이터가 없으면 옛날 열화만으로 불량이라 할 수 없다.
+        tag = f"early_stop{head:.2f}"
+        if self.rng.random() < float(cfg.get("degrade_prob", 0.0)):
+            vi = np.where(mask)[0]
+            if len(vi) >= 12:
+                kinds = cfg.get("degrade_kind_weights") or {
+                    "drift": 0.45, "mean_shift": 0.35, "standard_deviation": 0.2}
+                names = [k for k, w in kinds.items() if float(w) > 0]
+                p = np.array([float(kinds[k]) for k in names], dtype=float)
+                kind = str(self.rng.choice(names, p=p / p.sum()))
+                lo_i, hi_i = int(vi[0]), int(vi[-1]) + 1
+                span = hi_i - lo_i
+                start = lo_i + int(span * float(self.rng.uniform(0.5, 0.7)))
+                new_values, _info = self.defect_synth.inject(
+                    values, mask, kind, fleet_range=0.1, fleet_noise_std=0.05,
+                    defect_bounds=(start, hi_i))
+                context_data[target] = (new_values, mask)
+                tag += f"_degraded_{kind}"
+        return tag
 
     def _maybe_late_start(self, context_data, members, target, cls) -> str | None:
         """**우측 끝 구간에서 뒤늦게 시작**한 chart.

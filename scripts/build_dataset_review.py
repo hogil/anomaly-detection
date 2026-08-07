@@ -51,7 +51,11 @@ SECTIONS = [
        lambda d: f'우측 {d.get("start_ratio", 0):.0%}~ · <b>{d.get("kind")}</b> '
                  f'{d.get("shift_sigma") or d.get("spread_scale")}'),
       ("variant", "single_legend", 2, lambda d: '멤버 <b>1개</b> — 비교 대상 없음'),
-      ("variant", "smallfleet", 2, lambda d: '멤버 <b>2~3대</b>')]),
+      ("variant", "smallfleet", 1, lambda d: '멤버 <b>2~3대</b>'),
+      ("class", "mean_shift", 1,
+       lambda d: '<span class="hl-abn">비교용 불량</span> — 같은 우측 구간, 훨씬 큰 변동'),
+      ("class", "standard_deviation", 1,
+       lambda d: '<span class="hl-abn">비교용 불량</span> — 같은 우측 구간, 훨씬 큰 산포')]),
 
     ("↩", "중간에 났다가 되돌아온 건 양호", "recovered",
      "mean_shift · std · drift · spike 를 시계열 <b>중간 구간</b>에만 넣고 그 뒤는 baseline 으로 "
@@ -95,8 +99,12 @@ SECTIONS = [
        lambda d: '<b>그 설비만</b> 늦게 시작 — 다른 eqp 는 계속 진행'),
       ("variant", "late_start_all", 2,
        lambda d: '<b>다 같이</b> 늦게 시작 — chart 전체가 우측에만'),
-      ("abn_late", "", 2, lambda d: '<span class="hl-abn">비교용 불량</span> — 꼬리에 점이 '
-                                    '충분히 있을 때만 불량으로 만든다')]),
+      ("abn_late", "spike", 1,
+       lambda d: f'<span class="hl-abn">비교용 불량</span> — 늦게 시작해도 우측에 '
+                 f'<b>{d.get("num_spikes")}개</b>면 불량'),
+      ("abn_late", "context", 1,
+       lambda d: '<span class="hl-abn">비교용 불량</span> — 점이 적어도 fleet 에서 '
+                 '<b>명확히 멀면</b> 불량')]),
 
     ("④", "계측 모수가 작으면 불량으로만 나옴", "sparse_chart",
      "<b>차트 전체</b>가 성긴 경우와 <b>특정 설비 하나만</b> 성긴 경우를 모두 만든다. 클래스와 "
@@ -105,8 +113,11 @@ SECTIONS = [
      "<b>점 3개짜리 불량은 판정 근거가 안 된다.</b>",
      [("fewest", "sparse_member", 2, lambda d: '정상 — <b>특정 설비만</b> 계측이 성김'),
       ("fewest", "sparse_chart", 2, lambda d: '정상 — 차트 전체가 성김'),
-      ("abn_sparse", "", 2, lambda d: '<span class="hl-abn">불량</span> — 성겨도 불량 구간에는 '
-                                      '점이 남는다')]),
+      ("abn_sparse", "spike", 1,
+       lambda d: f'<span class="hl-abn">비교용 불량</span> — 성겨도 우측에 '
+                 f'<b>{d.get("num_spikes")}개</b>가 남는다'),
+      ("abn_sparse", "context", 1,
+       lambda d: '<span class="hl-abn">비교용 불량</span> — 점이 적어도 이격이 명확')]),
 
     ("≠", "fleet 에서 조금 떨어진 정상 — eqp 2대짜리 포함", "context_like",
      "정상은 target 전체 평균이 fleet 평균의 <b>0.6σ 이내</b>로 강제되고 context 불량은 그보다 "
@@ -199,38 +210,52 @@ def build_cards(df: pd.DataFrame, work: Path, specs) -> str:
                                  f'<b>{d.get("points_after")}점</b> 복귀')
         elif kind == "fewest":
             base = df["variant"].str.contains(key) & (df["class"] == "normal")
-            thin = base & (df["npoints"] <= df.loc[df["class"] == "normal", "npoints"].quantile(0.3))
-            mask = thin if thin.any() else base
+            sub = df[base].sort_values("npoints")
+            for _, row in sub.head(count).iterrows():
+                card = _card(row, work, note_fn)
+                if card:
+                    cards.append(card)
+            continue
         elif kind == "abn_late":
-            mask = (df["class"] != "normal") & df["variant"].str.contains("late_start")
+            mask = (df["class"] == key) & df["variant"].str.contains("late_start")
         elif kind == "abn_sparse":
-            mask = (df["class"] != "normal") & df["sparse"] & ~df["variant"].str.contains("fleetonly")
+            mask = (df["class"] == key) & df["sparse"] & ~df["variant"].str.contains("fleetonly")
         elif kind == "clean":
             mask = df["variant"] == "clean"
         else:
             mask = df["class"] == key
         for _, row in df[mask].head(count).iterrows():
-            disp = work / "display" / row["split"] / row["class"] / f'{row["chart_id"]}.png'
-            trn = work / "images" / row["split"] / row["class"] / f'{row["chart_id"]}.png'
-            if not disp.exists():
-                continue
-            tag_kind = "abn" if row["class"] != "normal" else "nor"
-            tags = f'<span class="tag tag-{tag_kind}">{row["class"]}</span>'
-            if row["sparse"]:
-                mode = "member" if "member" in row["variant"] else "chart"
-                tags += f'<span class="tag tag-sparse">sparse·{mode}</span>'
-            thumb = ""
-            if trn.exists():
-                thumb = (f'<figure class="thumb"><img src="data:image/jpeg;base64,'
-                         f'{embed(trn, 224, 82)}" alt="학습 입력">'
-                         f'<figcaption>모델 입력</figcaption></figure>')
-            cards.append(f"""
+            card = _card(row, work, note_fn)
+            if card:
+                cards.append(card)
+    return "".join(cards)
+
+
+def _card(row, work: Path, note_fn) -> str:
+    """카드 1장. 이미지가 없으면 빈 문자열."""
+    disp = work / "display" / row["split"] / row["class"] / f'{row["chart_id"]}.png'
+    trn = work / "images" / row["split"] / row["class"] / f'{row["chart_id"]}.png'
+    if not disp.exists():
+        return ""
+    tag_kind = "abn" if row["class"] != "normal" else "nor"
+    tags = f'<span class="tag tag-{tag_kind}">{row["class"]}</span>'
+    if row["sparse"]:
+        mode = "member" if "member" in row["variant"] else "chart"
+        tags += f'<span class="tag tag-sparse">sparse·{mode}</span>'
+    npts = row.get("npoints")
+    if npts is not None:
+        tags += f'<span class="tag tag-pts">{int(npts)}점</span>'
+    thumb = ""
+    if trn.exists():
+        thumb = (f'<figure class="thumb"><img src="data:image/jpeg;base64,'
+                 f'{embed(trn, 224, 82)}" alt="학습 입력">'
+                 f'<figcaption>모델 입력</figcaption></figure>')
+    return f"""
       <article class="card">
         <header class="card-head">{tags}<code class="cid">{row["chart_id"]}</code></header>
         <img class="chart" src="data:image/jpeg;base64,{embed(disp, 540, 74)}" alt="{row['class']}">
         <div class="card-foot"><p class="note">{note_fn(row["dp"])}</p>{thumb}</div>
-      </article>""")
-    return "".join(cards)
+      </article>"""
 
 
 STYLE = """
@@ -285,6 +310,7 @@ h1 { font-size:clamp(26px,3.4vw,38px); line-height:1.15; margin:0 0 12px; text-w
 .tag-nor { background:var(--accent-soft); color:var(--accent); }
 .tag-abn { background:var(--abn-soft); color:var(--abn); }
 .tag-sparse { background:var(--warn-soft); color:var(--warn); }
+.tag-pts { background:var(--line-2); color:var(--ink-2); }
 .cid { margin-left:auto; font-size:11px; color:var(--ink-2); }
 .chart { width:100%; display:block; background:#fff; }
 .card-foot { display:flex; gap:12px; align-items:center; padding:11px 12px;
@@ -347,7 +373,6 @@ def main() -> int:
                         == str(row["highlighted_member"])).sum())
 
         df["npoints"] = df.apply(_npoints, axis=1)
-        df = df.sort_values("npoints")
 
         blocks = []
         for sym, title, key, body, specs in SECTIONS:

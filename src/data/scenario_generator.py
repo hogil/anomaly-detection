@@ -180,8 +180,6 @@ class ScenarioGenerator:
             self._normalize_normal_target(context_data, members, target)
             if subtype == "few_spike":
                 defect_params = self._inject_few_spike_normal(context_data, target)
-            elif subtype == "mid_shift":
-                defect_params = self._inject_mid_shift_normal(context_data, members, target)
             elif subtype == "right_minor":
                 defect_params = self._inject_right_minor_normal(context_data, members, target)
             elif subtype == "recovered":
@@ -477,40 +475,6 @@ class ScenarioGenerator:
                 return f"sparse_{mode}{keep:.2f}_fleetonly", keep
         return f"sparse_{mode}{keep:.2f}", keep
 
-    def _inject_mid_shift_normal(self, context_data, members, target) -> dict:
-        """중간 구간에서 레벨이 크게 바뀌었다가 **되돌아오고, 우측 끝은 깨끗하다**.
-
-        불량 mean_shift 는 우측 끝 구간에서 바뀌고 그대로 끝난다. 여기서는 변화가
-        중간 구간에 갇혀 있고 우측은 fleet 과 나란하므로, 진폭은 크게 줘도 된다 —
-        오히려 크게 줘야 "우측이 깨끗한가" 로만 갈린다는 걸 배운다.
-        """
-        cfg = self._normal_variant_cfg().get("mid_shift") or {}
-        values, mask = context_data[target]
-        vi = np.where(mask)[0]
-        if len(vi) < 12:
-            return {}
-        start_r = float(self.rng.uniform(*cfg.get("start_ratio_range", [0.20, 0.45])))
-        span_r = float(self.rng.uniform(*cfg.get("span_ratio_range", [0.20, 0.35])))
-        end_r = min(start_r + span_r, float(cfg.get("max_end_ratio", 0.72)))
-        start, end = int(len(mask) * start_r), int(len(mask) * end_r)
-        inside = vi[(vi >= start) & (vi < end)]
-        after, before = vi[vi >= end], vi[vi < start]
-        min_side = int(cfg.get("min_side_points", 5))
-        if len(inside) < min_side or len(after) < min_side or len(before) < min_side:
-            return {}
-        # 단위는 **눈에 보이는 fleet 밴드 폭**(within + between). within 만 쓰면
-        # fleet 이 촘촘할 때 같은 sigma 도 밴드를 통째로 벗어난다.
-        within, between = self._fleet_spread(context_data, members, target)
-        ratio = float(self.rng.uniform(*cfg.get("shift_visual_ratio_range", [0.8, 2.0])))
-        delta = ratio * (within + between)
-        sign = 1 if self.rng.random() < 0.5 else -1
-        values[inside] += delta * sign
-        context_data[target] = (values, mask)
-        return {"normal_variant": "mid_shift",
-                "start_ratio": round(start_r, 3), "end_ratio": round(end_r, 3),
-                "visual_ratio": round(ratio, 3),
-                "points_inside": int(len(inside)), "points_after": int(len(after))}
-
     def _inject_few_spike_normal(self, context_data, target) -> dict:
         """target 에 1~4개짜리 약한 튐.
 
@@ -786,6 +750,18 @@ class ScenarioGenerator:
             fleet_noise = max(float(np.std(fleet_vals)), 0.01)
         else:
             fleet_range, fleet_noise = 0.1, 0.05
+
+        if kind == "level_step":
+            # 레벨이 통째로 이탈했다가 원복 (예전 mid_shift). 단위는 보이는 밴드 폭.
+            within, between = self._fleet_spread(context_data, members, target)
+            ratio = float(self.rng.uniform(*cfg.get("level_step_ratio_range", [0.8, 2.0])))
+            sign = 1 if self.rng.random() < 0.5 else -1
+            values[inside] += ratio * (within + between) * sign
+            context_data[target] = (values, mask)
+            return {"normal_variant": "recovered", "kind": "level_step",
+                    "visual_ratio": round(ratio, 3),
+                    "start_ratio": round(start_r, 3), "end_ratio": round(end_r, 3),
+                    "points_inside": int(len(inside)), "points_after": int(len(after))}
 
         if kind == "drift_return":
             # 좌~중 서서히 열화 -> 정점 -> 우측으로 가며 서서히 원복 (봉우리 모양).

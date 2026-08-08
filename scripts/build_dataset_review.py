@@ -4,7 +4,7 @@
 생성한 데이터가 의도대로인지 눈으로 확인하는 용도. 표본을 새로 뽑아 렌더하고,
 이미지를 base64 로 박아 **파일 하나로 완결**되게 만든다 (외부 요청 0, 오프라인 열람 가능).
 
-  python scripts/build_dataset_review.py --config configs/datasets/dataset_v30.yaml
+  python scripts/build_dataset_review.py --config configs/datasets/dataset_v31.yaml
 
 기본 출력은 docs/dataset_review_<version>.html. 사내망처럼 외부가 막힌 곳에서는
 repo 를 pull 받아 이 파일을 브라우저로 바로 열면 된다.
@@ -33,25 +33,14 @@ ROOT = Path(__file__).resolve().parent.parent
 # (제목, 심볼, config key, 설명, [(라벨 조건, 카드 수, note 포맷)])
 # 해당 variant 가 데이터에 없으면 그 절은 통째로 건너뛴다.
 SECTIONS = [
-    ("②", "중간에서 크게 변했다가 원복 — 우측 끝이 깨끗하면 양호", "mid_shift",
-     "중간 구간에서 레벨이 <b>크게</b> 이탈했다가 되돌아오고, 우측 끝은 fleet 과 나란하다. "
-     "불량 mean_shift 는 우측 끝에서 바뀌고 그대로 끝난다 — 진폭이 아니라 "
-     "<b>우측이 깨끗한가</b>로만 갈려야 하므로 중간 이탈은 오히려 크게 준다 "
-     "(밴드 폭의 0.8~2.0배).",
-     [("normal_variant", "mid_shift", 4,
-       lambda d: f'{d.get("start_ratio", 0):.0%}~{d.get("end_ratio", 0):.0%} 구간에서 '
-                 f'밴드 폭 <b>{d.get("visual_ratio")}배</b> 이탈 → 원복 · '
-                 f'이후 <b>{d.get("points_after")}점</b> 정상'),
-      ("class", "mean_shift", 2,
-       lambda d: '<span class="hl-abn">불량</span> — 우측 끝 구간에서 변화, 안정 구간 없음')]),
-
     ("↩", "중간에 났다가 되돌아온 건 양호", "recovered",
-     "mean_shift · std · drift · spike 를 시계열 <b>중간 구간</b>에만 넣고 그 뒤는 baseline 으로 "
-     "복귀시킨다. 진폭은 <b>진짜 불량과 같은 설정</b>이다 — 약하게 넣으면 모델이 “작으면 정상”을 "
-     "배울 뿐 복귀 여부를 안 본다. <b>우측 끝이 깨끗한가</b>만으로 갈려야 한다.",
-     [("recovered_kind", "drift_return", 2, None), ("recovered_kind", "mean_shift", 1, None),
-      ("recovered_kind", "drift", 1, None), ("recovered_kind", "standard_deviation", 1, None),
-      ("recovered_kind", "spike", 1, None),
+     "이상이 <b>중간 구간</b>에만 있고 그 뒤는 baseline 으로 복귀한다. 모양은 6가지 — "
+     "<b>level_step</b>(레벨 통째 이탈 후 원복) · <b>drift_return</b>(서서히 열화→정점→서서히 원복) · "
+     "mean_shift · standard_deviation · drift · spike. 진폭은 크게 준다 — 약하면 모델이 "
+     "“작으면 정상”만 배우고 복귀 여부를 안 본다. <b>우측 끝이 깨끗한가</b>로만 갈려야 한다.",
+     [("recovered_kind", "level_step", 1, None), ("recovered_kind", "drift_return", 1, None),
+      ("recovered_kind", "mean_shift", 1, None), ("recovered_kind", "drift", 1, None),
+      ("recovered_kind", "standard_deviation", 1, None), ("recovered_kind", "spike", 1, None),
       ("class", "mean_shift", 1,
        lambda d: '<span class="hl-abn">비교용 불량</span> — 우측 끝에서 변하고 <b>복귀 없음</b>'),
       ("class", "drift", 1,
@@ -348,7 +337,7 @@ footer { margin-top:56px; padding-top:18px; border-top:1px solid var(--line); fo
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--config", default="configs/datasets/dataset_v30.yaml")
+    parser.add_argument("--config", default="configs/datasets/dataset_v31.yaml")
     parser.add_argument("--out", default=None, help="기본 docs/dataset_review_<version>.html")
     parser.add_argument("--normal", type=int, default=160, help="표본 정상 장수")
     parser.add_argument("--abnormal", type=int, default=26, help="표본 불량 클래스당 장수")

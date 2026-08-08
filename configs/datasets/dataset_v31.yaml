@@ -1,4 +1,6 @@
-# v30 — mid_shift 를 '중간에서 크게 변했다가 원복, 우측 끝은 깨끗' 으로 재정의.
+# v31 — mid_shift 를 recovered 로 흡수. '중간에 이상 -> 원복 -> 우측 끝 깨끗' 은
+#   하나의 개념이고 모양만 6가지다 (level_step / drift_return / mean_shift /
+#   standard_deviation / drift / spike).
 #   계단(변하고 유지)이 아니라 중간 구간에 갇힌 이탈이라 진폭을 크게 줘도 된다 —
 #   오히려 커야 '우측이 깨끗한가' 만으로 갈린다는 걸 배운다.
 # ---
@@ -54,7 +56,7 @@
 #   2.4~3.4σ -> 1.8~2.8σ, floor 2.8 -> 2.1.
 #   너무 크게 잡으면 중간 강도의 진짜 avg 불량을 정상으로 흘린다(FN).
 #   정상 right_minor 상한 1.4σ 와는 그대로 분리된다.
-# v30 — 현업 FP(정상을 불량으로 오검) 대응 데이터셋.
+# v31 — 현업 FP(정상을 불량으로 오검) 대응 데이터셋.
 #
 # 현업 오검 증상 -> 대응
 #   spike 2~3개도 불량        -> normal_variants.few_spike (개수로만 판별)
@@ -318,10 +320,9 @@ normal_variants:
     # 성긴 차트에서는 모양 기반 유형이 후보에서 빠진다(min_points_for_shape).
     # 그때 남는 후보로 쏠리지 않도록 clean 비중을 크게 잡는다.
     clean: 0.06
-    recovered: 0.24
-    mid_shift: 0.24
-    right_minor: 0.16
-    few_spike: 0.14
+    recovered: 0.44        # mid_shift 를 흡수 (개념이 하나다)
+    right_minor: 0.18
+    few_spike: 0.16
     context_like: 0.09
     loose_target: 0.07
     common_mode: 0.0
@@ -354,12 +355,17 @@ normal_variants:
     # 중간에서 이상이 났다가 되돌아온 정상 (PM 후 회복 등).
     # 진폭은 진짜 불량과 같은 설정을 쓴다 — 약하게 넣으면 모델이 '작으면 정상'을
     # 배울 뿐 복귀 여부를 안 본다. 우측 끝이 깨끗한지만으로 갈려야 한다.
+    # 전부 '중간에 났다가 원복 -> 우측 끝은 깨끗' 이라는 한 개념의 여러 모양이다.
     kind_weights:
-      drift_return: 0.28      # 좌~중 서서히 열화 -> 정점 -> 우측으로 서서히 원복
-      mean_shift: 0.22
-      standard_deviation: 0.2
-      drift: 0.15
-      spike: 0.15
+      level_step: 0.30        # 레벨 통째 이탈 후 원복 (예전 mid_shift)
+      drift_return: 0.24      # 서서히 열화 -> 정점 -> 서서히 원복
+      mean_shift: 0.14        # 계단형 (불량 진폭)
+      standard_deviation: 0.12
+      drift: 0.10
+      spike: 0.10
+    level_step_ratio_range:   # 밴드 폭 배수 — 우측이 깨끗하니 크게 준다
+    - 0.8
+    - 2.0
     drift_return_sigma_range:
     - 1.5
     - 3.0
@@ -372,30 +378,6 @@ normal_variants:
     max_end_ratio: 0.65      # 복귀 구간을 최소 35% 확보
     min_points: 8
     min_recovery_points: 12
-  mid_shift:
-    min_points_for_shape: 70   # 변화 후 안정 구간이 판별 신호 -> 그게 보일 만큼 점이 필요
-    # 불량 mean_shift 는 우측 끝 14~30% 구간. 여기는 25~55% 지점에서 바뀌고
-    # 그대로 유지되므로 '바뀐 뒤 안정 구간 길이' 가 구분 신호가 된다.
-    start_ratio_range:
-    - 0.20
-    - 0.45
-    # **앞쪽**이 어긋나 있다가 중간에 정상으로 돌아온 그림.
-    # 뒤쪽을 올리면 우측 끝이 fleet 대비 떠서 그건 불량이 맞다.
-    # 단위는 눈에 보이는 fleet 밴드 폭(within+between). within 만 쓰면 fleet 이
-    # 촘촘할 때 같은 sigma 도 밴드를 통째로 벗어나 불량처럼 보였다.
-    # 중간 구간에서 크게 변했다가 되돌아온다. 우측 끝이 깨끗하므로 크게 줘도 된다 —
-    # 오히려 커야 '우측이 깨끗한가' 만으로 갈린다는 걸 배운다. 단위는 밴드 폭.
-    shift_visual_ratio_range:
-    - 0.8
-    - 2.0
-    span_ratio_range:
-    - 0.20
-    - 0.35
-    max_end_ratio: 0.72
-    min_side_points: 5
-    # 뒤쪽이 길면 전체 평균이 통째로 밀려 context(mean) 불량처럼 보인다.
-    # context 하한(mean_min_within_ratio 1.8) 아래로 유지.
-    max_mean_offset_sigma: 1.5
   few_spike:
     min_points_for_shape: 20   # 튄 점과 배경이 구분돼야 한다
     # 판별 기준은 '크기'가 아니라 '개수'다. 크기를 작게 두면 모델은
@@ -515,16 +497,16 @@ image:
   x_label: null
   y_label: Measurement Value (nm)
 dataset:
-  version: v30
+  version: v31
   samples_per_class:
     # normal 을 계속 늘리는 동안 불량이 1000 으로 고정돼 있었다.
     # 모양 축별로 정상:불량이 5:1 까지 벌어져 모델이 normal 로 기울었다(FN).
-    mean_shift: 3000          # FN 최다
-    standard_deviation: 1800
-    spike: 1500
-    drift: 1800
-    context: 3000             # FN 2위
-    normal: 20000
+    mean_shift: 1400
+    standard_deviation: 800
+    spike: 700
+    drift: 800
+    context: 1300
+    normal: 10000
   classes:
   - mean_shift
   - standard_deviation
@@ -539,6 +521,6 @@ dataset:
   test_difficulty_scale: 0.8
   val_difficulty_scale: 0.8
 output:
-  data_dir: data_v30
-  image_dir: images_v30
-  display_dir: display_v30
+  data_dir: data_v31
+  image_dir: images_v31
+  display_dir: display_v31

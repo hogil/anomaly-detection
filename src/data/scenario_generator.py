@@ -478,42 +478,38 @@ class ScenarioGenerator:
         return f"sparse_{mode}{keep:.2f}", keep
 
     def _inject_mid_shift_normal(self, context_data, members, target) -> dict:
-        """target 한 멤버만 시계열 중간에서 레벨이 바뀌고 그대로 유지된다.
+        """중간 구간에서 레벨이 크게 바뀌었다가 **되돌아오고, 우측 끝은 깨끗하다**.
 
-        불량 mean_shift 는 우측 끝 구간(14~30%)에만 들어간다. 여기서는 훨씬 앞에서
-        바뀌므로 "바뀐 뒤 안정 구간이 얼마나 긴가" 가 구분 신호가 된다 — 절대 위치가
-        아니라 폭 특징이라 global average pooling 구조에서도 상대적으로 배우기 쉽다.
+        불량 mean_shift 는 우측 끝 구간에서 바뀌고 그대로 끝난다. 여기서는 변화가
+        중간 구간에 갇혀 있고 우측은 fleet 과 나란하므로, 진폭은 크게 줘도 된다 —
+        오히려 크게 줘야 "우측이 깨끗한가" 로만 갈린다는 걸 배운다.
         """
         cfg = self._normal_variant_cfg().get("mid_shift") or {}
         values, mask = context_data[target]
         vi = np.where(mask)[0]
         if len(vi) < 12:
             return {}
-        start_r = float(self.rng.uniform(*cfg.get("start_ratio_range", [0.25, 0.55])))
-        start = int(len(mask) * start_r)
-        after, before = vi[vi >= start], vi[vi < start]
+        start_r = float(self.rng.uniform(*cfg.get("start_ratio_range", [0.20, 0.45])))
+        span_r = float(self.rng.uniform(*cfg.get("span_ratio_range", [0.20, 0.35])))
+        end_r = min(start_r + span_r, float(cfg.get("max_end_ratio", 0.72)))
+        start, end = int(len(mask) * start_r), int(len(mask) * end_r)
+        inside = vi[(vi >= start) & (vi < end)]
+        after, before = vi[vi >= end], vi[vi < start]
         min_side = int(cfg.get("min_side_points", 5))
-        if len(after) < min_side or len(before) < min_side:
+        if len(inside) < min_side or len(after) < min_side or len(before) < min_side:
             return {}
         # 단위는 **눈에 보이는 fleet 밴드 폭**(within + between). within 만 쓰면
-        # fleet 이 촘촘할 때 1σ 이동이 밴드를 통째로 벗어나 불량처럼 보인다.
+        # fleet 이 촘촘할 때 같은 sigma 도 밴드를 통째로 벗어난다.
         within, between = self._fleet_spread(context_data, members, target)
-        unit = within + between
-        ratio = float(self.rng.uniform(*cfg.get("shift_visual_ratio_range", [0.15, 0.5])))
-        sigma = ratio * unit / max(within, 1e-9)
-        # **앞쪽**을 어긋나게 둔다 — 예전에 벗어나 있다가 중간에 정상으로 돌아온 그림.
-        # 뒤쪽을 올리면 우측 끝이 fleet 대비 떠 버려서 그건 불량이 맞다.
-        max_mean = float(cfg.get("max_mean_offset_sigma", 1.5))
-        frac_before = len(before) / len(vi)
-        if frac_before * sigma > max_mean:
-            sigma = max_mean / max(frac_before, 1e-6)
+        ratio = float(self.rng.uniform(*cfg.get("shift_visual_ratio_range", [0.8, 2.0])))
+        delta = ratio * (within + between)
         sign = 1 if self.rng.random() < 0.5 else -1
-        values[before] += within * sigma * sign
+        values[inside] += delta * sign
         context_data[target] = (values, mask)
-        return {"normal_variant": "mid_shift", "start_ratio": round(start_r, 3),
-                "shift_sigma": round(sigma, 3), "visual_ratio": round(ratio, 3),
-                "mean_offset_sigma": round(frac_before * sigma, 3),
-                "points_after": int(len(after)), "points_before": int(len(before))}
+        return {"normal_variant": "mid_shift",
+                "start_ratio": round(start_r, 3), "end_ratio": round(end_r, 3),
+                "visual_ratio": round(ratio, 3),
+                "points_inside": int(len(inside)), "points_after": int(len(after))}
 
     def _inject_few_spike_normal(self, context_data, target) -> dict:
         """target 에 1~4개짜리 약한 튐.

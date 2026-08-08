@@ -1,4 +1,8 @@
-# v29 — 정상 avg 변동의 기준 단위를 '보이는 fleet 밴드 폭'(within+between)으로 바꿈.
+# v30 — mid_shift 를 '중간에서 크게 변했다가 원복, 우측 끝은 깨끗' 으로 재정의.
+#   계단(변하고 유지)이 아니라 중간 구간에 갇힌 이탈이라 진폭을 크게 줘도 된다 —
+#   오히려 커야 '우측이 깨끗한가' 만으로 갈린다는 걸 배운다.
+# ---
+# 정상 avg 변동 기준 단위 = 보이는 fleet 밴드 폭(within+between).
 #   within 만 쓰니 fleet 이 촘촘한 chart 에서 같은 sigma 도 밴드를 벗어나 불량처럼 보였다.
 #   mid_shift 0.12~0.45 밴드폭, right_minor 0.10~0.35 밴드폭.
 # ---
@@ -50,7 +54,7 @@
 #   2.4~3.4σ -> 1.8~2.8σ, floor 2.8 -> 2.1.
 #   너무 크게 잡으면 중간 강도의 진짜 avg 불량을 정상으로 흘린다(FN).
 #   정상 right_minor 상한 1.4σ 와는 그대로 분리된다.
-# v29 — 현업 FP(정상을 불량으로 오검) 대응 데이터셋.
+# v30 — 현업 FP(정상을 불량으로 오검) 대응 데이터셋.
 #
 # 현업 오검 증상 -> 대응
 #   spike 2~3개도 불량        -> normal_variants.few_spike (개수로만 판별)
@@ -104,7 +108,7 @@ episode:
   # 남은 점이 전부 불량 구간에 몰려 오검. scope 로 두 상황을 다 만든다.
   # 불량 클래스는 꼬리 점이 min_defect_points 미만이면 되돌린다.
   late_start:
-    prob: 0.45
+    prob: 0.55
     # 좌측 baseline 이 이만큼 없으면 mean_shift/std/drift 는 성립하지 않는다
     # (늦게 시작한 것과 우측 변동을 구분할 수 없다) -> 그 chart 는 late_start 를 취소
     min_baseline_points: 15
@@ -131,7 +135,7 @@ episode:
       2: 0.80
       3: 0.20
   sparse_chart:
-    prob: 0.45
+    prob: 0.58
     # mode=member: 특정 설비(레전드) 하나만 성긴 경우 — 현업에서 흔하다
     mode_weights:
       chart: 0.45
@@ -144,7 +148,7 @@ episode:
     - 0.03
     - 0.20
     # 멤버 2~3대 chart 에서는 더 자주, 더 성기게 (현업 오검이 여기 몰려 있다)
-    small_fleet_prob: 0.65
+    small_fleet_prob: 0.75
     small_fleet_keep_ratio_range:
     - 0.03
     - 0.18
@@ -313,13 +317,13 @@ normal_variants:
   weights:
     # 성긴 차트에서는 모양 기반 유형이 후보에서 빠진다(min_points_for_shape).
     # 그때 남는 후보로 쏠리지 않도록 clean 비중을 크게 잡는다.
-    clean: 0.08
-    recovered: 0.20
-    mid_shift: 0.20
-    right_minor: 0.18
-    few_spike: 0.16
-    context_like: 0.10
-    loose_target: 0.08
+    clean: 0.06
+    recovered: 0.24
+    mid_shift: 0.24
+    right_minor: 0.16
+    few_spike: 0.14
+    context_like: 0.09
+    loose_target: 0.07
     common_mode: 0.0
   context_like:
     min_points_for_shape: 15   # 이격을 논하려면 점이 어느 정도 있어야 한다
@@ -373,15 +377,21 @@ normal_variants:
     # 불량 mean_shift 는 우측 끝 14~30% 구간. 여기는 25~55% 지점에서 바뀌고
     # 그대로 유지되므로 '바뀐 뒤 안정 구간 길이' 가 구분 신호가 된다.
     start_ratio_range:
-    - 0.25
-    - 0.55
+    - 0.20
+    - 0.45
     # **앞쪽**이 어긋나 있다가 중간에 정상으로 돌아온 그림.
     # 뒤쪽을 올리면 우측 끝이 fleet 대비 떠서 그건 불량이 맞다.
     # 단위는 눈에 보이는 fleet 밴드 폭(within+between). within 만 쓰면 fleet 이
     # 촘촘할 때 같은 sigma 도 밴드를 통째로 벗어나 불량처럼 보였다.
+    # 중간 구간에서 크게 변했다가 되돌아온다. 우측 끝이 깨끗하므로 크게 줘도 된다 —
+    # 오히려 커야 '우측이 깨끗한가' 만으로 갈린다는 걸 배운다. 단위는 밴드 폭.
     shift_visual_ratio_range:
-    - 0.12
-    - 0.45
+    - 0.8
+    - 2.0
+    span_ratio_range:
+    - 0.20
+    - 0.35
+    max_end_ratio: 0.72
     min_side_points: 5
     # 뒤쪽이 길면 전체 평균이 통째로 밀려 context(mean) 불량처럼 보인다.
     # context 하한(mean_min_within_ratio 1.8) 아래로 유지.
@@ -392,9 +402,11 @@ normal_variants:
     # "작은 튐은 정상"만 배우고, 현업의 크고 개수 적은 2~3매는 계속 잡는다.
     # -> 불량 spike(5.0~8.0σ)와 같은 스케일로 두고 개수(1~3 vs 8+)로만 가른다.
     # 위치별 개수: 우측(불량 구간)은 확실히 적게, 중/좌측은 많아도 정상
+    # 중/좌측은 개수·크기가 커도 정상 — 우측(판정 구간)이 깨끗하기 때문.
+    # mid_shift 와 같은 규칙이다.
     count_range:          # 중/좌측
-    - 3
-    - 6
+    - 5
+    - 20
     right_count_range:    # 우측 — 불량과 위치·크기 동일, 개수(<=5 vs 10+)로만 갈린다
     - 2
     - 5
@@ -503,7 +515,7 @@ image:
   x_label: null
   y_label: Measurement Value (nm)
 dataset:
-  version: v29
+  version: v30
   samples_per_class:
     # normal 을 계속 늘리는 동안 불량이 1000 으로 고정돼 있었다.
     # 모양 축별로 정상:불량이 5:1 까지 벌어져 모델이 normal 로 기울었다(FN).
@@ -512,7 +524,7 @@ dataset:
     spike: 1500
     drift: 1800
     context: 3000             # FN 2위
-    normal: 16000
+    normal: 20000
   classes:
   - mean_shift
   - standard_deviation
@@ -527,6 +539,6 @@ dataset:
   test_difficulty_scale: 0.8
   val_difficulty_scale: 0.8
 output:
-  data_dir: data_v29
-  image_dir: images_v29
-  display_dir: display_v29
+  data_dir: data_v30
+  image_dir: images_v30
+  display_dir: display_v30

@@ -416,9 +416,18 @@ footer { margin-top:56px; padding-top:18px; border-top:1px solid var(--line); fo
       <div><h2>전체 학습셋 수량</h2>
       <p class="sub">정상 <code>10,000</code> · 불량 <code>5,000</code>
       → 정상:불량 = <b>2.0 : 1</b></p></div></header>
+    <p class="sub">아래는 <b>실제 생성된 표본</b> 비율을 전체 장수로 환산한 값이다 —
+    모양 기반 유형은 점이 적은 chart 에서 후보에서 빠지므로 설정 weight 와 다르다.</p>
     <div class="tablewrap"><table>
-      <thead><tr><th>정상 유형</th><th class="num">비율</th><th class="num">장수</th></tr></thead>
-      <tbody><tr><td><code>clean</code></td><td class="num">6%</td><td class="num">600</td></tr><tr><td><code>recovered</code></td><td class="num">44%</td><td class="num">4,400</td></tr><tr><td><code>right_minor</code></td><td class="num">18%</td><td class="num">1,800</td></tr><tr><td><code>few_spike</code></td><td class="num">16%</td><td class="num">1,600</td></tr><tr><td><code>context_like</code></td><td class="num">9%</td><td class="num">900</td></tr><tr><td><code>loose_target</code></td><td class="num">7%</td><td class="num">700</td></tr></tbody></table></div>
+      <thead><tr><th>정상 하위 유형</th><th class="num">비율</th><th class="num">장수</th></tr></thead>
+      <tbody><tr><td><code>clean</code></td><td class="num">52%</td><td class="num">5,188</td></tr><tr><td><code>few_spike</code></td><td class="num">20%</td><td class="num">2,000</td></tr><tr><td><code>context_like</code></td><td class="num">12%</td><td class="num">1,219</td></tr><tr><td><code>recovered</code></td><td class="num">7%</td><td class="num">688</td></tr><tr><td><code>loose_target</code></td><td class="num">6%</td><td class="num">562</td></tr><tr><td><code>right_minor</code></td><td class="num">3%</td><td class="num">344</td></tr><tr><td>└ <code>drift_return</code></td><td class="num">27%</td><td class="num">188</td></tr><tr><td>└ <code>mean_shift</code></td><td class="num">23%</td><td class="num">156</td></tr><tr><td>└ <code>standard_deviation</code></td><td class="num">18%</td><td class="num">125</td></tr><tr><td>└ <code>spike</code></td><td class="num">18%</td><td class="num">125</td></tr><tr><td>└ <code>level_step</code></td><td class="num">14%</td><td class="num">94</td></tr></tbody></table></div>
+
+    <p class="sub" style="margin-top:26px"><b>chart 수준 변형</b> — 하위 유형과 별개로
+    <b>클래스와 무관하게</b> 겹쳐 걸린다. 그래서 위 표에는 안 나온다.
+    정상에만 걸면 “점이 적으면 정상”같은 지름길이 생기므로 불량에도 같이 넣는다.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>변형</th><th>내용</th><th class="num">정상 장수</th><th class="num">불량 장수</th></tr></thead>
+      <tbody><tr><td><code>late_start</code></td><td>그 설비만/다같이 최근에 시작</td><td class="num">5,250</td><td class="num">1,021</td></tr><tr><td><code>sparse</code></td><td>계측 모수가 적음</td><td class="num">6,844</td><td class="num">2,854</td></tr><tr><td><code>smallfleet</code></td><td>멤버 2~3대</td><td class="num">4,344</td><td class="num">2,500</td></tr><tr><td><code>early_stop</code></td><td>최근에 안 돌림 (정상 전용)</td><td class="num">1,156</td><td class="num">0</td></tr><tr><td><code>single_legend</code></td><td>멤버 1개 (정상 전용)</td><td class="num">906</td><td class="num">0</td></tr></tbody></table></div>
   </section>
 
   <footer>

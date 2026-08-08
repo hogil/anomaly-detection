@@ -391,13 +391,37 @@ def main() -> int:
   </section>""")
 
         spc = cfg["dataset"]["samples_per_class"]
-        weights = (cfg.get("normal_variants") or {}).get("weights") or {}
         n_norm = spc.get("normal", 0)
-        qty = "".join(
-            f'<tr><td><code>{k}</code></td><td class="num">{w:.0%}</td>'
-            f'<td class="num">{round(n_norm * w):,}</td></tr>'
-            for k, w in weights.items() if w)
         n_abn = sum(v for k, v in spc.items() if k != "normal")
+
+        # 설정값이 아니라 **실제 생성된 표본** 비율로 환산한다. 모양 기반 유형은
+        # min_points_for_shape 때문에 성긴 chart 에서 빠지므로 설정 weight 와 다르다.
+        nm = df[df["class"] == "normal"]
+        ab = df[df["class"] != "normal"]
+        sub = nm["dp"].map(lambda d: d.get("normal_variant") or "clean").value_counts()
+        qty = "".join(
+            f'<tr><td><code>{k}</code></td><td class="num">{v / len(nm):.0%}</td>'
+            f'<td class="num">{round(n_norm * v / len(nm)):,}</td></tr>'
+            for k, v in sub.items())
+        rec = nm[nm["dp"].map(lambda d: d.get("normal_variant") == "recovered")]
+        rec_n = round(n_norm * len(rec) / max(len(nm), 1))
+        kinds = rec["dp"].map(lambda d: d.get("kind")).value_counts()
+        qty_kind = "".join(
+            f'<tr><td>└ <code>{k}</code></td><td class="num">{v / max(len(rec),1):.0%}</td>'
+            f'<td class="num">{round(rec_n * v / max(len(rec), 1)):,}</td></tr>'
+            for k, v in kinds.items())
+
+        # chart 수준 변형 — 정상 하위 유형과 별개로 클래스 무관하게 겹쳐 걸린다.
+        MODS = [("late_start", "그 설비만/다같이 최근에 시작"),
+                ("sparse", "계측 모수가 적음"),
+                ("smallfleet", "멤버 2~3대"),
+                ("early_stop", "최근에 안 돌림 (정상 전용)"),
+                ("single_legend", "멤버 1개 (정상 전용)")]
+        qty_mod = "".join(
+            f'<tr><td><code>{k}</code></td><td>{desc}</td>'
+            f'<td class="num">{round(n_norm * nm["variant"].str.contains(k).sum() / max(len(nm),1)):,}</td>'
+            f'<td class="num">{round(n_abn * ab["variant"].str.contains(k).sum() / max(len(ab),1)):,}</td></tr>'
+            for k, desc in MODS)
 
         html = f"""<title>데이터셋 검토 — {version}</title>
 <style>{STYLE}</style>
@@ -422,9 +446,18 @@ def main() -> int:
       <div><h2>전체 학습셋 수량</h2>
       <p class="sub">정상 <code>{n_norm:,}</code> · 불량 <code>{n_abn:,}</code>
       → 정상:불량 = <b>{n_norm / max(n_abn, 1):.1f} : 1</b></p></div></header>
+    <p class="sub">아래는 <b>실제 생성된 표본</b> 비율을 전체 장수로 환산한 값이다 —
+    모양 기반 유형은 점이 적은 chart 에서 후보에서 빠지므로 설정 weight 와 다르다.</p>
     <div class="tablewrap"><table>
-      <thead><tr><th>정상 유형</th><th class="num">비율</th><th class="num">장수</th></tr></thead>
-      <tbody>{qty}</tbody></table></div>
+      <thead><tr><th>정상 하위 유형</th><th class="num">비율</th><th class="num">장수</th></tr></thead>
+      <tbody>{qty}{qty_kind}</tbody></table></div>
+
+    <p class="sub" style="margin-top:26px"><b>chart 수준 변형</b> — 하위 유형과 별개로
+    <b>클래스와 무관하게</b> 겹쳐 걸린다. 그래서 위 표에는 안 나온다.
+    정상에만 걸면 “점이 적으면 정상”같은 지름길이 생기므로 불량에도 같이 넣는다.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>변형</th><th>내용</th><th class="num">정상 장수</th><th class="num">불량 장수</th></tr></thead>
+      <tbody>{qty_mod}</tbody></table></div>
   </section>
 
   <footer>

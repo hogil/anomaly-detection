@@ -489,14 +489,18 @@ class ScenarioGenerator:
         vi = np.where(mask)[0]
         if len(vi) < 12:
             return {}
-        ratio = float(self.rng.uniform(*cfg.get("start_ratio_range", [0.25, 0.55])))
-        start = int(len(mask) * ratio)
+        start_r = float(self.rng.uniform(*cfg.get("start_ratio_range", [0.25, 0.55])))
+        start = int(len(mask) * start_r)
         after, before = vi[vi >= start], vi[vi < start]
         min_side = int(cfg.get("min_side_points", 5))
         if len(after) < min_side or len(before) < min_side:
             return {}
-        within, _between = self._fleet_spread(context_data, members, target)
-        sigma = float(self.rng.uniform(*cfg.get("shift_sigma_range", [0.4, 2.0])))
+        # 단위는 **눈에 보이는 fleet 밴드 폭**(within + between). within 만 쓰면
+        # fleet 이 촘촘할 때 1σ 이동이 밴드를 통째로 벗어나 불량처럼 보인다.
+        within, between = self._fleet_spread(context_data, members, target)
+        unit = within + between
+        ratio = float(self.rng.uniform(*cfg.get("shift_visual_ratio_range", [0.15, 0.5])))
+        sigma = ratio * unit / max(within, 1e-9)
         # **앞쪽**을 어긋나게 둔다 — 예전에 벗어나 있다가 중간에 정상으로 돌아온 그림.
         # 뒤쪽을 올리면 우측 끝이 fleet 대비 떠 버려서 그건 불량이 맞다.
         max_mean = float(cfg.get("max_mean_offset_sigma", 1.5))
@@ -506,8 +510,8 @@ class ScenarioGenerator:
         sign = 1 if self.rng.random() < 0.5 else -1
         values[before] += within * sigma * sign
         context_data[target] = (values, mask)
-        return {"normal_variant": "mid_shift", "start_ratio": round(ratio, 3),
-                "shift_sigma": round(sigma, 3),
+        return {"normal_variant": "mid_shift", "start_ratio": round(start_r, 3),
+                "shift_sigma": round(sigma, 3), "visual_ratio": round(ratio, 3),
                 "mean_offset_sigma": round(frac_before * sigma, 3),
                 "points_after": int(len(after)), "points_before": int(len(before))}
 
@@ -722,13 +726,15 @@ class ScenarioGenerator:
         names = [k for k, w in kinds.items() if float(w) > 0] or ["shift"]
         p = np.array([float(kinds[k]) for k in names], dtype=float)
         kind = str(self.rng.choice(names, p=p / p.sum()))
-        within, _between = self._fleet_spread(context_data, members, target)
+        within, between = self._fleet_spread(context_data, members, target)
 
         if kind == "shift":
-            sigma = float(self.rng.uniform(*cfg.get("shift_sigma_range", [0.6, 1.4])))
+            vr = float(self.rng.uniform(*cfg.get("shift_visual_ratio_range", [0.12, 0.4])))
+            delta = vr * (within + between)
             sign = 1 if self.rng.random() < 0.5 else -1
-            values[right] += within * sigma * sign
-            detail = {"kind": "shift", "shift_sigma": round(sigma, 3)}
+            values[right] += delta * sign
+            detail = {"kind": "shift", "visual_ratio": round(vr, 3),
+                      "shift_sigma": round(delta / max(within, 1e-9), 3)}
         else:
             scale = float(self.rng.uniform(*cfg.get("spread_scale_range", [1.2, 1.7])))
             mean = float(np.nanmean(values[right]))

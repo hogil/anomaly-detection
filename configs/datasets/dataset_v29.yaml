@@ -1,4 +1,6 @@
-# v28 — 정상 avg 변동 상한을 1.35σ 로 낮춤 (그 위는 눈으로도 불량).
+# v29 — 정상 avg 변동의 기준 단위를 '보이는 fleet 밴드 폭'(within+between)으로 바꿈.
+#   within 만 쓰니 fleet 이 촘촘한 chart 에서 같은 sigma 도 밴드를 벗어나 불량처럼 보였다.
+#   mid_shift 0.12~0.45 밴드폭, right_minor 0.10~0.35 밴드폭.
 # ---
 # mid_shift 방향 수정(앞쪽을 어긋나게 -> 우측 끝은 fleet 과 나란히) +
 #   recovered 에 drift_return(서서히 열화 -> 정점 -> 서서히 원복) 추가.
@@ -48,7 +50,7 @@
 #   2.4~3.4σ -> 1.8~2.8σ, floor 2.8 -> 2.1.
 #   너무 크게 잡으면 중간 강도의 진짜 avg 불량을 정상으로 흘린다(FN).
 #   정상 right_minor 상한 1.4σ 와는 그대로 분리된다.
-# v28 — 현업 FP(정상을 불량으로 오검) 대응 데이터셋.
+# v29 — 현업 FP(정상을 불량으로 오검) 대응 데이터셋.
 #
 # 현업 오검 증상 -> 대응
 #   spike 2~3개도 불량        -> normal_variants.few_spike (개수로만 판별)
@@ -336,9 +338,9 @@ normal_variants:
     start_ratio_range:
     - 0.72
     - 0.90
-    shift_sigma_range:
-    - 0.5
-    - 1.2
+    shift_visual_ratio_range:   # 밴드 폭 대비 — 우측 '소량' 변동
+    - 0.10
+    - 0.35
     spread_scale_range:
     - 1.15
     - 1.5
@@ -375,11 +377,11 @@ normal_variants:
     - 0.55
     # **앞쪽**이 어긋나 있다가 중간에 정상으로 돌아온 그림.
     # 뒤쪽을 올리면 우측 끝이 fleet 대비 떠서 그건 불량이 맞다.
-    # 상한 1.35σ — 사용자가 지목한 정상 최대치(ch_00209 1.219 / ch_00219 1.335) 기준.
-    # 그 위는 눈으로 봐도 불량이다. 불량 mean_shift 하한 2.2σ 와 여유 있게 분리된다.
-    shift_sigma_range:
-    - 0.3
-    - 1.35
+    # 단위는 눈에 보이는 fleet 밴드 폭(within+between). within 만 쓰면 fleet 이
+    # 촘촘할 때 같은 sigma 도 밴드를 통째로 벗어나 불량처럼 보였다.
+    shift_visual_ratio_range:
+    - 0.12
+    - 0.45
     min_side_points: 5
     # 뒤쪽이 길면 전체 평균이 통째로 밀려 context(mean) 불량처럼 보인다.
     # context 하한(mean_min_within_ratio 1.8) 아래로 유지.
@@ -501,7 +503,7 @@ image:
   x_label: null
   y_label: Measurement Value (nm)
 dataset:
-  version: v28
+  version: v29
   samples_per_class:
     # normal 을 계속 늘리는 동안 불량이 1000 으로 고정돼 있었다.
     # 모양 축별로 정상:불량이 5:1 까지 벌어져 모델이 normal 로 기울었다(FN).
@@ -525,6 +527,6 @@ dataset:
   test_difficulty_scale: 0.8
   val_difficulty_scale: 0.8
 output:
-  data_dir: data_v28
-  image_dir: images_v28
-  display_dir: display_v28
+  data_dir: data_v29
+  image_dir: images_v29
+  display_dir: display_v29

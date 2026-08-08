@@ -96,8 +96,11 @@ class ScenarioGenerator:
         ep_cfg = self.cfg.get("episode") or {}
         sl_cfg = ep_cfg.get("single_legend") or {}
         sf_cfg = ep_cfg.get("small_fleet") or {}
-        # 멤버가 1개뿐이면 비교 대상이 없다 -> 판정 불가 -> 양호. normal 에만 적용한다.
-        if (cls == "normal" and float(sl_cfg.get("prob", 0.0)) > 0
+        # 멤버 1개: fleet 과 비교하는 판정(context)은 불가능하지만, 우측 끝 변화는
+        # '자기 좌측 대비' 로 판별되므로 mean_shift/std/spike/drift 는 성립한다.
+        # -> context 만 제외하고 정상·불량 모두 만든다.
+        sl_ok = cls == "normal" or cls in tuple(sl_cfg.get("defect_classes") or ())
+        if (sl_ok and float(sl_cfg.get("prob", 0.0)) > 0
                 and self.rng.random() < float(sl_cfg["prob"])):
             count = 1
             small_fleet_tag = "single_legend"

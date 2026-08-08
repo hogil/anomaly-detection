@@ -127,9 +127,15 @@ episode:
     min_points: 3
     min_defect_points: 12
     defect_region_ratio: 0.12
-  # 멤버 1개 — 비교 대상이 없으니 판정 불가 -> 정상. normal 에만 적용.
+  # 멤버 1개 — fleet 비교가 필요한 context 는 판정 불가지만, 우측 끝 변화는
+  # '자기 좌측 대비' 로 판별되므로 mean_shift/std/spike/drift 는 성립한다.
   single_legend:
-    prob: 0.08
+    prob: 0.12
+    defect_classes:      # 이 클래스들은 멤버 1개여도 불량이 될 수 있다
+    - mean_shift
+    - standard_deviation
+    - spike
+    - drift
   # 멤버 2~3대 chart. 기본 count_range 최소가 4라 이런 그림이 아예 없었다.
   # "eqp 2대 중 한쪽 모수가 적으면 그쪽이 불량" 오검의 배경. 전 클래스 공통.
   small_fleet:
@@ -328,12 +334,6 @@ normal_variants:
     context_like: 0.14
     few_spike: 0.16
     loose_target: 0.06
-    common_mode: 0.0
-    recovered: 0.44        # mid_shift 를 흡수 (개념이 하나다)
-    right_minor: 0.18
-    few_spike: 0.16
-    context_like: 0.09
-    loose_target: 0.07
     common_mode: 0.0
   context_like:
     min_points_for_shape: 6   # 이격을 논하려면 점이 어느 정도 있어야 한다
